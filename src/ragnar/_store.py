@@ -201,4 +201,7 @@ def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
         con.register(f"tmp_data_{table}", data)
         con.execute(f"INSERT INTO {table} SELECT * FROM tmp_data_{table}")
     finally:
-        con.unregister(f"tmp_data_{table}")
+        try:
+            con.unregister(f"tmp_data_{table}")
+        except Exception:
+            pass
