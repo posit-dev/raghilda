@@ -1,5 +1,3 @@
-def HelloWorld() -> None:
-    """
-    A simple function that prints a greeting message.
-    """
-    print("Hello from py-ragnar!")
+from ._embedding import EmbeddingProvider, EmbeddingOpenAI
+
+__all__ = ["EmbeddingProvider", "EmbeddingOpenAI"]

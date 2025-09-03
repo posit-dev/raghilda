@@ -5,12 +5,47 @@ from openai import OpenAI
 
 
 class EmbeddingProvider(ABC):
+    """
+    Interface for embedding function providers.
+    """
+
     @abstractmethod
     def embed(self, x: Sequence[str]) -> Sequence[Sequence[float]]:
+        """
+        Generate embeddings for a sequence of texts.
+
+        Parameters
+        ----------
+        x
+            A sequence of texts to generate embeddings for.
+
+        Returns
+        -------
+        :
+            A sequence of embeddings (the same length as `x`), where each embedding is
+            a sequence of floats.
+        """
         NotImplementedError("embed method is not implemented")
 
 
 class EmbeddingOpenAI(EmbeddingProvider):
+    """
+    Creates an embedding function provider backed by OpenAI's embedding models
+    Implements the [EmbeddingProvider](`ragnar.EmbeddingProvider`) interface.
+
+    Parameters
+    ----------
+    model
+        The OpenAI embedding model to use. Default is "text-embedding-3-small"
+    base_url
+        The base URL for the OpenAI API. Default is "https://api.openai.com/v1".
+    api_key
+        The API key for authenticating with OpenAI. If None, it will use the
+        OPENAI_API_KEY environment variable if set.
+    batch_size
+        The number of texts to process in each batch when calling the API.
+    """
+
     def __init__(
         self,
         model: str = "text-embedding-3-small",

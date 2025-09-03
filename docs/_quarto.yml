@@ -30,7 +30,14 @@ quartodoc:
   package: ragnar
   render_interlinks: true
   sections:
-    - title: Hello
-      desc: Hello world
+    - title: Embedding Providers
+      desc: Create and manage embeddings from various providers.
       contents:
-        - HelloWorld
+        - EmbeddingProvider
+        - EmbeddingOpenAI
+
+filters:
+  - interlinks
+
+interlinks:
+  autolink: true
