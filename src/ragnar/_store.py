@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from typing import Optional
+from .document import ChunkedDocument, Document, MarkdownDocument, LazyMarkdownChunk
+from typing import Optional, overload, Union
 import duckdb
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,10 @@ class Store(ABC):
     @staticmethod
     @abstractmethod
     def create(*args, **kwargs) -> "Store":
+        pass
+
+    @abstractmethod
+    def insert(self, document: Union[Document, ChunkedDocument]) -> None:
         pass
 
 
@@ -123,6 +129,47 @@ class DuckDBStore(Store):
         self.con = con
         self.metadata = metadata
 
+    @overload
+    def insert(
+        self, document: ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
+    ) -> None: ...
+
+    def insert(
+        self,
+        document: Union[
+            MarkdownDocument, ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
+        ],
+    ) -> None:
+        if isinstance(document, ChunkedDocument):
+            self._insert_chunked_document(document)
+        else:
+            raise NotImplementedError(
+                f"Insert not implemented for type {type(document)}"
+            )
+
+    def _insert_chunked_document(
+        self, chunked_doc: ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
+    ) -> None:
+        doc = pd.DataFrame(asdict(chunked_doc.document), index=[0])
+        chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
+
+        if self.metadata.embed is not None:
+            chunks.embedding = self.metadata.embed.embed(chunks.content.tolist())
+
+        try:
+            self.con.begin()
+            (doc_id,) = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
+            doc["doc_id"] = doc_id
+            doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
+            chunks["doc_id"] = [doc_id] * len(chunks)
+
+            _duckdb_append(self.con, "documents", doc)
+            _duckdb_append(self.con, "embeddings", chunks)
+            self.con.commit()
+        except Exception as e:
+            self.con.rollback()
+            raise e
+
 
 def _overwrite_or_error(location: str | Path, overwrite: bool) -> None:
     if not overwrite:
@@ -147,3 +194,15 @@ def _check_is_ragnar_con(con: duckdb.DuckDBPyConnection):
 
     if "metadata" not in tables:
         raise ValueError("Not a valid Ragnar database connection")
+
+
+def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
+    try:
+        # reorder columns in the same order as in the database
+        cols = con.execute(f"DESCRIBE {table}").fetchdf().column_name.tolist()
+        data = data[cols]
+
+        con.register(f"tmp_data_{table}", data)
+        con.execute(f"INSERT INTO {table} SELECT * FROM tmp_data_{table}")
+    finally:
+        con.unregister("tmp_data")
