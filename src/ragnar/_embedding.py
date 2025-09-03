@@ -53,7 +53,9 @@ class EmbeddingOpenAI(EmbeddingProvider):
     if "OPENAI_API_KEY" in os.environ:
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
         embeddings = provider.embed(["hello world", "testing embeddings"])
-        print(embeddings)
+        print(len(embeddings))
+        print(len(embeddings[0]))  # Dimension of the embedding
+        print(embeddings[0][:10])  # The embedding vector
     ```
     """
 
