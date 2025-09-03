@@ -19,7 +19,9 @@ docs = [
     "quartodoc>=0.7",
 ]
 test = [
+    "pyright>=1.1.404",
     "pytest>=8.4.1",
+    "ruff>=0.12.11",
 ]
 
 [dependency-groups]
@@ -31,5 +33,10 @@ dev = [
 docs_build = "cd docs && quartodoc build && quarto render"
 docs_preview = "task docs_build && cd docs && quarto preview"
 docs = "task docs_preview"
-test = "pytest tests"
-
+tests = "pytest tests"
+types_check = "pyright"
+format = "ruff format src tests"
+format_check = "task format -- --check"
+lint_check = "ruff check"
+lint = "task lint_check -- --fix"
+check = "task format_check && task lint_check && task types_check && task tests"

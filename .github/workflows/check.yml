@@ -1,4 +1,4 @@
-name: Tests
+name: Checks
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     
     steps:
@@ -24,5 +24,5 @@ jobs:
     - name: Install dependencies
       run: uv sync --extra test
     
-    - name: Run tests
-      run: uv run task test
+    - name: Run checks
+      run: uv run task check
