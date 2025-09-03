@@ -147,7 +147,7 @@ class DuckDBStore(Store):
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
-            chunks.embedding = self.metadata.embed.embed(chunks.content.tolist())
+            chunks["embedding"] = self.metadata.embed.embed(chunks.content.tolist())
 
         try:
             self.con.begin()

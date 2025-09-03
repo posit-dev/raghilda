@@ -1,27 +1,36 @@
+import pytest
 from ragnar.store import DuckDBStore
 from ragnar.document import ChunkedDocument, MarkdownDocument, MarkdownChunk
+from ragnar import EmbeddingOpenAI
 
 
 class TestDuckDBStore:
-    def create_store(self):
+    @pytest.fixture
+    def embed(self, request):
+        try:
+            return request.param
+        except AttributeError:
+            return None
+
+    @pytest.fixture
+    def store(self, embed):
         store = DuckDBStore.create(
             location=":memory:",
-            embed=None,
+            embed=embed,
             overwrite=True,
             name="test_db",
             title="Test DuckDB Store",
         )
         return store
 
-    def test_create_store(self):
-        store = self.create_store()
+    def test_create_store(self, store):
         assert isinstance(store, DuckDBStore)
         assert store.metadata.name == "test_db"
         assert store.metadata.title == "Test DuckDB Store"
         assert store.metadata.embed is None
 
-    def test_insert(self):
-        store = self.create_store()
+    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
+    def test_insert(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
         chunked_doc = ChunkedDocument(
             document=doc,
