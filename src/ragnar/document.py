@@ -12,10 +12,7 @@ class Document(ABC):
 
 @dataclass
 class MarkdownDocument(Document):
-    origin: Optional[str]
-    content: str
-
-
+    pass
 @dataclass
 class Chunk(ABC):
     content: str
