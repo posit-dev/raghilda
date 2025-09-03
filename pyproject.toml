@@ -1,0 +1,31 @@
+[project]
+name = "ragnar"
+version = "0.1.0"
+description = "RAG made simple"
+license = "MIT"
+readme = "README.md"
+authors = [
+    { name = "Daniel Falbel", email = "daniel@posit.co" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[project.optional-dependencies]
+docs = [
+    "quartodoc>=0.7",
+]
+
+[dependency-groups]
+dev = [
+    "taskipy>=1.14.1",
+]
+
+[tool.taskipy.tasks]
+docs_build = "cd docs && quartodoc build && quarto render"
+docs_preview = "task docs_build && cd docs && quarto preview"
+docs = "task docs_preview"
+
