@@ -44,6 +44,17 @@ class EmbeddingOpenAI(EmbeddingProvider):
         OPENAI_API_KEY environment variable if set.
     batch_size
         The number of texts to process in each batch when calling the API.
+
+    Examples
+    --------
+    ```{python}
+    import os
+    from ragnar import EmbeddingOpenAI
+    if "OPENAI_API_KEY" in os.environ:
+        provider = EmbeddingOpenAI(model="text-embedding-3-small")
+        embeddings = provider.embed(["hello world", "testing embeddings"])
+        print(embeddings)
+    ```
     """
 
     def __init__(
@@ -61,6 +72,9 @@ class EmbeddingOpenAI(EmbeddingProvider):
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def embed(self, x: Sequence[str]):
+        if isinstance(x, str):
+            raise TypeError("Input must be a sequence of strings, not a single string.")
+
         result = []
         for i in range(0, len(x), self.batch_size):
             data = x[i : i + self.batch_size]

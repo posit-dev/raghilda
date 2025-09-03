@@ -55,3 +55,9 @@ class TestEmbeddingOpenAI:
         assert len(texts) > provider.batch_size
         embeddings = provider.embed(texts)
         assert len(embeddings) == len(texts)
+
+    def test_embedding_with_str(self):
+        provider = EmbeddingOpenAI()
+        text = "single text input"
+        with pytest.raises(TypeError):
+            provider.embed(text)
