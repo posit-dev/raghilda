@@ -13,6 +13,8 @@ class Document(ABC):
 @dataclass
 class MarkdownDocument(Document):
     pass
+
+
 @dataclass
 class Chunk(ABC):
     content: str
