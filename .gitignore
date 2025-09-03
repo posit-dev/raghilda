@@ -12,3 +12,4 @@ docs/reference/*
 .venv
 .python-version
 uv.lock
+.pytest_cache/

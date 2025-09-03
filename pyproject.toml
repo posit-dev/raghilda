@@ -18,6 +18,9 @@ build-backend = "uv_build"
 docs = [
     "quartodoc>=0.7",
 ]
+test = [
+    "pytest>=8.4.1",
+]
 
 [dependency-groups]
 dev = [
@@ -28,4 +31,5 @@ dev = [
 docs_build = "cd docs && quartodoc build && quarto render"
 docs_preview = "task docs_build && cd docs && quarto preview"
 docs = "task docs_preview"
+test = "pytest tests"
 
