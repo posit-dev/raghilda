@@ -1,5 +1,5 @@
 from ragnar.store import DuckDBStore
-from ragnar.document import ChunkedDocument, MarkdownDocument, LazyMarkdownChunk
+from ragnar.document import ChunkedDocument, MarkdownDocument, MarkdownChunk
 
 
 class TestDuckDBStore:
@@ -26,11 +26,11 @@ class TestDuckDBStore:
         chunked_doc = ChunkedDocument(
             document=doc,
             chunks=[
-                LazyMarkdownChunk(chunk_id=1, parent_doc=doc, start=0, end=4),
-                LazyMarkdownChunk(chunk_id=2, parent_doc=doc, start=5, end=7),
-                LazyMarkdownChunk(chunk_id=3, parent_doc=doc, start=8, end=9),
-                LazyMarkdownChunk(chunk_id=4, parent_doc=doc, start=10, end=14),
-                LazyMarkdownChunk(chunk_id=5, parent_doc=doc, start=15, end=23),
+                MarkdownChunk(chunk_id=1, parent_doc=doc, start=0, end=4),
+                MarkdownChunk(chunk_id=2, parent_doc=doc, start=5, end=7),
+                MarkdownChunk(chunk_id=3, parent_doc=doc, start=8, end=9),
+                MarkdownChunk(chunk_id=4, parent_doc=doc, start=10, end=14),
+                MarkdownChunk(chunk_id=5, parent_doc=doc, start=15, end=23),
             ],
         )
         store.insert(chunked_doc)

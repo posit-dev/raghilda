@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from .document import ChunkedDocument, Document, MarkdownDocument, LazyMarkdownChunk
-from typing import Optional, overload, Union
+from .document import ChunkedDocument, Document, MarkdownDocument, MarkdownChunk
+from typing import Optional, Union
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
@@ -129,16 +129,9 @@ class DuckDBStore(Store):
         self.con = con
         self.metadata = metadata
 
-    @overload
-    def insert(
-        self, document: ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
-    ) -> None: ...
-
     def insert(
         self,
-        document: Union[
-            MarkdownDocument, ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
-        ],
+        document: Union[Document, ChunkedDocument[MarkdownDocument, MarkdownChunk]],
     ) -> None:
         if isinstance(document, ChunkedDocument):
             self._insert_chunked_document(document)
@@ -148,9 +141,9 @@ class DuckDBStore(Store):
             )
 
     def _insert_chunked_document(
-        self, chunked_doc: ChunkedDocument[MarkdownDocument, LazyMarkdownChunk]
+        self, chunked_doc: ChunkedDocument[MarkdownDocument, MarkdownChunk]
     ) -> None:
-        doc = pd.DataFrame(asdict(chunked_doc.document), index=[0])
+        doc = pd.DataFrame([asdict(chunked_doc.document)])
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
@@ -158,7 +151,10 @@ class DuckDBStore(Store):
 
         try:
             self.con.begin()
-            (doc_id,) = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
+            result = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
+            if result is None:
+                raise RuntimeError("Failed to get next document ID")
+            (doc_id,) = result
             doc["doc_id"] = doc_id
             doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
             chunks["doc_id"] = [doc_id] * len(chunks)
