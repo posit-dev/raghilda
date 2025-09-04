@@ -29,6 +29,22 @@ class MarkdownChunk(Chunk):
     context: Optional[str] = None
 
 
+@dataclass
+class Metric:
+    name: str
+    value: float
+
+
+@dataclass
+class RetrievedChunk(Chunk):
+    metrics: list[Metric]
+
+
+@dataclass
+class RetrievedMarkdownChunk(MarkdownChunk, RetrievedChunk):
+    pass
+
+
 DocType = TypeVar("DocType", bound=Document)
 ChunkType = TypeVar("ChunkType", bound=Chunk)
 
