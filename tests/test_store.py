@@ -1,10 +1,11 @@
 import pytest
-from ragnar.store import DuckDBStore
+from ragnar.store import DuckDBStore, OpenAIStore
 from ragnar.document import (
     ChunkedDocument,
     MarkdownDocument,
     MarkdownChunk,
     RetrievedMarkdownChunk,
+    Document,
 )
 from ragnar import EmbeddingOpenAI
 
@@ -82,6 +83,34 @@ class TestDuckDBStore:
         for chunk in results:
             assert isinstance(chunk, RetrievedMarkdownChunk)
             assert chunk.content is not None
+
+
+class TestOpenAIStore:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        if "OPENAI_API_KEY" not in os.environ:
+            pytest.skip("OPENAI_API_KEY not set in environment variables")
+
+    @pytest.fixture
+    def store(self):
+        store = OpenAIStore.create()
+        return store
+
+    @pytest.fixture
+    def store_with_docs(self, store):
+        doc = Document(origin="test", content="This is a test document.")
+        store.insert(doc)
+        return store
+
+    def test_create_store(self, store):
+        assert isinstance(store, OpenAIStore)
+        assert isinstance(store.store_id, str)
+
+    def test_insert(self, store_with_docs):
+        assert store_with_docs.size() == 1
+
+    
+
 
 
 def _get_markdown_chunk(doc, chunk_id, start, end):
