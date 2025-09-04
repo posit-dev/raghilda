@@ -29,11 +29,11 @@ class TestDuckDBStore:
         chunked_doc = ChunkedDocument(
             document=doc,
             chunks=[
-                MarkdownChunk(chunk_id=1, parent_doc=doc, start=0, end=4),
-                MarkdownChunk(chunk_id=2, parent_doc=doc, start=5, end=7),
-                MarkdownChunk(chunk_id=3, parent_doc=doc, start=8, end=9),
-                MarkdownChunk(chunk_id=4, parent_doc=doc, start=10, end=14),
-                MarkdownChunk(chunk_id=5, parent_doc=doc, start=15, end=23),
+                _get_markdown_chunk(doc, chunk_id=1, start=0, end=4),
+                _get_markdown_chunk(doc, chunk_id=2, start=5, end=7),
+                _get_markdown_chunk(doc, chunk_id=3, start=8, end=9),
+                _get_markdown_chunk(doc, chunk_id=4, start=10, end=14),
+                _get_markdown_chunk(doc, chunk_id=5, start=15, end=23),
             ],
         )
         store.insert(chunked_doc)
@@ -53,3 +53,18 @@ class TestDuckDBStore:
     def test_retrieve_vss(self, store_with_docs):
         results = store_with_docs.retrieve_vss("test", top_k=3)
         assert len(results) == 3
+        for chunk in results:
+            assert isinstance(chunk, MarkdownChunk)
+            assert chunk.content is not None
+
+        results = store_with_docs.retrieve_vss("test", top_k=5)
+        assert len(results) == 5
+
+
+def _get_markdown_chunk(doc, chunk_id, start, end):
+    return MarkdownChunk(
+        chunk_id=chunk_id,
+        start=start,
+        end=end,
+        content=doc.content[start:end],
+    )

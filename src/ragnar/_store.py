@@ -196,7 +196,7 @@ class DuckDBStore(Store):
         top_k: int,
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
-    ) -> Sequence[MarkdownChunk]:
+    ) -> list[MarkdownChunk]:
         if isinstance(query, str):
             if self.metadata.embed is None:
                 raise ValueError("No embedding function available in the store")
@@ -205,14 +205,17 @@ class DuckDBStore(Store):
         func, order = _vss_method_info(method)
         sql = f"""
         SELECT
-            doc.* EXCLUDE (text, doc_id),
-            e.*,
-            doc.text[ e.start: e.end ] AS text
+            e.doc_id, 
+            e.chunk_id, 
+            e.start, 
+            e.end, 
+            e.context, 
+            doc.text[ e.start: e.end ] AS content 
         FROM (
             SELECT
-            *,
-            '{method}' AS metric_name,
-            {func}(embedding, [{",".join(str(x) for x in query)}]::FLOAT[{len(query)}]) AS metric_value
+                *,
+                '{method}' AS metric_name,
+                {func}(embedding, [{",".join(str(x) for x in query)}]::FLOAT[{len(query)}]) AS metric_value
             FROM embeddings
             ORDER BY metric_value {order}
             LIMIT {top_k}
@@ -221,8 +224,17 @@ class DuckDBStore(Store):
         ORDER BY metric_value
         """
 
-        results = self.con.execute(sql).fetchall()
-        return results
+        cursor = self.con.cursor()
+
+        cursor.execute(sql)
+        results = cursor.fetchall()
+
+        if cursor.description is None:
+            raise RuntimeError("Failed get cursor description.")
+
+        columns = [desc[0] for desc in cursor.description]
+
+        return [MarkdownChunk(**dict(zip(columns, chunk))) for chunk in results]
 
     def size(self) -> int:
         result = self.con.execute(
