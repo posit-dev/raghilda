@@ -203,14 +203,17 @@ class DuckDBStore(Store):
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
     ) -> Sequence[RetrievedMarkdownChunk]:
-        vss_chunks = self.retrieve_vss(text, top_k)
-        bm25_chunks = self.retrieve_bm25(text, top_k)
+        retrieved_chunks = []
+        if self.metadata.embed is not None:
+            retrieved_chunks = self.retrieve_vss(text, top_k)
+
+        retrieved_chunks.extend(self.retrieve_bm25(text, top_k))
 
         # combine chunks by `doc_id` and `chunk_id` and then merge metrics
         combined_chunks: dict[
             tuple[int | None, int | None], RetrievedMarkdownChunk
         ] = {}
-        for chunk in vss_chunks + bm25_chunks:
+        for chunk in retrieved_chunks:
             key = (chunk.doc_id, chunk.chunk_id)
             if key not in combined_chunks:
                 combined_chunks[key] = chunk
