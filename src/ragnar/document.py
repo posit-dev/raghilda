@@ -12,12 +12,37 @@ class Document(ABC):
 
 @dataclass
 class MarkdownDocument(Document):
-    pass
+    doc_id: Optional[int] = None
 
 
 @dataclass
 class Chunk(ABC):
     content: str
+
+
+@dataclass
+class MarkdownChunk(Chunk):
+    start: int
+    end: int
+    doc_id: Optional[int] = None
+    chunk_id: Optional[int] = None
+    context: Optional[str] = None
+
+
+@dataclass
+class Metric:
+    name: str
+    value: float
+
+
+@dataclass
+class RetrievedChunk(Chunk):
+    metrics: list[Metric]
+
+
+@dataclass
+class RetrievedMarkdownChunk(MarkdownChunk, RetrievedChunk):
+    pass
 
 
 DocType = TypeVar("DocType", bound=Document)
@@ -28,27 +53,3 @@ ChunkType = TypeVar("ChunkType", bound=Chunk)
 class ChunkedDocument(Generic[DocType, ChunkType]):
     document: DocType
     chunks: list[ChunkType]
-
-
-@dataclass
-class MarkdownChunk(Chunk):
-    parent_doc: MarkdownDocument
-    chunk_id: int
-    start: int
-    end: int
-    context: Optional[str] = None
-
-    def __init__(
-        self,
-        chunk_id: int,
-        parent_doc: MarkdownDocument,
-        start: int,
-        end: int,
-        context: Optional[str] = None,
-    ):
-        self.chunk_id = chunk_id
-        self.parent_doc = parent_doc
-        self.start = start
-        self.end = end
-        self.context = context
-        self.content = self.parent_doc.content[self.start : self.end]
