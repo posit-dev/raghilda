@@ -218,7 +218,7 @@ class DuckDBStore(Store):
                 combined_chunks[key].metrics.extend(chunk.metrics or [])
 
         if deoverlap:
-            NotImplementedError("Deoverlap not implemented yet")
+            raise NotImplementedError("Deoverlap not implemented yet")
 
         return list(combined_chunks.values())
 
@@ -298,7 +298,7 @@ class DuckDBStore(Store):
             fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
         FROM embeddings e
         JOIN documents doc USING (doc_id)
-        ORDER BY metric_value ASC
+        ORDER BY metric_value DESC
         LIMIT $top_k
         """
 
