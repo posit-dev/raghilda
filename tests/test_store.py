@@ -77,7 +77,7 @@ class TestDuckDBStore:
     @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
     def test_retrieve(self, store_with_docs):
         store_with_docs.build_index()
-        results = store_with_docs.retrieve("document", top_k=3)
+        results = store_with_docs.retrieve("document", top_k=3, deoverlap=False)
         assert len(results) > 3
         for chunk in results:
             assert isinstance(chunk, RetrievedMarkdownChunk)
