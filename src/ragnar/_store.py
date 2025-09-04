@@ -1,7 +1,15 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from .document import ChunkedDocument, Document, MarkdownDocument, MarkdownChunk, Chunk
+from .document import (
+    ChunkedDocument,
+    Document,
+    MarkdownDocument,
+    MarkdownChunk,
+    RetrievedChunk,
+    RetrievedMarkdownChunk,
+    Metric,
+)
 from typing import Optional, Union, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
@@ -29,7 +37,9 @@ class Store(ABC):
         pass
 
     @abstractmethod
-    def retrieve(self, text: str, top_k: int, *args, **kwargs) -> Sequence[Chunk]:
+    def retrieve(
+        self, text: str, top_k: int, *args, **kwargs
+    ) -> Sequence[RetrievedChunk]:
         pass
 
     @abstractmethod
@@ -52,6 +62,11 @@ class VSSMethod(StrEnum):
     COSINE_DISTANCE = "cosine_distance"
     EUCLIDEAN_DISTANCE = "euclidean_distance"
     NEGATIVE_INNER_PRODUCT = "negative_inner_product"
+
+
+class IndexType(StrEnum):
+    BM25 = "bm25"
+    HNSW = "hnsw"
 
 
 class DuckDBStore(Store):
@@ -187,8 +202,25 @@ class DuckDBStore(Store):
 
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
-    ) -> Sequence[MarkdownChunk]:
-        raise NotImplementedError("Retrieve method not implemented yet")
+    ) -> Sequence[RetrievedMarkdownChunk]:
+        vss_chunks = self.retrieve_vss(text, top_k)
+        bm25_chunks = self.retrieve_bm25(text, top_k)
+
+        # combine chunks by `doc_id` and `chunk_id` and then merge metrics
+        combined_chunks: dict[
+            tuple[int | None, int | None], RetrievedMarkdownChunk
+        ] = {}
+        for chunk in vss_chunks + bm25_chunks:
+            key = (chunk.doc_id, chunk.chunk_id)
+            if key not in combined_chunks:
+                combined_chunks[key] = chunk
+            else:
+                combined_chunks[key].metrics.extend(chunk.metrics or [])
+
+        if deoverlap:
+            NotImplementedError("Deoverlap not implemented yet")
+
+        return list(combined_chunks.values())
 
     def retrieve_vss(
         self,
@@ -196,7 +228,7 @@ class DuckDBStore(Store):
         top_k: int,
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
-    ) -> list[MarkdownChunk]:
+    ) -> list[RetrievedMarkdownChunk]:
         if isinstance(query, str):
             if self.metadata.embed is None:
                 raise ValueError("No embedding function available in the store")
@@ -210,7 +242,9 @@ class DuckDBStore(Store):
             e.start, 
             e.end, 
             e.context, 
-            doc.text[ e.start: e.end ] AS content 
+            doc.text[ e.start: e.end ] AS content,
+            e.metric_name,
+            e.metric_value 
         FROM (
             SELECT
                 *,
@@ -234,7 +268,138 @@ class DuckDBStore(Store):
 
         columns = [desc[0] for desc in cursor.description]
 
-        return [MarkdownChunk(**dict(zip(columns, chunk))) for chunk in results]
+        output: list[RetrievedMarkdownChunk] = []
+        for chunk in results:
+            chunk_dict = dict(zip(columns, chunk))
+            name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
+            chunk_dict["metrics"] = [Metric(name, value)]
+            output.append(RetrievedMarkdownChunk(**chunk_dict))
+
+        return output
+
+    def retrieve_bm25(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        k: float = 1.2,
+        b: float = 0.75,
+        conjunctive: bool = False,
+    ) -> list[RetrievedMarkdownChunk]:
+        sql = """
+        SELECT
+            e.doc_id, 
+            e.chunk_id, 
+            e.start, 
+            e.end, 
+            e.context, 
+            doc.text[ e.start: e.end ] AS content,
+            'bm25' AS metric_name,
+            fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
+        FROM embeddings e
+        JOIN documents doc USING (doc_id)
+        ORDER BY metric_value ASC
+        LIMIT $top_k
+        """
+
+        cursor = self.con.cursor()
+
+        cursor.execute(
+            sql,
+            {
+                "query": query,
+                "top_k": top_k,
+                "k": k,
+                "b": b,
+                "conjunctive": conjunctive,
+            },
+        )
+        results = cursor.fetchall()
+
+        if cursor.description is None:
+            raise RuntimeError("Failed get cursor description.")
+
+        columns = [desc[0] for desc in cursor.description]
+
+        output: list[RetrievedMarkdownChunk] = []
+        for chunk in results:
+            chunk_dict = dict(zip(columns, chunk))
+            name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
+            chunk_dict["metrics"] = [Metric(name, value)]
+            output.append(RetrievedMarkdownChunk(**chunk_dict))
+
+        return output
+
+    def build_index(self, type: Optional[IndexType | list[IndexType]] = None):
+        """
+        Build the specified index types on the embeddings table.
+
+        Parameters
+        ----------
+        type
+            The type of index to build. Can be a single IndexType or a list of IndexTypes.
+            If None, builds both BM25 and HNSW indexes.
+        """
+        if type is None:
+            type = [IndexType.BM25, IndexType.HNSW]
+
+        if isinstance(type, IndexType):
+            type = [type]
+
+        if IndexType.BM25 in type:
+            self.con.execute("INSTALL FTS; LOAD FTS;")
+            try:
+                self.con.begin()
+                self._create_fts_index()
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                raise e
+
+        if IndexType.HNSW in type:
+            self.con.execute("INSTALL vss; LOAD vss;")
+            try:
+                self.con.begin()
+                self._create_hnsw_index()
+                self.con.commit()
+            except Exception as e:
+                self.con.rollback()
+                raise e
+
+    def _create_fts_index(self):
+        self.con.execute("""
+        ALTER VIEW chunks RENAME TO chunks_view;
+
+        CREATE TABLE chunks AS
+          SELECT chunk_id, context, text FROM chunks_view;
+        """)
+
+        self.con.execute("""
+        PRAGMA create_fts_index(
+          'chunks',            -- input_table
+          'chunk_id',          -- input_id
+          'context', 'text',   -- *input_values
+          overwrite = 1
+        );
+        """)
+
+        self.con.execute("""
+        DROP TABLE chunks;
+        ALTER VIEW chunks_view RENAME TO chunks;
+        """)
+
+    def _create_hnsw_index(self):
+        self.con.execute("""
+        SET hnsw_enable_experimental_persistence = true;
+
+        DROP INDEX IF EXISTS store_hnsw_cosine_index;
+        DROP INDEX IF EXISTS store_hnsw_l2sq_index;
+        DROP INDEX IF EXISTS store_hnsw_ip_index;
+
+        CREATE INDEX store_hnsw_cosine_index ON embeddings USING HNSW (embedding) WITH (metric = 'cosine');
+        CREATE INDEX store_hnsw_l2sq_index   ON embeddings USING HNSW (embedding) WITH (metric = 'l2sq'); -- array_distance?
+        CREATE INDEX store_hnsw_ip_index     ON embeddings USING HNSW (embedding) WITH (metric = 'ip');  -- array_dot_product
+        """)
 
     def size(self) -> int:
         result = self.con.execute(
