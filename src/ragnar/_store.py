@@ -1,13 +1,14 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from .document import ChunkedDocument, Document, MarkdownDocument, MarkdownChunk
-from typing import Optional, Union
+from .document import ChunkedDocument, Document, MarkdownDocument, MarkdownChunk, Chunk
+from typing import Optional, Union, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
 import pandas as pd
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +28,30 @@ class Store(ABC):
     def insert(self, document: Union[Document, ChunkedDocument]) -> None:
         pass
 
+    @abstractmethod
+    def retrieve(self, text: str, top_k: int, *args, **kwargs) -> Sequence[Chunk]:
+        pass
+
+    @abstractmethod
+    def size(self) -> int:
+        """
+        Counts the number of documents in the store.
+        Note: It's documents, not chunks!
+        """
+        pass
+
 
 @dataclass
 class DuckDBStoreMetadata:
     name: str
     title: str
     embed: Optional[EmbeddingProvider]
+
+
+class VSSMethod(StrEnum):
+    COSINE_DISTANCE = "cosine_distance"
+    EUCLIDEAN_DISTANCE = "euclidean_distance"
+    NEGATIVE_INNER_PRODUCT = "negative_inner_product"
 
 
 class DuckDBStore(Store):
@@ -166,6 +185,53 @@ class DuckDBStore(Store):
             self.con.rollback()
             raise e
 
+    def retrieve(
+        self, text: str, top_k: int = 3, *, deoverlap: bool = True
+    ) -> Sequence[MarkdownChunk]:
+        raise NotImplementedError("Retrieve method not implemented yet")
+
+    def retrieve_vss(
+        self,
+        query: str | Sequence[float],
+        top_k: int,
+        *,
+        method: VSSMethod = VSSMethod.COSINE_DISTANCE,
+    ) -> Sequence[MarkdownChunk]:
+        if isinstance(query, str):
+            if self.metadata.embed is None:
+                raise ValueError("No embedding function available in the store")
+            query = self.metadata.embed.embed([query])[0]
+
+        func, order = _vss_method_info(method)
+        sql = f"""
+        SELECT
+            doc.* EXCLUDE (text, doc_id),
+            e.*,
+            doc.text[ e.start: e.end ] AS text
+        FROM (
+            SELECT
+            *,
+            '{method}' AS metric_name,
+            {func}(embedding, [{",".join(str(x) for x in query)}]::FLOAT[{len(query)}]) AS metric_value
+            FROM embeddings
+            ORDER BY metric_value {order}
+            LIMIT {top_k}
+        ) AS e
+        JOIN documents doc USING (doc_id)
+        ORDER BY metric_value
+        """
+
+        results = self.con.execute(sql).fetchall()
+        return results
+
+    def size(self) -> int:
+        result = self.con.execute(
+            "SELECT COUNT(DISTINCT doc_id) FROM documents"
+        ).fetchone()
+        if result is None:
+            raise RuntimeError("Failed to get size of the store")
+        return result[0]
+
 
 def _overwrite_or_error(location: str | Path, overwrite: bool) -> None:
     if not overwrite:
@@ -205,3 +271,19 @@ def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
             con.unregister(f"tmp_data_{table}")
         except Exception:
             pass
+
+
+def _vss_method_info(method: VSSMethod) -> tuple[str, str]:
+    """
+    Returns the duckdb function name and ordering direction given a VSSMethod.
+    """
+    method_mapping = {
+        VSSMethod.COSINE_DISTANCE: ("array_cosine_distance", "ASC"),
+        VSSMethod.EUCLIDEAN_DISTANCE: ("array_distance", "ASC"),
+        VSSMethod.NEGATIVE_INNER_PRODUCT: ("array_negative_inner_product", "ASC"),
+    }
+
+    if method not in method_mapping:
+        raise ValueError(f"Unknown method: {method}")
+
+    return method_mapping[method]
