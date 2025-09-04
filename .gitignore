@@ -16,3 +16,4 @@ uv.lock
 .env
 
 /.luarc.json
+.claude/settings.local.json
