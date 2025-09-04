@@ -23,14 +23,8 @@ class TestDuckDBStore:
         )
         return store
 
-    def test_create_store(self, store):
-        assert isinstance(store, DuckDBStore)
-        assert store.metadata.name == "test_db"
-        assert store.metadata.title == "Test DuckDB Store"
-        assert store.metadata.embed is None
-
-    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
-    def test_insert(self, store):
+    @pytest.fixture
+    def store_with_docs(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
         chunked_doc = ChunkedDocument(
             document=doc,
@@ -43,3 +37,19 @@ class TestDuckDBStore:
             ],
         )
         store.insert(chunked_doc)
+        return store
+
+    def test_create_store(self, store):
+        assert isinstance(store, DuckDBStore)
+        assert store.metadata.name == "test_db"
+        assert store.metadata.title == "Test DuckDB Store"
+        assert store.metadata.embed is None
+
+    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
+    def test_insert(self, store_with_docs):
+        assert store_with_docs.size() == 1
+
+    @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
+    def test_retrieve_vss(self, store_with_docs):
+        results = store_with_docs.retrieve_vss("test", top_k=3)
+        assert len(results) == 3

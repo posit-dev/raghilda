@@ -24,7 +24,7 @@ docs = [
     "quartodoc>=0.7",
 ]
 test = [
-    "pyright>=1.1.404",
+    "pyright>=1.1.405",
     "pytest>=8.4.1",
     "ruff>=0.12.11",
 ]
