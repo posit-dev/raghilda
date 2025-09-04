@@ -1,6 +1,11 @@
 import pytest
 from ragnar.store import DuckDBStore
-from ragnar.document import ChunkedDocument, MarkdownDocument, MarkdownChunk
+from ragnar.document import (
+    ChunkedDocument,
+    MarkdownDocument,
+    MarkdownChunk,
+    RetrievedMarkdownChunk,
+)
 from ragnar import EmbeddingOpenAI
 
 
@@ -23,6 +28,22 @@ class TestDuckDBStore:
         )
         return store
 
+    @pytest.fixture
+    def store_with_docs(self, store):
+        doc = MarkdownDocument(origin="test", content="This is a test document.")
+        chunked_doc = ChunkedDocument(
+            document=doc,
+            chunks=[
+                _get_markdown_chunk(doc, chunk_id=1, start=0, end=4),
+                _get_markdown_chunk(doc, chunk_id=2, start=5, end=7),
+                _get_markdown_chunk(doc, chunk_id=3, start=8, end=9),
+                _get_markdown_chunk(doc, chunk_id=4, start=10, end=14),
+                _get_markdown_chunk(doc, chunk_id=5, start=15, end=23),
+            ],
+        )
+        store.insert(chunked_doc)
+        return store
+
     def test_create_store(self, store):
         assert isinstance(store, DuckDBStore)
         assert store.metadata.name == "test_db"
@@ -30,16 +51,43 @@ class TestDuckDBStore:
         assert store.metadata.embed is None
 
     @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
-    def test_insert(self, store):
-        doc = MarkdownDocument(origin="test", content="This is a test document.")
-        chunked_doc = ChunkedDocument(
-            document=doc,
-            chunks=[
-                MarkdownChunk(chunk_id=1, parent_doc=doc, start=0, end=4),
-                MarkdownChunk(chunk_id=2, parent_doc=doc, start=5, end=7),
-                MarkdownChunk(chunk_id=3, parent_doc=doc, start=8, end=9),
-                MarkdownChunk(chunk_id=4, parent_doc=doc, start=10, end=14),
-                MarkdownChunk(chunk_id=5, parent_doc=doc, start=15, end=23),
-            ],
-        )
-        store.insert(chunked_doc)
+    def test_insert(self, store_with_docs):
+        assert store_with_docs.size() == 1
+
+    @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
+    def test_retrieve_vss(self, store_with_docs):
+        results = store_with_docs.retrieve_vss("test", top_k=3)
+        assert len(results) == 3
+        for chunk in results:
+            assert isinstance(chunk, RetrievedMarkdownChunk)
+            assert chunk.content is not None
+
+        results = store_with_docs.retrieve_vss("test", top_k=5)
+        assert len(results) == 5
+
+    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
+    def test_retrieve_bm25(self, store_with_docs):
+        store_with_docs.build_index("bm25")
+        results = store_with_docs.retrieve_bm25("document", top_k=3)
+        assert len(results) == 3
+        for chunk in results:
+            assert isinstance(chunk, RetrievedMarkdownChunk)
+            assert chunk.content is not None
+
+    @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
+    def test_retrieve(self, store_with_docs):
+        store_with_docs.build_index()
+        results = store_with_docs.retrieve("document", top_k=3, deoverlap=False)
+        assert len(results) > 3
+        for chunk in results:
+            assert isinstance(chunk, RetrievedMarkdownChunk)
+            assert chunk.content is not None
+
+
+def _get_markdown_chunk(doc, chunk_id, start, end):
+    return MarkdownChunk(
+        chunk_id=chunk_id,
+        start=start,
+        end=end,
+        content=doc.content[start:end],
+    )
