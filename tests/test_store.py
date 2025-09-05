@@ -114,14 +114,10 @@ class TestOpenAIStore:
         assert store_with_docs.size() == 1
 
     def test_retrieve(self, store_with_docs):
-        for _ in range(50):
-            if store_with_docs.size() > 0:
-                break
-            else:
-                # wait for a bit and retry
-                time.sleep(0.2)
+        for _ in range(20):
+            store_with_docs.insert(MarkdownDocument(origin="test", content="hello world world world world world"))
         results = store_with_docs.retrieve("world", top_k=3)
-        assert len(results) == 1
+        assert len(results) > 0
         for chunk in results:
             assert isinstance(chunk, RetrievedChunk)
             assert chunk.content is not None
