@@ -1,3 +1,5 @@
+import os
+import time
 import pytest
 from ragnar.store import DuckDBStore, OpenAIStore
 from ragnar.document import (
@@ -5,7 +7,7 @@ from ragnar.document import (
     MarkdownDocument,
     MarkdownChunk,
     RetrievedMarkdownChunk,
-    Document,
+    RetrievedChunk
 )
 from ragnar import EmbeddingOpenAI
 
@@ -98,7 +100,7 @@ class TestOpenAIStore:
 
     @pytest.fixture
     def store_with_docs(self, store):
-        doc = Document(origin="test", content="This is a test document.")
+        doc = MarkdownDocument(origin="test", content="hello world")
         store.insert(doc)
         return store
 
@@ -109,9 +111,20 @@ class TestOpenAIStore:
     def test_insert(self, store_with_docs):
         assert store_with_docs.size() == 1
 
+    def test_retrieve(self, store_with_docs):
+        results = store_with_docs.retrieve("world", top_k=3)
+        for _ in range(5):
+            if store_with_docs.size() > 0:
+                break
+            else:
+                # wait for a bit and retry
+                time.sleep(0.2)
+        assert len(results) == 1
+        for chunk in results:
+            assert isinstance(chunk, RetrievedChunk)
+            assert chunk.content is not None
+
     
-
-
 
 def _get_markdown_chunk(doc, chunk_id, start, end):
     return MarkdownChunk(
