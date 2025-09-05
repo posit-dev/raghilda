@@ -1,6 +1,12 @@
 import openai
 from ._store import Store
-from .document import Document, RetrievedChunk, MarkdownDocument
+from .document import (
+    Document,
+    RetrievedChunk,
+    MarkdownDocument,
+    ChunkedDocument,
+    Metric,
+)
 from typing import Optional, Sequence
 
 
@@ -28,14 +34,14 @@ class OpenAIStore(Store):
         self.client = client
         self.store_id = store_id
 
-    def insert(self, document: Document) -> None:
+    def insert(self, document: Document | ChunkedDocument) -> None:
         # Upload the document content as a file to the vector store
         # create a temporary file, write the content to it, and upload it
         if not isinstance(document, MarkdownDocument):
             raise ValueError("Only MarkdownDocument is supported for OpenAIStore")
 
         self.client.vector_stores.files.upload_and_poll(
-            file=(document.origin + ".md", document.content.encode("utf-8")),
+            file=((document.origin or "") + ".md", document.content.encode("utf-8")),
             vector_store_id=self.store_id,
         )
 
@@ -48,7 +54,7 @@ class OpenAIStore(Store):
         for item in results.data:
             chunk = RetrievedChunk(
                 content="\n\n".join([x.text for x in item.content]),
-                metrics=[{"name": "similarity", "value": item.score}],
+                metrics=[Metric(name="similarity", value=item.score)],
             )
             chunks.append(chunk)
 
