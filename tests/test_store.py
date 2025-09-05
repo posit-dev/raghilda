@@ -1,5 +1,4 @@
 import os
-import time
 import pytest
 from ragnar.store import DuckDBStore, OpenAIStore
 from ragnar.document import (
@@ -115,7 +114,11 @@ class TestOpenAIStore:
 
     def test_retrieve(self, store_with_docs):
         for _ in range(20):
-            store_with_docs.insert(MarkdownDocument(origin="test", content="hello world world world world world"))
+            store_with_docs.insert(
+                MarkdownDocument(
+                    origin="test", content="hello world world world world world"
+                )
+            )
         results = store_with_docs.retrieve("world", top_k=3)
         assert len(results) > 0
         for chunk in results:
