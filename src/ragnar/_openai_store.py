@@ -6,6 +6,7 @@ from typing import Optional, Sequence
 
 class OpenAIStore(Store):
 
+    @staticmethod
     def create(
         base_url: str = "https://api.openai.com/v1",
         api_key: Optional[str] = None,
@@ -15,6 +16,7 @@ class OpenAIStore(Store):
         vector_store = client.vector_stores.create(**kwargs)
         return OpenAIStore(client, vector_store.id)
 
+    @staticmethod
     def connect(
         store_id: str, 
         base_url: str = "https://api.openai.com/v1",
