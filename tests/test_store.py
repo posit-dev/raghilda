@@ -114,7 +114,7 @@ class TestOpenAIStore:
         assert store_with_docs.size() == 1
 
     def test_retrieve(self, store_with_docs):
-        for _ in range(5):
+        for _ in range(50):
             if store_with_docs.size() > 0:
                 break
             else:
