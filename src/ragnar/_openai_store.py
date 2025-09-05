@@ -5,7 +5,6 @@ from typing import Optional, Sequence
 
 
 class OpenAIStore(Store):
-
     @staticmethod
     def create(
         base_url: str = "https://api.openai.com/v1",
@@ -18,7 +17,7 @@ class OpenAIStore(Store):
 
     @staticmethod
     def connect(
-        store_id: str, 
+        store_id: str,
         base_url: str = "https://api.openai.com/v1",
         api_key: Optional[str] = None,
     ):
@@ -30,7 +29,6 @@ class OpenAIStore(Store):
         self.store_id = store_id
 
     def insert(self, document: Document) -> None:
-
         # Upload the document content as a file to the vector store
         # create a temporary file, write the content to it, and upload it
         if not isinstance(document, MarkdownDocument):
@@ -38,26 +36,25 @@ class OpenAIStore(Store):
 
         self.client.vector_stores.files.upload_and_poll(
             file=(document.origin + ".md", document.content.encode("utf-8")),
-            vector_store_id=self.store_id
+            vector_store_id=self.store_id,
         )
 
     def retrieve(self, text: str, top_k: int) -> Sequence[RetrievedChunk]:
         results = self.client.vector_stores.search(
-            vector_store_id=self.store_id,
-            query=text,
-            max_num_results=top_k
+            vector_store_id=self.store_id, query=text, max_num_results=top_k
         )
 
         chunks = []
         for item in results.data:
             chunk = RetrievedChunk(
                 content="\n\n".join([x.text for x in item.content]),
-                metrics=[{"name": "similarity", "value": item.score}]
+                metrics=[{"name": "similarity", "value": item.score}],
             )
             chunks.append(chunk)
-        
+
         return chunks
 
-    
     def size(self):
-        return self.client.vector_stores.retrieve(vector_store_id=self.store_id).file_counts.total
+        return self.client.vector_stores.retrieve(
+            vector_store_id=self.store_id
+        ).file_counts.total

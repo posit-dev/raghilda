@@ -7,7 +7,7 @@ from ragnar.document import (
     MarkdownDocument,
     MarkdownChunk,
     RetrievedMarkdownChunk,
-    RetrievedChunk
+    RetrievedChunk,
 )
 from ragnar import EmbeddingOpenAI
 
@@ -124,7 +124,6 @@ class TestOpenAIStore:
             assert isinstance(chunk, RetrievedChunk)
             assert chunk.content is not None
 
-    
 
 def _get_markdown_chunk(doc, chunk_id, start, end):
     return MarkdownChunk(
