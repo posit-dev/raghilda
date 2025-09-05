@@ -45,9 +45,12 @@ class OpenAIStore(Store):
             vector_store_id=self.store_id,
         )
 
-    def retrieve(self, text: str, top_k: int) -> Sequence[RetrievedChunk]:
+    def retrieve(self, text: str, top_k: int, **kwargs) -> Sequence[RetrievedChunk]:
         results = self.client.vector_stores.search(
-            vector_store_id=self.store_id, query=text, max_num_results=top_k
+            vector_store_id=self.store_id,
+            query=text,
+            max_num_results=top_k,
+            **kwargs,
         )
 
         chunks = []
