@@ -100,7 +100,9 @@ class TestOpenAIStore:
 
     @pytest.fixture
     def store_with_docs(self, store):
-        doc = MarkdownDocument(origin="test", content="hello world")
+        doc = MarkdownDocument(
+            origin="test", content="hello world this is a document world world world"
+        )
         store.insert(doc)
         return store
 
@@ -112,13 +114,13 @@ class TestOpenAIStore:
         assert store_with_docs.size() == 1
 
     def test_retrieve(self, store_with_docs):
-        results = store_with_docs.retrieve("world", top_k=3)
         for _ in range(5):
             if store_with_docs.size() > 0:
                 break
             else:
                 # wait for a bit and retry
                 time.sleep(0.2)
+        results = store_with_docs.retrieve("world", top_k=3)
         assert len(results) == 1
         for chunk in results:
             assert isinstance(chunk, RetrievedChunk)
