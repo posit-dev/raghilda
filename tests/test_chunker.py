@@ -37,7 +37,7 @@ Even more text here."""
 
 
 def test_chunker_overlap() -> None:
-    text = "abcdefghij" "klmnopqrst" "uvwxyz0123"
+    text = "abcdefghijklmnopqrstuvwxyz0123"
     chunker = RagnarMarkdownChunker(
         chunk_size=10, target_overlap=0.5, max_snap_distance=0
     )
@@ -51,12 +51,7 @@ def test_chunker_overlap() -> None:
 
 
 def test_chunker_heading_context() -> None:
-    md = (
-        "# Title\n\n## Section\n\n"
-        + "A" * 60
-        + "\n\n### Subsection\n\n"
-        + "B" * 60
-    )
+    md = "# Title\n\n## Section\n\n" + "A" * 60 + "\n\n### Subsection\n\n" + "B" * 60
     chunker = RagnarMarkdownChunker(
         chunk_size=50,
         target_overlap=0,
