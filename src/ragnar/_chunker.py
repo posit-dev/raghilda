@@ -1,4 +1,5 @@
-from chonkie.chunker.base import BaseChunker, Chunk
+from chonkie.chunker.base import BaseChunker
+from chonkie.types import Chunk, Context
 from dataclasses import dataclass
 from typing import Optional, Callable, Any, Union, Sequence, List
 import bisect
@@ -185,7 +186,12 @@ class RagnarMarkdownChunker(BaseChunker):
                     text=chunk_text,
                     start_index=s,
                     end_index=e,
-                    context=ctx,
+                    context=Context(
+                        text=ctx,
+                        token_count=self.tokenizer.count_tokens(ctx),
+                    )
+                    if ctx
+                    else None,
                     token_count=token_count,
                 )
             )

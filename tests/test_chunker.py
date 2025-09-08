@@ -32,5 +32,6 @@ Even more text here.
     assert len(chunks) >= 3
     first = chunks[0]
     assert first.text.startswith("# Title")
-    ctx = chunks[2].context or ""
-    assert "Section 1" in ctx
+    ctx = chunks[2].context
+    assert ctx is not None
+    assert "Section 1" in ctx.text
