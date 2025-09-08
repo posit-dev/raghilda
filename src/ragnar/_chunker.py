@@ -180,7 +180,15 @@ class RagnarMarkdownChunker(BaseChunker):
                 ctx_lines = [h["text"] for h in headings if h["start"] < s]
                 ctx = "\n".join(ctx_lines)
             token_count = self.tokenizer.count_tokens(text)
-            chunks.append(MarkdownChunk(text=chunk_text, start_index=s, end_index=e, context=ctx, token_count=token_count))
+            chunks.append(
+                MarkdownChunk(
+                    text=chunk_text,
+                    start_index=s,
+                    end_index=e,
+                    context=ctx,
+                    token_count=token_count,
+                )
+            )
 
         # remove duplicates
         unique: dict[int, MarkdownChunk] = {}
