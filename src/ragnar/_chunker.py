@@ -179,7 +179,7 @@ class RagnarMarkdownChunker(BaseChunker):
             if self.context:
                 ctx_lines = [h["text"] for h in headings if h["start"] < s]
                 ctx = "\n".join(ctx_lines)
-            token_count = self.tokenizer.count_tokens(text)
+            token_count = self.tokenizer.count_tokens(chunk_text)
             chunks.append(
                 MarkdownChunk(
                     text=chunk_text,
