@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Callable, Any, Union, Sequence, List
 import bisect
 import re
+import commonmark
 
 
 @dataclass
@@ -82,27 +83,49 @@ class RagnarMarkdownChunker(BaseChunker):
         return out
 
     @staticmethod
+    def _markdown_node_positions(
+        md: str, node_types: Optional[Sequence[str]] = None
+    ) -> List[dict[str, Any]]:
+        if md == "":
+            return []
+        parser = commonmark.Parser(options={"sourcepos": True})
+        ast = parser.parse(md)
+        line_starts = [0] + [m.end() for m in re.finditer("\n", md)]
+
+        def walk(node: Any, out: List[dict[str, Any]]) -> None:
+            while node:
+                if node.sourcepos and (node_types is None or node.t in node_types):
+                    (sl, sc), (el, ec) = node.sourcepos
+                    start = line_starts[sl - 1] + sc - 1
+                    end = line_starts[el - 1] + ec
+                    info: dict[str, Any] = {
+                        "type": node.t,
+                        "start": start,
+                        "end": end,
+                    }
+                    if node.t == "heading":
+                        info["level"] = node.level
+                    out.append(info)
+                if node.first_child:
+                    walk(node.first_child, out)
+                node = node.nxt
+
+        results: List[dict[str, Any]] = []
+        walk(ast, results)
+        results.sort(key=lambda d: (d["start"], d["end"]))
+        return results
+
+    @staticmethod
     def _heading_positions(text: str) -> List[dict[str, Any]]:
-        headings: List[dict[str, Any]] = []
-        pattern = r"^\s*(#{1,6})[ \t]+.*$"
-        for m in re.finditer(pattern, text, flags=re.MULTILINE):
-            level = len(m.group(1))
-            start = m.start(1)
-            headings.append(
-                {
-                    "start": start,
-                    "end": m.end(),
-                    "level": level,
-                    "text": text[start : m.end()].strip(),
-                }
-            )
+        headings = RagnarMarkdownChunker._markdown_node_positions(text, ["heading"])
+        for h in headings:
+            h["text"] = text[h["start"] : h["end"]].strip()
         return headings
 
     @staticmethod
     def _paragraph_starts(text: str) -> List[int]:
-        starts = [0]
-        for m in re.finditer(r"\n\s*\n", text):
-            starts.append(m.end())
+        paragraphs = RagnarMarkdownChunker._markdown_node_positions(text, ["paragraph"])
+        starts = [0, *[p["start"] for p in paragraphs]]
         return sorted(set(starts))
 
     @staticmethod
