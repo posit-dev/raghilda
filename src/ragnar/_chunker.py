@@ -27,7 +27,7 @@ class RagnarMarkdownChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.target_overlap = target_overlap
         self.max_snap_distance = max_snap_distance
-        self.segment_by_heading_levels = segment_by_heading_levels or []
+        self.segment_by_heading_levels = segment_by_heading_levels
         self.context = context
         self.text = text
 
@@ -126,11 +126,15 @@ class RagnarMarkdownChunker(BaseChunker):
     def chunk(self, text: str) -> Sequence[MarkdownChunk]:
         md_len = len(text)
         headings = self._heading_positions(text)
-        segment_breaks = [
-            h["start"] for h in headings if h["level"] in self.segment_by_heading_levels
-        ]
-        chunk_targets = self._make_chunk_targets(md_len, segment_breaks)
 
+        if self.segment_by_heading_levels is None:
+            segment_breaks = []
+        else:
+            segment_breaks = [
+                h["start"] for h in headings if h["level"] in self.segment_by_heading_levels
+            ]
+        
+        chunk_targets = self._make_chunk_targets(md_len, segment_breaks)
         snap_points = sorted(
             {0, md_len, *[s for s, _ in chunk_targets], *[e for _, e in chunk_targets]}
         )

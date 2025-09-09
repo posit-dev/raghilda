@@ -4,27 +4,27 @@ from ragnar.chunker import RagnarMarkdownChunker
 def test_markdown_chunker_basic() -> None:
     md = """# Title
 
-## Section 1
+    ## Section 1
 
-Some text that is long enough to be chunked.
+    Some text that is long enough to be chunked.
 
-A second paragraph to make the text even longer.
+    A second paragraph to make the text even longer.
 
-## Section 2
+    ## Section 2
 
-More text here.
+    More text here.
 
-### Section 2.1
+    ### Section 2.1
 
-Some text under a level three heading.
+    Some text under a level three heading.
 
-#### Section 2.1.1
+    #### Section 2.1.1
 
-Some text under a level four heading.
+    Some text under a level four heading.
 
-## Section 3
+    ## Section 3
 
-Even more text here."""
+    Even more text here."""
 
     chunker = RagnarMarkdownChunker(chunk_size=40)
     chunks = chunker.chunk(md)
@@ -34,6 +34,11 @@ Even more text here."""
     ctx = chunks[2].context
     assert ctx is not None
     assert "Section 1" in ctx.text
+    # chunk in Section 2, should not contain the "Section 1" context
+    assert chunks[5].context.text.find("Section 1") < 0
+
+
+
 
 
 def test_chunker_overlap() -> None:
