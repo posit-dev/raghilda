@@ -89,3 +89,61 @@ def test_chunker_max_snap_distance() -> None:
     assert chunks_no_snap[1].start_index == 5
     assert chunks_no_snap[1].end_index == 10
     assert chunks_no_snap[1].text == " bbbb"
+
+
+def test_chunker_heading_context_sibling_sections() -> None:
+    md = (
+        "# Title\n\n"
+        "## Section A\n\n"
+        "AAA\n\n"
+        "## Section B\n\n"
+        "BBB"
+    )
+    chunker = RagnarMarkdownChunker(
+        chunk_size=50,
+        target_overlap=0,
+        segment_by_heading_levels=[2],
+        max_snap_distance=0,
+    )
+    chunks = chunker.chunk(md)
+    a_heading = md.index("## Section A")
+    b_heading = md.index("## Section B")
+    a_chunk = next(c for c in chunks if c.start_index == a_heading)
+    b_chunk = next(c for c in chunks if c.start_index == b_heading)
+    assert a_chunk.context is not None
+    assert a_chunk.context.text == "# Title\n## Section A"
+    assert b_chunk.context is not None
+    assert b_chunk.context.text == "# Title\n## Section B"
+    assert "Section A" not in b_chunk.context.text
+
+
+def test_chunker_heading_context_nested_siblings() -> None:
+    md = (
+        "# Title\n\n"
+        "## Section A\n\n"
+        "AAA\n\n"
+        "### Section A1\n\n"
+        "AAA1\n\n"
+        "## Section B\n\n"
+        "BBB\n\n"
+        "### Section B1\n\n"
+        "BBB1"
+    )
+    chunker = RagnarMarkdownChunker(
+        chunk_size=50,
+        target_overlap=0,
+        segment_by_heading_levels=[2, 3],
+        max_snap_distance=0,
+    )
+    chunks = chunker.chunk(md)
+    b_heading = md.index("## Section B")
+    b1_heading = md.index("### Section B1")
+    b_chunk = next(c for c in chunks if c.start_index == b_heading)
+    b1_chunk = next(c for c in chunks if c.start_index == b1_heading)
+    assert b_chunk.context is not None
+    assert b_chunk.context.text == "# Title\n## Section B"
+    assert "Section A" not in b_chunk.context.text
+    assert b1_chunk.context is not None
+    assert b1_chunk.context.text == "# Title\n## Section B\n### Section B1"
+    assert "Section A" not in b1_chunk.context.text
+    assert "Section A1" not in b1_chunk.context.text

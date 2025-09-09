@@ -88,14 +88,16 @@ class RagnarMarkdownChunker(BaseChunker):
     @staticmethod
     def _heading_positions(text: str) -> List[dict[str, Any]]:
         headings: List[dict[str, Any]] = []
-        for m in re.finditer(r"^(#{1,6})[ \t]+.*$", text, flags=re.MULTILINE):
+        pattern = r"^\s*(#{1,6})[ \t]+.*$"
+        for m in re.finditer(pattern, text, flags=re.MULTILINE):
             level = len(m.group(1))
+            start = m.start(1)
             headings.append(
                 {
-                    "start": m.start(),
+                    "start": start,
                     "end": m.end(),
                     "level": level,
-                    "text": m.group(0).strip(),
+                    "text": text[start:m.end()].strip(),
                 }
             )
         return headings
@@ -121,6 +123,24 @@ class RagnarMarkdownChunker(BaseChunker):
     @staticmethod
     def _word_starts(text: str) -> List[int]:
         return [m.end() for m in re.finditer(r"\s+", text)]
+
+    @staticmethod
+    def _heading_context(headings: List[dict[str, Any]], pos: int) -> List[str]:
+        """Return the hierarchy of headings active at ``pos``.
+
+        This walks the list of headings in order, maintaining a stack of the
+        most recent heading at each level. Only headings that start at or
+        before ``pos`` are considered part of the context.
+        """
+        stack: List[dict[str, Any]] = []
+        for h in headings:
+            if h["start"] > pos:
+                break
+            level = h["level"]
+            while stack and stack[-1]["level"] >= level:
+                stack.pop()
+            stack.append(h)
+        return [h["text"] for h in stack]
 
     # Main -----------------------------------------------------------------
     def chunk(self, text: str) -> Sequence[MarkdownChunk]:
@@ -182,7 +202,7 @@ class RagnarMarkdownChunker(BaseChunker):
             chunk_text = text[s:e] if self.text else ""
             ctx = None
             if self.context:
-                ctx_lines = [h["text"] for h in headings if h["start"] < s]
+                ctx_lines = self._heading_context(headings, s)
                 ctx = "\n".join(ctx_lines)
             token_count = self.tokenizer.count_tokens(chunk_text)
             chunks.append(
