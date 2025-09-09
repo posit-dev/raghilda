@@ -20,16 +20,12 @@ class RagnarMarkdownChunker(BaseChunker):
         *,
         max_snap_distance: int = 20,
         segment_by_heading_levels: Optional[list[int]] = None,
-        context: bool = True,
-        text: bool = True,
     ) -> None:
         super().__init__(tokenizer_or_token_counter)
         self.chunk_size = chunk_size
         self.target_overlap = target_overlap
         self.max_snap_distance = max_snap_distance
         self.segment_by_heading_levels = segment_by_heading_levels
-        self.context = context
-        self.text = text
 
     # Helpers ---------------------------------------------------------------
     @staticmethod
@@ -201,12 +197,13 @@ class RagnarMarkdownChunker(BaseChunker):
                     if b > s:
                         e = b
                         break
-            chunk_text = text[s:e] if self.text else ""
-            ctx = None
-            if self.context:
-                ctx_lines = self._heading_context(headings, s)
-                ctx = "\n".join(ctx_lines)
+
+            chunk_text = text[s:e]
             token_count = self.tokenizer.count_tokens(chunk_text)
+
+            ctx_lines = self._heading_context(headings, s)
+            ctx = "\n".join(ctx_lines)
+
             chunks.append(
                 MarkdownChunk(
                     text=chunk_text,
