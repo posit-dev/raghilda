@@ -150,7 +150,7 @@ class RagnarMarkdownChunker(BaseChunker):
         This walks the list of headings in order, maintaining a stack of the
         most recent heading at each level. Only headings that start before
         ``pos`` are considered part of the context.
-        
+
         Headers that start exactly at pos are excluded since they're
         already present in the chunk text, but they still affect the
         hierarchy by removing same-level headings from the context.
