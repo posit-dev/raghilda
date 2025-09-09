@@ -97,7 +97,7 @@ class RagnarMarkdownChunker(BaseChunker):
                     "start": start,
                     "end": m.end(),
                     "level": level,
-                    "text": text[start:m.end()].strip(),
+                    "text": text[start : m.end()].strip(),
                 }
             )
         return headings
@@ -151,9 +151,11 @@ class RagnarMarkdownChunker(BaseChunker):
             segment_breaks = []
         else:
             segment_breaks = [
-                h["start"] for h in headings if h["level"] in self.segment_by_heading_levels
+                h["start"]
+                for h in headings
+                if h["level"] in self.segment_by_heading_levels
             ]
-        
+
         chunk_targets = self._make_chunk_targets(md_len, segment_breaks)
         snap_points = sorted(
             {0, md_len, *[s for s, _ in chunk_targets], *[e for _, e in chunk_targets]}

@@ -35,10 +35,8 @@ def test_markdown_chunker_basic() -> None:
     assert ctx is not None
     assert "Section 1" in ctx.text
     # chunk in Section 2, should not contain the "Section 1" context
+    assert chunks[5].context is not None
     assert chunks[5].context.text.find("Section 1") < 0
-
-
-
 
 
 def test_chunker_overlap() -> None:
@@ -92,13 +90,7 @@ def test_chunker_max_snap_distance() -> None:
 
 
 def test_chunker_heading_context_sibling_sections() -> None:
-    md = (
-        "# Title\n\n"
-        "## Section A\n\n"
-        "AAA\n\n"
-        "## Section B\n\n"
-        "BBB"
-    )
+    md = "# Title\n\n## Section A\n\nAAA\n\n## Section B\n\nBBB"
     chunker = RagnarMarkdownChunker(
         chunk_size=50,
         target_overlap=0,
