@@ -148,17 +148,29 @@ class RagnarMarkdownChunker(BaseChunker):
         """Return the hierarchy of headings active at ``pos``.
 
         This walks the list of headings in order, maintaining a stack of the
-        most recent heading at each level. Only headings that start at or
-        before ``pos`` are considered part of the context.
+        most recent heading at each level. Only headings that start before
+        ``pos`` are considered part of the context.
+        
+        Headers that start exactly at pos are excluded since they're
+        already present in the chunk text, but they still affect the
+        hierarchy by removing same-level headings from the context.
         """
         stack: List[dict[str, Any]] = []
         for h in headings:
             if h["start"] > pos:
                 break
-            level = h["level"]
-            while stack and stack[-1]["level"] >= level:
-                stack.pop()
-            stack.append(h)
+            elif h["start"] == pos:
+                # Header starts at chunk position - don't include it but let it affect hierarchy
+                level = h["level"]
+                while stack and stack[-1]["level"] >= level:
+                    stack.pop()
+                # Don't append this heading to stack since it's in the chunk
+            else:
+                # Header starts before chunk position - include it normally
+                level = h["level"]
+                while stack and stack[-1]["level"] >= level:
+                    stack.pop()
+                stack.append(h)
         return [h["text"] for h in stack]
 
     # Main -----------------------------------------------------------------

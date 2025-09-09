@@ -108,9 +108,9 @@ def test_chunker_heading_context_sibling_sections() -> None:
     a_chunk = next(c for c in chunks if c.start_index == a_heading)
     b_chunk = next(c for c in chunks if c.start_index == b_heading)
     assert a_chunk.context is not None
-    assert a_chunk.context.text == "# Title\n## Section A"
+    assert a_chunk.context.text == "# Title"
     assert b_chunk.context is not None
-    assert b_chunk.context.text == "# Title\n## Section B"
+    assert b_chunk.context.text == "# Title"
     assert "Section A" not in b_chunk.context.text
 
 
@@ -138,10 +138,10 @@ def test_chunker_heading_context_nested_siblings() -> None:
     b_chunk = next(c for c in chunks if c.start_index == b_heading)
     b1_chunk = next(c for c in chunks if c.start_index == b1_heading)
     assert b_chunk.context is not None
-    assert b_chunk.context.text == "# Title\n## Section B"
+    assert b_chunk.context.text == "# Title"
     assert "Section A" not in b_chunk.context.text
     assert b1_chunk.context is not None
-    assert b1_chunk.context.text == "# Title\n## Section B\n### Section B1"
+    assert b1_chunk.context.text == "# Title\n## Section B"
     assert "Section A" not in b1_chunk.context.text
     assert "Section A1" not in b1_chunk.context.text
 
@@ -173,4 +173,14 @@ def test_chunker_recognizes_setext_headings() -> None:
     sub_start = md.index("Subtitle")
     sub_chunk = next(c for c in chunks if c.start_index == sub_start)
     assert sub_chunk.context is not None
-    assert sub_chunk.context.text == "Title\n=====\nSubtitle\n-----"
+    assert sub_chunk.context.text == "Title\n====="
+
+
+def test_heading_with_space() -> None:
+    md = "# Title\n hello world"
+    chunker = RagnarMarkdownChunker(
+        chunk_size=50, target_overlap=0, max_snap_distance=0
+    )
+    chunks = chunker.chunk(md)
+    assert len(chunks) == 1
+    assert chunks[0].context is None
