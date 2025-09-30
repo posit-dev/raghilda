@@ -1,19 +1,19 @@
 from ragnar.document import (
     RetrievedChunk,
-    RetrievedMarkdownChunk,
     Metric,
-    MarkdownChunk,
-    Chunk,
 )
+
+from ragnar._chunker import Chunk, MarkdownChunk
+from ragnar._store import RetrievedDuckDBMarkdownChunk
 
 
 def test_retrieved_chunk():
     metrics = [Metric(name="similarity", value=0.95)]
-    chunk = RetrievedMarkdownChunk(
-        content="Sample content", metrics=metrics, start=1, end=10
+    chunk = RetrievedDuckDBMarkdownChunk(
+        text="Sample content", metrics=metrics, start_index=1, end_index=10
     )
 
-    assert isinstance(chunk, RetrievedMarkdownChunk)
+    assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
     assert isinstance(chunk, RetrievedChunk)
     assert isinstance(chunk, MarkdownChunk)
     assert isinstance(chunk, Chunk)
