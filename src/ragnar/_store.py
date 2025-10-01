@@ -248,6 +248,8 @@ class DuckDBStore(Store):
 
         if self.metadata.embed is not None:
             chunks["embedding"] = self.metadata.embed.embed(chunks.text.tolist())
+        else:
+            chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
 
         # Map Chonkie field names to database field names
         chunks.rename(
@@ -260,11 +262,6 @@ class DuckDBStore(Store):
         if "text" in chunks.columns:
             chunks.drop(columns=["text"], inplace=True)
 
-        # set chunk ids
-        if "chunk_id" not in chunks.columns:
-            # assumes that chunks are ordered.
-            chunks["chunk_id"] = range(0, len(chunks))
-
         try:
             self.con.begin()
             result = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
@@ -274,6 +271,9 @@ class DuckDBStore(Store):
             doc["doc_id"] = doc_id
             doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
             chunks["doc_id"] = [doc_id] * len(chunks)
+            chunks.drop(
+                columns=["id"], inplace=True
+            )  # id -> chunk_id (auto). the id here can be discarded
 
             _duckdb_append(self.con, "documents", doc)
             _duckdb_append(self.con, "embeddings", chunks)
@@ -522,17 +522,24 @@ def _check_is_ragnar_con(con: duckdb.DuckDBPyConnection):
 
 def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
     try:
-        # reorder columns in the same order as in the database
-        cols = con.execute(f"DESCRIBE {table}").fetchdf().column_name.tolist()
-        data = data[cols]
-
         con.register(f"tmp_data_{table}", data)
-        con.execute(f"INSERT INTO {table} SELECT * FROM tmp_data_{table}")
+        column_list = ", ".join(_quote_identifier(col) for col in data.columns)
+        con.execute(
+            f"INSERT INTO {table} ({column_list}) SELECT * FROM tmp_data_{table}"
+        )
     finally:
         try:
             con.unregister(f"tmp_data_{table}")
         except Exception:
             pass
+
+
+def _quote_identifier(identifier: str) -> str:
+    """
+    Quotes an identifier for use in SQL queries.
+    """
+    identifier = identifier.replace('"', '""')
+    return f'"{identifier}"'
 
 
 def _vss_method_info(method: VSSMethod) -> tuple[str, str]:
