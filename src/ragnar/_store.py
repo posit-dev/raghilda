@@ -1,13 +1,12 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
+from ._chunker import MarkdownChunk
 from .document import (
     ChunkedDocument,
     Document,
     MarkdownDocument,
-    MarkdownChunk,
     RetrievedChunk,
-    RetrievedMarkdownChunk,
     Metric,
 )
 from typing import Optional, Union, Sequence
@@ -19,6 +18,73 @@ import pandas as pd
 from enum import StrEnum
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DuckDBMarkdownChunk(MarkdownChunk):
+    """MarkdownChunk with DuckDB-specific fields for database storage"""
+
+    doc_id: Optional[int] = None
+    chunk_id: Optional[int] = None
+
+    def __init__(
+        self,
+        text: str,
+        start_index: int,
+        end_index: int,
+        context=None,
+        token_count=None,
+        doc_id=None,
+        chunk_id=None,
+    ):
+        # Compute token_count if not provided
+        if token_count is None:
+            token_count = len(text)
+
+        # Initialize parent class
+        super().__init__(
+            text=text,
+            start_index=start_index,
+            end_index=end_index,
+            token_count=token_count,
+            context=context,
+        )
+
+        # Set DuckDB-specific fields
+        self.doc_id = doc_id
+        self.chunk_id = chunk_id
+
+
+@dataclass
+class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
+    """DuckDBMarkdownChunk with retrieval metrics"""
+
+    def __init__(
+        self,
+        text: str,
+        start_index: int,
+        end_index: int,
+        context=None,
+        token_count=None,
+        doc_id=None,
+        chunk_id=None,
+        metrics=None,
+    ):
+        # Initialize DuckDBMarkdownChunk
+        super().__init__(
+            text=text,
+            start_index=start_index,
+            end_index=end_index,
+            context=context,
+            token_count=token_count,
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+        )
+
+        # Initialize metrics
+        if metrics is None:
+            metrics = []
+        self.metrics = metrics
 
 
 class Store(ABC):
@@ -181,7 +247,20 @@ class DuckDBStore(Store):
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
-            chunks["embedding"] = self.metadata.embed.embed(chunks.content.tolist())
+            chunks["embedding"] = self.metadata.embed.embed(chunks.text.tolist())
+        else:
+            chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
+
+        # Map Chonkie field names to database field names
+        chunks.rename(
+            columns={"start_index": "start", "end_index": "end"}, inplace=True
+        )
+        # Remove token_count since it's not stored in the database
+        if "token_count" in chunks.columns:
+            chunks.drop(columns=["token_count"], inplace=True)
+        # Remove text since it's not stored in embeddings table (it's computed from documents table)
+        if "text" in chunks.columns:
+            chunks.drop(columns=["text"], inplace=True)
 
         try:
             self.con.begin()
@@ -192,6 +271,9 @@ class DuckDBStore(Store):
             doc["doc_id"] = doc_id
             doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
             chunks["doc_id"] = [doc_id] * len(chunks)
+            chunks.drop(
+                columns=["id"], inplace=True
+            )  # id -> chunk_id (auto). the id here can be discarded
 
             _duckdb_append(self.con, "documents", doc)
             _duckdb_append(self.con, "embeddings", chunks)
@@ -202,7 +284,7 @@ class DuckDBStore(Store):
 
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
-    ) -> Sequence[RetrievedMarkdownChunk]:
+    ) -> Sequence[RetrievedDuckDBMarkdownChunk]:
         retrieved_chunks = []
         if self.metadata.embed is not None:
             retrieved_chunks = self.retrieve_vss(text, top_k)
@@ -211,7 +293,7 @@ class DuckDBStore(Store):
 
         # combine chunks by `doc_id` and `chunk_id` and then merge metrics
         combined_chunks: dict[
-            tuple[int | None, int | None], RetrievedMarkdownChunk
+            tuple[int | None, int | None], RetrievedDuckDBMarkdownChunk
         ] = {}
         for chunk in retrieved_chunks:
             key = (chunk.doc_id, chunk.chunk_id)
@@ -231,7 +313,7 @@ class DuckDBStore(Store):
         top_k: int,
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
-    ) -> list[RetrievedMarkdownChunk]:
+    ) -> list[RetrievedDuckDBMarkdownChunk]:
         if isinstance(query, str):
             if self.metadata.embed is None:
                 raise ValueError("No embedding function available in the store")
@@ -242,10 +324,10 @@ class DuckDBStore(Store):
         SELECT
             e.doc_id, 
             e.chunk_id, 
-            e.start, 
-            e.end, 
+            e.start AS start_index, 
+            e.end AS end_index, 
             e.context, 
-            doc.text[ e.start: e.end ] AS content,
+            doc.text[ e.start: e.end ] AS text,
             e.metric_name,
             e.metric_value 
         FROM (
@@ -271,12 +353,12 @@ class DuckDBStore(Store):
 
         columns = [desc[0] for desc in cursor.description]
 
-        output: list[RetrievedMarkdownChunk] = []
+        output: list[RetrievedDuckDBMarkdownChunk] = []
         for chunk in results:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
             chunk_dict["metrics"] = [Metric(name, value)]
-            output.append(RetrievedMarkdownChunk(**chunk_dict))
+            output.append(RetrievedDuckDBMarkdownChunk(**chunk_dict))
 
         return output
 
@@ -288,15 +370,15 @@ class DuckDBStore(Store):
         k: float = 1.2,
         b: float = 0.75,
         conjunctive: bool = False,
-    ) -> list[RetrievedMarkdownChunk]:
+    ) -> list[RetrievedDuckDBMarkdownChunk]:
         sql = """
         SELECT
             e.doc_id, 
             e.chunk_id, 
-            e.start, 
-            e.end, 
+            e.start AS start_index, 
+            e.end AS end_index, 
             e.context, 
-            doc.text[ e.start: e.end ] AS content,
+            doc.text[ e.start: e.end ] AS text,
             'bm25' AS metric_name,
             fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
         FROM embeddings e
@@ -324,12 +406,12 @@ class DuckDBStore(Store):
 
         columns = [desc[0] for desc in cursor.description]
 
-        output: list[RetrievedMarkdownChunk] = []
+        output: list[RetrievedDuckDBMarkdownChunk] = []
         for chunk in results:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
             chunk_dict["metrics"] = [Metric(name, value)]
-            output.append(RetrievedMarkdownChunk(**chunk_dict))
+            output.append(RetrievedDuckDBMarkdownChunk(**chunk_dict))
 
         return output
 
@@ -440,17 +522,24 @@ def _check_is_ragnar_con(con: duckdb.DuckDBPyConnection):
 
 def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
     try:
-        # reorder columns in the same order as in the database
-        cols = con.execute(f"DESCRIBE {table}").fetchdf().column_name.tolist()
-        data = data[cols]
-
         con.register(f"tmp_data_{table}", data)
-        con.execute(f"INSERT INTO {table} SELECT * FROM tmp_data_{table}")
+        column_list = ", ".join(_quote_identifier(col) for col in data.columns)
+        con.execute(
+            f"INSERT INTO {table} ({column_list}) SELECT * FROM tmp_data_{table}"
+        )
     finally:
         try:
             con.unregister(f"tmp_data_{table}")
         except Exception:
             pass
+
+
+def _quote_identifier(identifier: str) -> str:
+    """
+    Quotes an identifier for use in SQL queries.
+    """
+    identifier = identifier.replace('"', '""')
+    return f'"{identifier}"'
 
 
 def _vss_method_info(method: VSSMethod) -> tuple[str, str]:

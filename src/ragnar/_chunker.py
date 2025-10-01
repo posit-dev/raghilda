@@ -1,5 +1,5 @@
 from chonkie.chunker.base import BaseChunker
-from chonkie.types import Chunk, Context
+from chonkie.types import Chunk
 from dataclasses import dataclass
 from typing import Optional, Callable, Any, Union, Sequence, List
 import bisect
@@ -174,7 +174,7 @@ class RagnarMarkdownChunker(BaseChunker):
         return [h["text"] for h in stack]
 
     # Main -----------------------------------------------------------------
-    def chunk(self, text: str) -> Sequence[MarkdownChunk]:
+    def chunk(self, text: str) -> List[Chunk]:
         md_len = len(text)
         headings = self._heading_positions(text)
 
@@ -219,7 +219,7 @@ class RagnarMarkdownChunker(BaseChunker):
         }
 
         # build chunks ------------------------------------------------------
-        chunks: List[MarkdownChunk] = []
+        chunks: List[Chunk] = []
         sorted_snaps = sorted(snap_table_int.values())
         for start, end in chunk_targets:
             s = snap_table_int[start]
@@ -237,30 +237,25 @@ class RagnarMarkdownChunker(BaseChunker):
             token_count = self.tokenizer.count_tokens(chunk_text)
 
             ctx_lines = self._heading_context(headings, s)
-            ctx = "\n".join(ctx_lines)
+            ctx = "\n".join(ctx_lines) if len(ctx_lines) > 0 else None
 
             chunks.append(
-                MarkdownChunk(
+                Chunk(
                     text=chunk_text,
                     start_index=s,
                     end_index=e,
-                    context=Context(
-                        text=ctx,
-                        token_count=self.tokenizer.count_tokens(ctx),
-                    )
-                    if ctx
-                    else None,
+                    context=ctx,
                     token_count=token_count,
                 )
             )
 
         # remove duplicates
-        unique: dict[int, MarkdownChunk] = {}
+        unique: dict[int, Chunk] = {}
         for c in sorted(chunks, key=lambda c: (c.start_index, -c.end_index)):
             existing = unique.get(c.start_index)
             if existing is None or c.end_index > existing.end_index:
                 unique[c.start_index] = c
-        by_end: dict[int, MarkdownChunk] = {}
+        by_end: dict[int, Chunk] = {}
         for c in sorted(unique.values(), key=lambda c: (c.end_index, c.start_index)):
             existing = by_end.get(c.end_index)
             if existing is None or c.start_index < existing.start_index:

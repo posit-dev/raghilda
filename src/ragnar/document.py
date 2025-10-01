@@ -1,6 +1,7 @@
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TypeVar, Generic
+from chonkie.types import Chunk
 
 
 @dataclass
@@ -16,20 +17,6 @@ class MarkdownDocument(Document):
 
 
 @dataclass
-class Chunk(ABC):
-    content: str
-
-
-@dataclass
-class MarkdownChunk(Chunk):
-    start: int
-    end: int
-    doc_id: Optional[int] = None
-    chunk_id: Optional[int] = None
-    context: Optional[str] = None
-
-
-@dataclass
 class Metric:
     name: str
     value: float
@@ -37,12 +24,7 @@ class Metric:
 
 @dataclass
 class RetrievedChunk(Chunk):
-    metrics: list[Metric]
-
-
-@dataclass
-class RetrievedMarkdownChunk(MarkdownChunk, RetrievedChunk):
-    pass
+    metrics: list[Metric] = field(default_factory=list)
 
 
 DocType = TypeVar("DocType", bound=Document)
