@@ -4,10 +4,10 @@ from ragnar.store import DuckDBStore, OpenAIStore
 from ragnar.document import (
     ChunkedDocument,
     MarkdownDocument,
-    MarkdownChunk,
-    RetrievedMarkdownChunk,
     RetrievedChunk,
 )
+from ragnar._chunker import MarkdownChunk
+from ragnar._store import RetrievedDuckDBMarkdownChunk
 from ragnar import EmbeddingOpenAI
 
 
@@ -36,11 +36,11 @@ class TestDuckDBStore:
         chunked_doc = ChunkedDocument(
             document=doc,
             chunks=[
-                _get_markdown_chunk(doc, chunk_id=1, start=0, end=4),
-                _get_markdown_chunk(doc, chunk_id=2, start=5, end=7),
-                _get_markdown_chunk(doc, chunk_id=3, start=8, end=9),
-                _get_markdown_chunk(doc, chunk_id=4, start=10, end=14),
-                _get_markdown_chunk(doc, chunk_id=5, start=15, end=23),
+                _get_markdown_chunk(doc, start=0, end=4),
+                _get_markdown_chunk(doc, start=5, end=7),
+                _get_markdown_chunk(doc, start=8, end=9),
+                _get_markdown_chunk(doc, start=10, end=14),
+                _get_markdown_chunk(doc, start=15, end=23),
             ],
         )
         store.insert(chunked_doc)
@@ -61,8 +61,8 @@ class TestDuckDBStore:
         results = store_with_docs.retrieve_vss("test", top_k=3)
         assert len(results) == 3
         for chunk in results:
-            assert isinstance(chunk, RetrievedMarkdownChunk)
-            assert chunk.content is not None
+            assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
+            assert chunk.text is not None
 
         results = store_with_docs.retrieve_vss("test", top_k=5)
         assert len(results) == 5
@@ -73,8 +73,8 @@ class TestDuckDBStore:
         results = store_with_docs.retrieve_bm25("document", top_k=3)
         assert len(results) == 3
         for chunk in results:
-            assert isinstance(chunk, RetrievedMarkdownChunk)
-            assert chunk.content is not None
+            assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
+            assert chunk.text is not None
 
     @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
     def test_retrieve(self, store_with_docs):
@@ -82,8 +82,8 @@ class TestDuckDBStore:
         results = store_with_docs.retrieve("document", top_k=3, deoverlap=False)
         assert len(results) > 3
         for chunk in results:
-            assert isinstance(chunk, RetrievedMarkdownChunk)
-            assert chunk.content is not None
+            assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
+            assert chunk.text is not None
 
 
 class TestOpenAIStore:
@@ -123,13 +123,13 @@ class TestOpenAIStore:
         assert len(results) > 0
         for chunk in results:
             assert isinstance(chunk, RetrievedChunk)
-            assert chunk.content is not None
+            assert chunk.text is not None
 
 
-def _get_markdown_chunk(doc, chunk_id, start, end):
+def _get_markdown_chunk(doc, start, end):
     return MarkdownChunk(
-        chunk_id=chunk_id,
-        start=start,
-        end=end,
-        content=doc.content[start:end],
+        start_index=start,
+        end_index=end,
+        text=doc.content[start:end],
+        token_count=len(doc.content[start:end]),
     )
