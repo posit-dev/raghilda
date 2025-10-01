@@ -47,7 +47,7 @@ class EmbeddingOpenAI(EmbeddingProvider):
 
     Examples
     --------
-    ```{python}
+    ```python exec="on" source="console"
     import os
     from ragnar import EmbeddingOpenAI
     if "OPENAI_API_KEY" in os.environ:

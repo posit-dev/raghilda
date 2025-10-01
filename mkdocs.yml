@@ -1,0 +1,14 @@
+site_name: ragnar
+
+theme: material
+
+plugins:
+- search
+- markdown-exec
+- mkdocstrings:
+    handlers:
+      python:
+        paths: [src]  # search packages in the src folder
+
+markdown_extensions:
+- pymdownx.superfences
