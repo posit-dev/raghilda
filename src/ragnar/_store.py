@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from ._chunker import MarkdownChunk
+from ._chunker import MarkdownChunk, RagnarMarkdownChunker
+from .read import read_as_markdown
 from .document import (
     ChunkedDocument,
     Document,
@@ -16,6 +17,9 @@ import logging
 from pathlib import Path
 import pandas as pd
 from enum import StrEnum
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +243,39 @@ class DuckDBStore(Store):
             raise NotImplementedError(
                 f"Insert not implemented for type {type(document)}"
             )
+
+    def ingest(self, uris: Sequence[str], prepare=None, num_workers: Optional[int] = None, progress=True) -> None:
+        """
+        Ingest multiple documents from a list of URIs.
+
+        Parameters
+        ----------
+        uris
+            A sequence of URIs (file paths, URLs, etc.) to ingest.
+        prepare
+            A callable that takes a URI and returns a ChunkedDocument.
+        num_workers
+            The number of worker threads to use for parallel ingestion. If None, to the number of CPU cores.
+        progress
+            Whether to display a progress bar during ingestion. Default is True.
+        """
+        # This functions uses a thread pool to insert documents in the databse
+        if num_workers is None:
+            num_workers = os.cpu_count() or 1
+
+        if prepare is None:
+            chunker = RagnarMarkdownChunker()
+
+            def prepare(uri: str):
+                return chunker.chunk(read_as_markdown(uri))
+
+
+        def do_ingest_work(uri: str) -> None:
+            chunked_doc = prepare(uri)
+            self.insert(chunked_doc)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            tqdm(pool.map(do_ingest_work, uris))
 
     def _insert_chunked_document(
         self, chunked_doc: ChunkedDocument[MarkdownDocument, MarkdownChunk]
