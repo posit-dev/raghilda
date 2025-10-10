@@ -5,7 +5,6 @@ from .document import (
     Document,
     RetrievedChunk,
     MarkdownDocument,
-    ChunkedDocument,
     Metric,
 )
 from typing import Optional, Sequence
@@ -94,7 +93,7 @@ class OpenAIStore(Store):
         self.client = client
         self.store_id = store_id
 
-    def insert(self, document: Document | ChunkedDocument) -> None:
+    def insert(self, document: Document) -> None:
         # Upload the document content as a file to the vector store
         # create a temporary file, write the content to it, and upload it
         if not isinstance(document, MarkdownDocument):

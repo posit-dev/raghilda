@@ -36,7 +36,7 @@ def test_read_as_markdown_extracts_main_and_zaps_nav(tmp_path):
     """
     path = _write_html(tmp_path, "doc.html", html)
 
-    result = read_as_markdown(path)
+    result = read_as_markdown(path).content
 
     assert result.startswith("# Example")
     assert "Main body" in result
@@ -63,8 +63,8 @@ def test_read_as_markdown_main_only_is_subset(tmp_path):
     """
     path = _write_html(tmp_path, "doc.html", html)
 
-    main_only = read_as_markdown(path, main_only=True)
-    not_main_only = read_as_markdown(path, main_only=False)
+    main_only = read_as_markdown(path, main_only=True).content
+    not_main_only = read_as_markdown(path, main_only=False).content
 
     assert len(main_only) < len(not_main_only)
     assert "Sidebar content" not in main_only
@@ -91,7 +91,7 @@ def test_read_as_markdown_expands_nested_fences(tmp_path):
     """
     path = _write_html(tmp_path, "nested.html", html)
 
-    result = read_as_markdown(path)
+    result = read_as_markdown(path).content
 
     assert "````" in result
     assert "```{r}" in result
@@ -101,6 +101,6 @@ def test_read_as_markdown_handles_empty_file(tmp_path):
     empty = tmp_path / "empty.jpg"
     empty.write_bytes(b"\xff\xd8\xff\xd9")
 
-    result = read_as_markdown(str(empty))
+    result = read_as_markdown(str(empty)).content
 
     assert result == ""

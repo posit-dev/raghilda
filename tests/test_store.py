@@ -1,8 +1,8 @@
 import os
 import pytest
 from ragnar.store import DuckDBStore, OpenAIStore
+from ragnar.scrape import find_links
 from ragnar.document import (
-    ChunkedDocument,
     MarkdownDocument,
     RetrievedChunk,
 )
@@ -33,17 +33,14 @@ class TestDuckDBStore:
     @pytest.fixture
     def store_with_docs(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
-        chunked_doc = ChunkedDocument(
-            document=doc,
-            chunks=[
-                _get_markdown_chunk(doc, start=0, end=4),
-                _get_markdown_chunk(doc, start=5, end=7),
-                _get_markdown_chunk(doc, start=8, end=9),
-                _get_markdown_chunk(doc, start=10, end=14),
-                _get_markdown_chunk(doc, start=15, end=23),
-            ],
-        )
-        store.insert(chunked_doc)
+        doc.chunks = [
+            _get_markdown_chunk(doc, start=0, end=4),
+            _get_markdown_chunk(doc, start=5, end=7),
+            _get_markdown_chunk(doc, start=8, end=9),
+            _get_markdown_chunk(doc, start=10, end=14),
+            _get_markdown_chunk(doc, start=15, end=23),
+        ]
+        store.insert(doc)
         return store
 
     def test_create_store(self, store):
@@ -133,3 +130,17 @@ def _get_markdown_chunk(doc, start, end):
         text=doc.content[start:end],
         token_count=len(doc.content[start:end]),
     )
+
+
+def test_ingest():
+    links = find_links("https://r4ds.hadley.nz/base-R.html", validate=True)
+
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=EmbeddingOpenAI(),
+        overwrite=True,
+        name="ingest_db",
+        title="Ingest Test DuckDB Store",
+    )
+
+    store.ingest(links)

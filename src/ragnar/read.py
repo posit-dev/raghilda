@@ -1,6 +1,7 @@
 import re
 import warnings
 from typing import Optional
+from .document import MarkdownDocument
 
 with warnings.catch_warnings():
     # Ignore: "Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work"
@@ -15,9 +16,9 @@ def read_as_markdown(
     uri: str,
     html_extract_selectors: Optional[list[str]] = None,
     html_zap_selectors: Optional[list[str]] = None,
-    *args, 
+    *args,
     **kwargs,
-) -> str:
+) -> MarkdownDocument:
     """
     Read a markdown file from a URI and return its content as a string.
 
@@ -37,7 +38,7 @@ def read_as_markdown(
     html_extract_selectors
         A list of CSS selectors to extract specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['main'].
-    
+
     html_zap_selectors
         A list of CSS selectors to remove specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['nav'].
@@ -58,20 +59,20 @@ def read_as_markdown(
     """
 
     if html_extract_selectors is None:
-        html_extract_selectors = ['main']
-    
+        html_extract_selectors = ["main"]
+
     if html_zap_selectors is None:
-        html_zap_selectors = ['nav']
+        html_zap_selectors = ["nav"]
 
     md = _convert_to_markdown(
-      uri,
-      html_extract_selectors=html_extract_selectors,
-      html_zap_selectors=html_zap_selectors,
-      *args,
-      **kwargs
+        uri,
+        html_extract_selectors=html_extract_selectors,
+        html_zap_selectors=html_zap_selectors,
+        *args,
+        **kwargs,
     )
 
-    return md
+    return MarkdownDocument(origin=uri, content=md)
 
 
 md = markitdown.MarkItDown()
@@ -87,7 +88,7 @@ def _maybe_insert_info_string(text, class_):
     if isinstance(class_, list):
         try:
             class_ = class_[class_.index("sourceCode") + 1]
-        except:
+        except Exception:
             class_ = " ".join(class_)
 
     class_ = str(class_).strip()
@@ -126,6 +127,7 @@ def _maybe_expand_outer_code_fence(text):
     #     ```
     #     ````
     if text.count("```") > 2:
+        new_fence = ""
         for n in range(4, 25):
             new_fence = "`" * n
             if new_fence not in text:
@@ -161,33 +163,34 @@ class _patched_markitdown:
 
     def __enter__(self):
         self.og_convert_soup = og_convert_soup = _CustomMarkdownify.convert_soup
+        _self = self
 
-        def convert_soup(self_, soup):
-            for selector in self.html_extract_selectors:
+        def convert_soup(self, soup):
+            for selector in _self.html_extract_selectors:
                 if (tag := soup.select_one(selector)) is not None:
                     soup = tag.extract()
 
-            for selector in self.html_zap_selectors:
+            for selector in _self.html_zap_selectors:
                 while (tag := soup.select_one(selector)) is not None:
                     tag.decompose()
 
-            return og_convert_soup(self_, soup)
+            return og_convert_soup(self, soup)
 
         _CustomMarkdownify.convert_soup = convert_soup
 
-        self.og_convert_pre = og_convert_pre = _CustomMarkdownify.convert_pre
+        self.og_convert_pre = og_convert_pre = _CustomMarkdownify.convert_pre  # type: ignore[attr-defined]
 
-        def convert_pre(self_, el, text, parent_tags):
+        def convert_pre(self, el, text, parent_tags):
             class_ = el.get("class", [])
-            text = og_convert_pre(self_, el, text, parent_tags)
+            text = og_convert_pre(self, el, text, parent_tags)
             text = _maybe_expand_outer_code_fence(text)
             text = _maybe_insert_info_string(text, class_)
             return text
 
-        _CustomMarkdownify.convert_pre = convert_pre
+        _CustomMarkdownify.convert_pre = convert_pre  # type: ignore[attr-defined]
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        _CustomMarkdownify.convert_pre = self.og_convert_pre
+        _CustomMarkdownify.convert_pre = self.og_convert_pre  # type: ignore[attr-defined]
         _CustomMarkdownify.convert_soup = self.og_convert_soup
 
 

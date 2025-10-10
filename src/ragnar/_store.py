@@ -1,21 +1,24 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from ._chunker import MarkdownChunk
+from ._chunker import MarkdownChunk, RagnarMarkdownChunker
+from .read import read_as_markdown
 from .document import (
-    ChunkedDocument,
     Document,
     MarkdownDocument,
     RetrievedChunk,
     Metric,
 )
-from typing import Optional, Union, Sequence
+from typing import Optional, Sequence, Callable
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
 import pandas as pd
 from enum import StrEnum
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +102,7 @@ class Store(ABC):
         pass
 
     @abstractmethod
-    def insert(self, document: Union[Document, ChunkedDocument]) -> None:
+    def insert(self, document: Document) -> None:
         pass
 
     @abstractmethod
@@ -179,16 +182,15 @@ class DuckDBStore(Store):
 
         con.execute(f"""
         CREATE SEQUENCE chunk_id_seq START 1; -- need a unique id for fts
-        CREATE SEQUENCE doc_id_seq START 1;
 
         CREATE OR REPLACE TABLE documents (
-            doc_id INTEGER PRIMARY KEY DEFAULT nextval('doc_id_seq'),
+            doc_id VARCHAR PRIMARY KEY DEFAULT uuid(),
             origin VARCHAR UNIQUE,
             text VARCHAR
         );
 
         CREATE OR REPLACE TABLE embeddings (
-            doc_id INTEGER NOT NULL,
+            doc_id VARCHAR NOT NULL,
             FOREIGN KEY (doc_id) REFERENCES documents (doc_id),
             chunk_id INTEGER DEFAULT nextval('chunk_id_seq'),
             start INTEGER,
@@ -231,19 +233,68 @@ class DuckDBStore(Store):
 
     def insert(
         self,
-        document: Union[Document, ChunkedDocument[MarkdownDocument, MarkdownChunk]],
+        document: Document,
     ) -> None:
-        if isinstance(document, ChunkedDocument):
+        if isinstance(document, MarkdownDocument):
             self._insert_chunked_document(document)
         else:
             raise NotImplementedError(
                 f"Insert not implemented for type {type(document)}"
             )
 
-    def _insert_chunked_document(
-        self, chunked_doc: ChunkedDocument[MarkdownDocument, MarkdownChunk]
+    def ingest(
+        self,
+        uris: Sequence[str],
+        prepare: Optional[Callable[[str], Document]] = None,
+        num_workers: Optional[int] = None,
+        progress=True,
     ) -> None:
-        doc = pd.DataFrame([asdict(chunked_doc.document)])
+        """
+        Ingest multiple documents from a list of URIs.
+
+        Parameters
+        ----------
+        uris
+            A sequence of URIs (file paths, URLs, etc.) to ingest.
+        prepare
+            A callable that takes a URI and returns a MarkdownDocument with chunks computed..
+        num_workers
+            The number of worker threads to use for parallel ingestion. If None, to the number of CPU cores.
+        progress
+            Whether to display a progress bar during ingestion. Default is True.
+        """
+        # This functions uses a thread pool to insert documents in the databse
+        if num_workers is None:
+            num_workers = os.cpu_count() or 1
+
+        if prepare is None:
+            chunker = RagnarMarkdownChunker()
+
+            def _prepare(uri: str) -> Document:
+                return chunker.chunk_document(read_as_markdown(uri))
+
+            prepare = _prepare
+
+        def do_ingest_work(uri: str) -> None:
+            chunked_doc = prepare(uri)
+            self.insert(chunked_doc)
+
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+            list(
+                tqdm(
+                    pool.map(do_ingest_work, uris),
+                    total=len(uris),
+                    disable=not progress,
+                )
+            )
+
+    def _insert_chunked_document(self, chunked_doc: MarkdownDocument) -> None:
+        # Document should be chunked for insertion
+        assert chunked_doc.chunks is not None
+
+        doc = pd.DataFrame([asdict(chunked_doc)])
+        # Shpuld we really drop metadata? Perhaps we want to add it to the schema definition
+        doc.drop(columns=["chunks", "metadata"], inplace=True, errors="ignore")
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
@@ -262,25 +313,29 @@ class DuckDBStore(Store):
         if "text" in chunks.columns:
             chunks.drop(columns=["text"], inplace=True)
 
+        # local cursor is used so we can use multiple threads
+        # see https://duckdb.org/docs/stable/guides/python/multiple_threads.html
+        cursor = self.con.cursor()
         try:
-            self.con.begin()
-            result = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
-            if result is None:
-                raise RuntimeError("Failed to get next document ID")
-            (doc_id,) = result
-            doc["doc_id"] = doc_id
-            doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
-            chunks["doc_id"] = [doc_id] * len(chunks)
+            cursor.begin()
+            doc.rename(
+                columns={"content": "text", "id": "doc_id"}, inplace=True
+            )  # content -> text
+            chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
             chunks.drop(
                 columns=["id"], inplace=True
             )  # id -> chunk_id (auto). the id here can be discarded
 
-            _duckdb_append(self.con, "documents", doc)
-            _duckdb_append(self.con, "embeddings", chunks)
-            self.con.commit()
+            _duckdb_append(cursor, "documents", doc)
+            _duckdb_append(cursor, "embeddings", chunks)
+            cursor.commit()
         except Exception as e:
-            self.con.rollback()
-            raise e
+            try:
+                cursor.rollback()
+            except Exception:
+                pass
+            finally:
+                raise e
 
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
