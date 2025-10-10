@@ -271,7 +271,7 @@ class DuckDBStore(Store):
             chunked_doc = prepare(uri)
             self.insert(chunked_doc)
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
             results = list(tqdm(
                 pool.map(do_ingest_work, uris),
                 total=len(uris),
