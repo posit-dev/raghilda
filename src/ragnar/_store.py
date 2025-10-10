@@ -9,7 +9,7 @@ from .document import (
     RetrievedChunk,
     Metric,
 )
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Callable
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
@@ -245,7 +245,7 @@ class DuckDBStore(Store):
     def ingest(
         self,
         uris: Sequence[str],
-        prepare=None,
+        prepare: Optional[Callable[[str], Document]] = None,
         num_workers: Optional[int] = None,
         progress=True,
     ) -> None:
@@ -270,23 +270,23 @@ class DuckDBStore(Store):
         if prepare is None:
             chunker = RagnarMarkdownChunker()
 
-            def prepare(uri: str):
+            def _prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
+
+            prepare = _prepare
 
         def do_ingest_work(uri: str) -> None:
             chunked_doc = prepare(uri)
             self.insert(chunked_doc)
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            results = list(
+            list(
                 tqdm(
                     pool.map(do_ingest_work, uris),
                     total=len(uris),
                     disable=not progress,
                 )
             )
-
-        results
 
     def _insert_chunked_document(self, chunked_doc: MarkdownDocument) -> None:
         # Document should be chunked for insertion

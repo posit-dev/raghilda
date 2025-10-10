@@ -3,16 +3,12 @@ from __future__ import annotations
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 from urllib.parse import urldefrag, urljoin, urlparse, unquote
 import xml.etree.ElementTree as ET
 
 import requests
-
-try:  # pragma: no cover - tqdm is optional at runtime
-    from tqdm.auto import tqdm
-except Exception:  # pragma: no cover - fallback when tqdm is unavailable
-    tqdm = None
+from tqdm.auto import tqdm
 
 
 class _AnchorParser(HTMLParser):
@@ -55,9 +51,9 @@ def find_links(
     children_only: bool = False,
     progress: bool = True,
     *,
-    url_filter: Callable[[str], [str]] | None = None,
+    url_filter: Callable[[set[str]], list[str]] | None = None,
     validate: bool = False,
-    **request_kwargs: object,
+    **request_kwargs: Any,
 ) -> list[str]:
     """
     Discover hyperlinks starting from one or many documents and return them as URLs.
@@ -82,7 +78,7 @@ def find_links(
     validate
         When ``True``, perform a lightweight validation to ensure targets are
         reachable before including them in the results.
-    **request_kwargs
+    request_kwargs
         Additional keyword arguments forwarded to :func:`requests.Session.get`
         (and ``head`` during validation) when fetching HTTP resources.
 
@@ -135,7 +131,7 @@ def find_links(
         if children_only and not url.startswith(root_prefix):
             continue
 
-        if validate and not is_valid_uri(url):
+        if validate and not is_valid_uri(url, **request_kwargs):
             # invalid uris are marked as visited so we don't have to re-check
             visited.add(url)
         else:
@@ -153,7 +149,7 @@ def find_links(
                 with open(parsed.path) as f:
                     text = f.read()
             else:
-                response = session.get(url, *request_kwargs)
+                response = session.get(url, **request_kwargs)
                 response.raise_for_status()
                 text = response.text
         except Exception:
@@ -182,7 +178,7 @@ def find_links(
     return list(discovered)
 
 
-def _canonicalize(target: str, *, base: str | None = None) -> tuple[str, str] | None:
+def _canonicalize(target: str, *, base: str | None = None) -> str | None:
     """
     Canonicalize a URL by making them absolute, removing fragments, and
     validating that they have a valid scheme and netloc.
@@ -209,7 +205,7 @@ def _canonicalize(target: str, *, base: str | None = None) -> tuple[str, str] | 
         return abs_path.as_uri()
 
 
-def is_valid_uri(uri, check_remote=True):
+def is_valid_uri(uri: str, check_remote: bool = True, **request_kwargs: Any) -> bool:
     p = urlparse(uri)
     if not p.scheme:
         return Path(uri).exists()
@@ -219,7 +215,12 @@ def is_valid_uri(uri, check_remote=True):
         if not check_remote:
             return True
         try:
-            r = requests.head(uri, allow_redirects=True, timeout=5)
+            head_kwargs: dict[str, Any] = {
+                "allow_redirects": True,
+                "timeout": 5,
+            }
+            head_kwargs.update(request_kwargs)
+            r = requests.head(uri, **head_kwargs)
             return r.status_code < 400
         except requests.RequestException:
             return False
