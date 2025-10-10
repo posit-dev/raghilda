@@ -16,7 +16,7 @@ def read_as_markdown(
     uri: str,
     html_extract_selectors: Optional[list[str]] = None,
     html_zap_selectors: Optional[list[str]] = None,
-    *args, 
+    *args,
     **kwargs,
 ) -> str:
     """
@@ -38,7 +38,7 @@ def read_as_markdown(
     html_extract_selectors
         A list of CSS selectors to extract specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['main'].
-    
+
     html_zap_selectors
         A list of CSS selectors to remove specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['nav'].
@@ -59,17 +59,17 @@ def read_as_markdown(
     """
 
     if html_extract_selectors is None:
-        html_extract_selectors = ['main']
-    
+        html_extract_selectors = ["main"]
+
     if html_zap_selectors is None:
-        html_zap_selectors = ['nav']
+        html_zap_selectors = ["nav"]
 
     md = _convert_to_markdown(
-      uri,
-      html_extract_selectors=html_extract_selectors,
-      html_zap_selectors=html_zap_selectors,
-      *args,
-      **kwargs
+        uri,
+        html_extract_selectors=html_extract_selectors,
+        html_zap_selectors=html_zap_selectors,
+        *args,
+        **kwargs,
     )
 
     return MarkdownDocument(origin=uri, content=md)

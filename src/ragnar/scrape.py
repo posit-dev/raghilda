@@ -42,7 +42,7 @@ def _extract_links(txt: str) -> set[str]:
     # Now try to parse as a sitemap and get
     try:
         root = ET.fromstring(txt)
-        for loc in root.findall('.//{*}url/{*}loc'):
+        for loc in root.findall(".//{*}url/{*}loc"):
             if loc is not None and loc.text:
                 links.add(loc.text.strip())
     except Exception:
@@ -125,7 +125,7 @@ def find_links(
     pbar = tqdm(disable=not progress)
     while queue:
         url, cur_depth, root_prefix = queue.popleft()
-        
+
         if url in visited:
             continue
 
@@ -138,7 +138,7 @@ def find_links(
             continue
 
         visited.add(url)
-        
+
         try:
             response = session.get(url, *request_kwargs)
             response.raise_for_status()
@@ -157,12 +157,14 @@ def find_links(
                 continue
             if link in visited:
                 continue
-            
+
             queue.append((link, cur_depth + 1, root_prefix))
-        
-        pbar.set_description(f"URLs discovered {len(discovered)} | Remaining {len(queue)}")
+
+        pbar.set_description(
+            f"URLs discovered {len(discovered)} | Remaining {len(queue)}"
+        )
         pbar.update(1)
-        
+
     return list(discovered)
 
 
@@ -180,5 +182,3 @@ def _canonicalize(target: str, *, base: str | None = None) -> tuple[str, str] | 
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return url
-
-

@@ -242,7 +242,13 @@ class DuckDBStore(Store):
                 f"Insert not implemented for type {type(document)}"
             )
 
-    def ingest(self, uris: Sequence[str], prepare=None, num_workers: Optional[int] = None, progress=True) -> None:
+    def ingest(
+        self,
+        uris: Sequence[str],
+        prepare=None,
+        num_workers: Optional[int] = None,
+        progress=True,
+    ) -> None:
         """
         Ingest multiple documents from a list of URIs.
 
@@ -272,18 +278,17 @@ class DuckDBStore(Store):
             self.insert(chunked_doc)
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            results = list(tqdm(
-                pool.map(do_ingest_work, uris),
-                total=len(uris),
-                disable=not progress
-                ))
+            results = list(
+                tqdm(
+                    pool.map(do_ingest_work, uris),
+                    total=len(uris),
+                    disable=not progress,
+                )
+            )
 
         results
 
-    def _insert_chunked_document(
-        self, chunked_doc: MarkdownDocument
-    ) -> None:
-
+    def _insert_chunked_document(self, chunked_doc: MarkdownDocument) -> None:
         # Document should be chunked for insertion
         assert chunked_doc.chunks is not None
 
@@ -313,8 +318,10 @@ class DuckDBStore(Store):
         cursor = self.con.cursor()
         try:
             cursor.begin()
-            doc.rename(columns={"content": "text", "id": "doc_id"}, inplace=True)  # content -> text
-            chunks["doc_id"] = [doc["doc_id"][0]]*len(chunks)
+            doc.rename(
+                columns={"content": "text", "id": "doc_id"}, inplace=True
+            )  # content -> text
+            chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
             chunks.drop(
                 columns=["id"], inplace=True
             )  # id -> chunk_id (auto). the id here can be discarded
