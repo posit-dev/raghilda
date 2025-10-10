@@ -4,7 +4,6 @@ from ._embedding import EmbeddingProvider
 from ._chunker import MarkdownChunk, RagnarMarkdownChunker
 from .read import read_as_markdown
 from .document import (
-    ChunkedDocument,
     Document,
     MarkdownDocument,
     RetrievedChunk,
@@ -103,7 +102,7 @@ class Store(ABC):
         pass
 
     @abstractmethod
-    def insert(self, document: Union[Document, ChunkedDocument]) -> None:
+    def insert(self, document: Document) -> None:
         pass
 
     @abstractmethod
@@ -183,16 +182,15 @@ class DuckDBStore(Store):
 
         con.execute(f"""
         CREATE SEQUENCE chunk_id_seq START 1; -- need a unique id for fts
-        CREATE SEQUENCE doc_id_seq START 1;
 
         CREATE OR REPLACE TABLE documents (
-            doc_id INTEGER PRIMARY KEY DEFAULT nextval('doc_id_seq'),
+            doc_id VARCHAR PRIMARY KEY DEFAULT uuid(),
             origin VARCHAR UNIQUE,
             text VARCHAR
         );
 
         CREATE OR REPLACE TABLE embeddings (
-            doc_id INTEGER NOT NULL,
+            doc_id VARCHAR NOT NULL,
             FOREIGN KEY (doc_id) REFERENCES documents (doc_id),
             chunk_id INTEGER DEFAULT nextval('chunk_id_seq'),
             start INTEGER,
@@ -235,9 +233,9 @@ class DuckDBStore(Store):
 
     def insert(
         self,
-        document: Union[Document, ChunkedDocument[MarkdownDocument, MarkdownChunk]],
+        document: Document,
     ) -> None:
-        if isinstance(document, ChunkedDocument):
+        if isinstance(document, MarkdownDocument):
             self._insert_chunked_document(document)
         else:
             raise NotImplementedError(
@@ -253,7 +251,7 @@ class DuckDBStore(Store):
         uris
             A sequence of URIs (file paths, URLs, etc.) to ingest.
         prepare
-            A callable that takes a URI and returns a ChunkedDocument.
+            A callable that takes a URI and returns a MarkdownDocument with chunks computed..
         num_workers
             The number of worker threads to use for parallel ingestion. If None, to the number of CPU cores.
         progress
@@ -267,20 +265,31 @@ class DuckDBStore(Store):
             chunker = RagnarMarkdownChunker()
 
             def prepare(uri: str):
-                return chunker.chunk(read_as_markdown(uri))
-
+                return chunker.chunk_document(read_as_markdown(uri))
 
         def do_ingest_work(uri: str) -> None:
             chunked_doc = prepare(uri)
             self.insert(chunked_doc)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
-            tqdm(pool.map(do_ingest_work, uris))
+            results = list(tqdm(
+                pool.map(do_ingest_work, uris),
+                total=len(uris),
+                disable=not progress
+                ))
+
+        results
 
     def _insert_chunked_document(
-        self, chunked_doc: ChunkedDocument[MarkdownDocument, MarkdownChunk]
+        self, chunked_doc: MarkdownDocument
     ) -> None:
-        doc = pd.DataFrame([asdict(chunked_doc.document)])
+
+        # Document should be chunked for insertion
+        assert chunked_doc.chunks is not None
+
+        doc = pd.DataFrame([asdict(chunked_doc)])
+        # Shpuld we really drop metadata? Perhaps we want to add it to the schema definition
+        doc.drop(columns=["chunks", "metadata"], inplace=True, errors="ignore")
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
@@ -299,25 +308,27 @@ class DuckDBStore(Store):
         if "text" in chunks.columns:
             chunks.drop(columns=["text"], inplace=True)
 
+        # local cursor is used so we can use multiple threads
+        # see https://duckdb.org/docs/stable/guides/python/multiple_threads.html
+        cursor = self.con.cursor()
         try:
-            self.con.begin()
-            result = self.con.execute("SELECT nextval('doc_id_seq')").fetchone()
-            if result is None:
-                raise RuntimeError("Failed to get next document ID")
-            (doc_id,) = result
-            doc["doc_id"] = doc_id
-            doc.rename(columns={"content": "text"}, inplace=True)  # content -> text
-            chunks["doc_id"] = [doc_id] * len(chunks)
+            cursor.begin()
+            doc.rename(columns={"content": "text", "id": "doc_id"}, inplace=True)  # content -> text
+            chunks["doc_id"] = [doc["doc_id"][0]]*len(chunks)
             chunks.drop(
                 columns=["id"], inplace=True
             )  # id -> chunk_id (auto). the id here can be discarded
 
-            _duckdb_append(self.con, "documents", doc)
-            _duckdb_append(self.con, "embeddings", chunks)
-            self.con.commit()
+            _duckdb_append(cursor, "documents", doc)
+            _duckdb_append(cursor, "embeddings", chunks)
+            cursor.commit()
         except Exception as e:
-            self.con.rollback()
-            raise e
+            try:
+                cursor.rollback()
+            except Exception:
+                pass
+            finally:
+                raise e
 
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True

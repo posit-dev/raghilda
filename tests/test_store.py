@@ -3,7 +3,6 @@ import pytest
 from ragnar.store import DuckDBStore, OpenAIStore
 from ragnar.scrape import find_links
 from ragnar.document import (
-    ChunkedDocument,
     MarkdownDocument,
     RetrievedChunk,
 )
@@ -34,17 +33,14 @@ class TestDuckDBStore:
     @pytest.fixture
     def store_with_docs(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
-        chunked_doc = ChunkedDocument(
-            document=doc,
-            chunks=[
+        doc.chunks = [
                 _get_markdown_chunk(doc, start=0, end=4),
                 _get_markdown_chunk(doc, start=5, end=7),
                 _get_markdown_chunk(doc, start=8, end=9),
                 _get_markdown_chunk(doc, start=10, end=14),
                 _get_markdown_chunk(doc, start=15, end=23),
-            ],
-        )
-        store.insert(chunked_doc)
+            ]
+        store.insert(doc)
         return store
 
     def test_create_store(self, store):

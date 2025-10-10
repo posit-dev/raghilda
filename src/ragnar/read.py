@@ -1,6 +1,7 @@
 import re
 import warnings
 from typing import Optional
+from .document import MarkdownDocument
 
 with warnings.catch_warnings():
     # Ignore: "Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work"
@@ -71,7 +72,7 @@ def read_as_markdown(
       **kwargs
     )
 
-    return md
+    return MarkdownDocument(origin=uri, content=md)
 
 
 md = markitdown.MarkItDown()
