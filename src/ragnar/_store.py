@@ -9,7 +9,7 @@ from .document import (
     RetrievedChunk,
     Metric,
 )
-from typing import Optional, Union, Sequence
+from typing import Optional, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
 import logging

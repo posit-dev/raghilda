@@ -88,7 +88,7 @@ def _maybe_insert_info_string(text, class_):
     if isinstance(class_, list):
         try:
             class_ = class_[class_.index("sourceCode") + 1]
-        except:
+        except Exception:
             class_ = " ".join(class_)
 
     class_ = str(class_).strip()
