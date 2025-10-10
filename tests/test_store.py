@@ -133,7 +133,7 @@ def _get_markdown_chunk(doc, start, end):
 
 
 def test_ingest():
-    links = find_links("https://quarto.org/sitemap.xml")
+    links = find_links("https://r4ds.hadley.nz/base-R.html", validate=True)
 
     store = DuckDBStore.create(
         location=":memory:",

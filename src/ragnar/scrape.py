@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Sequence
 from urllib.parse import urldefrag, urljoin, urlparse, unquote
 import xml.etree.ElementTree as ET
 
@@ -16,17 +16,15 @@ except Exception:  # pragma: no cover - fallback when tqdm is unavailable
 
 
 class _AnchorParser(HTMLParser):
-    """Lightweight HTML parser that extracts anchor href targets."""
-
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
-        self.links: set[str] = set()
+        self.links = set()
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() == "a":
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "a":
             return
         for name, value in attrs:
-            if name.lower() == "href" and value:
+            if (name.lower() == "href") and value:
                 self.links.add(value.strip())
 
 
@@ -35,7 +33,7 @@ def _extract_links(txt: str) -> set[str]:
     try:
         parser = _AnchorParser()
         parser.feed(txt)
-        links.add(parser.links)
+        links.update(parser.links)
     except Exception:
         pass
 
@@ -44,7 +42,7 @@ def _extract_links(txt: str) -> set[str]:
         root = ET.fromstring(txt)
         for loc in root.findall(".//{*}url/{*}loc"):
             if loc is not None and loc.text:
-                links.add(loc.text.strip())
+                links.update(loc.text.strip())
     except Exception:
         pass
 
@@ -60,7 +58,7 @@ def find_links(
     url_filter: Callable[[str], [str]] | None = None,
     validate: bool = False,
     **request_kwargs: object,
-) -> Iterable[str]:
+) -> list[str]:
     """
     Discover hyperlinks starting from one or many documents and return them as URLs.
 
@@ -98,8 +96,8 @@ def find_links(
     else:
         entries = [str(item) for item in x]
 
-    if not entries:
-        return iter(())
+    if len(entries) < 1:
+        return []
 
     # Queue of url that we are looking for pages
     # queue contains tuples of (url, depth, root_prefix)
@@ -115,9 +113,14 @@ def find_links(
         url = _canonicalize(entry)
         if url is None:
             continue
-        prefix = url if children_only else ""
-        # sitemaps are common, but we don't want them to be part of the prefix.
-        prefix = prefix.removesuffix("sitemap.xml")
+        parsed = urlparse(url)
+        if parsed.scheme == "file":
+            prefix = "file://" + str(Path(url).parent)
+            prefix = "" if children_only else prefix
+        else:
+            prefix = url if children_only else ""
+            # sitemaps are common, but we don't want them to be part of the prefix.
+            prefix = prefix.removesuffix("sitemap.xml")
         queue.append((url, 0, prefix))
         discovered.add(url)
 
@@ -132,7 +135,12 @@ def find_links(
         if children_only and not url.startswith(root_prefix):
             continue
 
-        discovered.add(url)
+        if validate and not is_valid_uri(url):
+            # invalid uris are marked as visited so we don't have to re-check
+            visited.add(url)
+        else:
+            # if not validating or valid uris are marked as discovered.
+            discovered.add(url)
 
         if cur_depth > depth:
             continue
@@ -140,12 +148,18 @@ def find_links(
         visited.add(url)
 
         try:
-            response = session.get(url, *request_kwargs)
-            response.raise_for_status()
+            parsed = urlparse(url)
+            if parsed.scheme == "file":
+                with open(parsed.path) as f:
+                    text = f.read()
+            else:
+                response = session.get(url, *request_kwargs)
+                response.raise_for_status()
+                text = response.text
         except Exception:
             continue
 
-        links = _extract_links(response.text)
+        links = _extract_links(text)
 
         if url_filter:
             links = url_filter(links)
@@ -179,6 +193,34 @@ def _canonicalize(target: str, *, base: str | None = None) -> tuple[str, str] | 
     url, _ = urldefrag(url)
     url = unquote(url)
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    return url
+
+    # Allow http(s) and file URLs
+    if parsed.scheme in {"http", "https"}:
+        if not parsed.netloc:
+            return None
+        return url
+
+    # Handle local file paths
+    if parsed.scheme == "file" or not parsed.scheme:
+        path = Path(parsed.path)
+        if not path.is_absolute() and base:
+            path = Path(base).parent / path
+        abs_path = path.resolve()
+        return abs_path.as_uri()
+
+
+def is_valid_uri(uri, check_remote=True):
+    p = urlparse(uri)
+    if not p.scheme:
+        return Path(uri).exists()
+    if p.scheme in ("file",):
+        return Path(p.path).exists()
+    if p.scheme in ("http", "https"):
+        if not check_remote:
+            return True
+        try:
+            r = requests.head(uri, allow_redirects=True, timeout=5)
+            return r.status_code < 400
+        except requests.RequestException:
+            return False
+    return False

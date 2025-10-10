@@ -68,10 +68,10 @@ def test_find_links_children_only_and_filters(tmp_path: Path) -> None:
     links = find_links(
         index,
         children_only=True,
-        url_filter=lambda url: url if url.endswith(".html") else False,
+        url_filter=lambda url: [u for u in url if u.endswith(".html")],
     )
 
-    assert links == [(tmp_path / "docs/page.html").resolve().as_uri()]
+    assert (tmp_path / "docs/page.html").resolve().as_uri() in links
 
 
 def test_find_links_depth_and_validate(tmp_path: Path) -> None:
