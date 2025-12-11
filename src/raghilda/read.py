@@ -46,7 +46,7 @@ def read_as_markdown(
     Examples
     --------
     ```{python}
-    from ragnar.read import read_as_markdown
+    from raghilda.read import read_as_markdown
 
     # Read from a local file
     md_content = read_as_markdown("path/to/file.md")

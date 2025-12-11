@@ -2,11 +2,11 @@ project:
   type: website
 
 website:
-  title: ragnar
-  site-url: https://dfalbel.github.io/py-ragnar/
+  title: raghilda
+  site-url: https://dfalbel.github.io/raghilda/
   description: Retrieval-Augmented Generation (RAG) Workflows
 
-  repo-url: https://github.com/dfalbel/py-ragnar
+  repo-url: https://github.com/dfalbel/raghilda
   repo-actions: [issue, edit]
   repo-subdir: docs
 
@@ -23,11 +23,11 @@ website:
         href: reference/index.qmd
 
       - icon: github
-        href: https://github.com/dfalbel/py-ragnar
+        href: https://github.com/dfalbel/raghilda
         aria-label: GitHub repository
 
 quartodoc:
-  package: ragnar
+  package: raghilda
   render_interlinks: true
   sections:
     - title: Embedding Providers

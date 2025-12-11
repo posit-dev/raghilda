@@ -13,7 +13,7 @@ class MarkdownChunk(Chunk):
     pass
 
 
-class RagnarMarkdownChunker(BaseChunker):
+class RaghildaMarkdownChunker(BaseChunker):
     def __init__(
         self,
         tokenizer_or_token_counter: str
@@ -122,14 +122,16 @@ class RagnarMarkdownChunker(BaseChunker):
 
     @staticmethod
     def _heading_positions(text: str) -> List[dict[str, Any]]:
-        headings = RagnarMarkdownChunker._markdown_node_positions(text, ["heading"])
+        headings = RaghildaMarkdownChunker._markdown_node_positions(text, ["heading"])
         for h in headings:
             h["text"] = text[h["start"] : h["end"]].strip()
         return headings
 
     @staticmethod
     def _paragraph_starts(text: str) -> List[int]:
-        paragraphs = RagnarMarkdownChunker._markdown_node_positions(text, ["paragraph"])
+        paragraphs = RaghildaMarkdownChunker._markdown_node_positions(
+            text, ["paragraph"]
+        )
         starts = [0, *[p["start"] for p in paragraphs]]
         return sorted(set(starts))
 

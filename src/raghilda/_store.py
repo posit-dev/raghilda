@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import os
 from ._embedding import EmbeddingProvider
-from ._chunker import MarkdownChunk, RagnarMarkdownChunker
+from ._chunker import MarkdownChunk, RaghildaMarkdownChunker
 from .read import read_as_markdown
 from .document import (
     Document,
@@ -145,7 +145,7 @@ class DuckDBStore(Store):
         read_only: bool = False,
     ):
         con = duckdb.connect(database=location, read_only=read_only)
-        _check_is_ragnar_con(con)
+        _check_is_raghilda_con(con)
 
         metadata = con.execute("SELECT name, title from metadata").fetchall()
         metadata = DuckDBStoreMetadata(
@@ -169,10 +169,10 @@ class DuckDBStore(Store):
         con = duckdb.connect(database=location)
 
         if name is None:
-            name = "ragnar_db"
+            name = "raghilda_db"
 
         if title is None:
-            title = "Ragnar DuckDB Store"
+            title = "Raghilda DuckDB Store"
 
         if embed is None:
             embedding_sql = ""
@@ -268,7 +268,7 @@ class DuckDBStore(Store):
             num_workers = os.cpu_count() or 1
 
         if prepare is None:
-            chunker = RagnarMarkdownChunker()
+            chunker = RaghildaMarkdownChunker()
 
             def _prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
@@ -567,12 +567,12 @@ def _overwrite_or_error(location: str | Path, overwrite: bool) -> None:
             raise FileExistsError(f"File already exists: {location}")
 
 
-def _check_is_ragnar_con(con: duckdb.DuckDBPyConnection):
+def _check_is_raghilda_con(con: duckdb.DuckDBPyConnection):
     tables = con.execute("SHOW TABLES").fetchall()
     tables = [t[0] for t in tables]
 
     if "metadata" not in tables:
-        raise ValueError("Not a valid Ragnar database connection")
+        raise ValueError("Not a valid Raghilda database connection")
 
 
 def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
