@@ -8,6 +8,10 @@
 ## Setup
 - Create/update the dev env: `uv sync --all-groups --extra test` (add `--extra docs` if needed). Use the local venv (`source .venv/bin/activate` or run `./.venv/bin/<cmd>`).
 
+## Docs Build
+- Install docs deps with `uv sync --all-groups --extra docs`.
+- Build docs with `./.venv/bin/task docs_build`.
+
 ## Must-Run Commands Before Hand-off
 - `./.venv/bin/task format_check`
 - `./.venv/bin/task lint_check`

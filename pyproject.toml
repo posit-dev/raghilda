@@ -32,9 +32,9 @@ test = ["pyright>=1.1.405", "pytest>=8.4.1", "ruff>=0.12.11"]
 dev = ["dotenv>=0.9.9", "taskipy>=1.14.1"]
 
 [tool.taskipy.tasks]
-docs_build = { cmd = "../.venv/bin/quartodoc build && quarto render", cwd = "docs", help = "build docs" }
-docs_preview = { cmd = "../.venv/bin/quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
-docs = { cmd = "../.venv/bin/quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
+docs_build = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render", cwd = "docs", help = "build docs" }
+docs_preview = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
+docs = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
 tests = { cmd = "./.venv/bin/pytest tests", help = "run pytest suite" }
 types_check = { cmd = "./.venv/bin/pyright --pythonpath ./.venv/bin/python", help = "run pyright" }
 format = { cmd = "./.venv/bin/ruff format src tests", help = "format code" }
