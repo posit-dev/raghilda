@@ -1,7 +1,8 @@
 from chonkie.chunker.base import BaseChunker
+from chonkie.tokenizer import TokenizerProtocol
 from chonkie.types import Chunk
 from dataclasses import dataclass
-from typing import Optional, Callable, Any, Union, Sequence, List
+from typing import Any, Callable, List, Optional, Sequence, cast
 import bisect
 import re
 import commonmark
@@ -15,14 +16,18 @@ class MarkdownChunk(Chunk):
 class RagnarMarkdownChunker(BaseChunker):
     def __init__(
         self,
-        tokenizer_or_token_counter: Union[str, Callable[[str], int], Any] = "character",
+        tokenizer_or_token_counter: str
+        | TokenizerProtocol
+        | Callable[[str], int] = "character",
         chunk_size: int = 1600,
         target_overlap: float = 0.5,
         *,
         max_snap_distance: int = 20,
         segment_by_heading_levels: Optional[list[int]] = None,
     ) -> None:
-        super().__init__(tokenizer_or_token_counter)
+        # AutoTokenizer supports callables even though BaseChunker only advertises strings/protocols.
+        tokenizer_for_base = cast(str | TokenizerProtocol, tokenizer_or_token_counter)
+        super().__init__(tokenizer_for_base)
         self.chunk_size = chunk_size
         self.target_overlap = target_overlap
         self.max_snap_distance = max_snap_distance
