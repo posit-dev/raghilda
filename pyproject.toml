@@ -1,11 +1,12 @@
 [project]
-name = "ragnar"
+name = "raghilda"
 version = "0.1.0"
 description = "RAG made simple"
 license = "MIT"
 readme = "README.md"
 authors = [
-    { name = "Daniel Falbel", email = "daniel@posit.co" }
+    { name = "Daniel Falbel", email = "daniel@posit.co" },
+    { name = "Tomasz Kalinowski", email = "tomasz@posit.co" },
 ]
 requires-python = ">=3.11, <3.14"
 dependencies = [
@@ -24,21 +25,11 @@ requires = ["uv_build>=0.8.0,<0.9"]
 build-backend = "uv_build"
 
 [project.optional-dependencies]
-docs = [
-    "jupyter>=1.1.1",
-    "quartodoc>=0.7",
-]
-test = [
-    "pyright>=1.1.405",
-    "pytest>=8.4.1",
-    "ruff>=0.12.11",
-]
+docs = ["jupyter>=1.1.1", "quartodoc>=0.7"]
+test = ["pyright>=1.1.405", "pytest>=8.4.1", "ruff>=0.12.11"]
 
 [dependency-groups]
-dev = [
-    "dotenv>=0.9.9",
-    "taskipy>=1.14.1",
-]
+dev = ["dotenv>=0.9.9", "taskipy>=1.14.1"]
 
 [tool.taskipy.tasks]
 docs_build = { cmd = "../.venv/bin/quartodoc build && quarto render", cwd = "docs", help = "build docs" }
