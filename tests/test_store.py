@@ -1,14 +1,14 @@
 import os
 import pytest
-from ragnar.store import DuckDBStore, OpenAIStore
-from ragnar.scrape import find_links
-from ragnar.document import (
+from raghilda.store import DuckDBStore, OpenAIStore
+from raghilda.scrape import find_links
+from raghilda.document import (
     MarkdownDocument,
     RetrievedChunk,
 )
-from ragnar._chunker import MarkdownChunk
-from ragnar._store import RetrievedDuckDBMarkdownChunk
-from ragnar import EmbeddingOpenAI
+from raghilda._chunker import MarkdownChunk
+from raghilda._store import RetrievedDuckDBMarkdownChunk
+from raghilda import EmbeddingOpenAI
 
 
 class TestDuckDBStore:
