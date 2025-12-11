@@ -1,10 +1,13 @@
 project:
   type: website
+  resources:
+    - raghilda-logo.png
 
 website:
   title: raghilda
   site-url: https://dfalbel.github.io/raghilda/
   description: Retrieval-Augmented Generation (RAG) Workflows
+  favicon: raghilda-logo.png
 
   repo-url: https://github.com/dfalbel/raghilda
   repo-actions: [issue, edit]
@@ -16,6 +19,7 @@ website:
       [![](https://posit.co/wp-content/uploads/2024/06/Posit-Logos-2024_horiz-full-color.svg){fig-alt="Posit" width=65px}](https://posit.co)
 
   navbar:
+    logo: raghilda-logo.png
     search: true
       
     right:
