@@ -31,7 +31,7 @@ class EmbeddingProvider(ABC):
 class EmbeddingOpenAI(EmbeddingProvider):
     """
     Creates an embedding function provider backed by OpenAI's embedding models
-    Implements the [EmbeddingProvider](`ragnar.EmbeddingProvider`) interface.
+    Implements the [EmbeddingProvider](`raghilda.EmbeddingProvider`) interface.
 
     Parameters
     ----------
@@ -49,7 +49,7 @@ class EmbeddingOpenAI(EmbeddingProvider):
     --------
     ```{python}
     import os
-    from ragnar import EmbeddingOpenAI
+    from raghilda import EmbeddingOpenAI
     if "OPENAI_API_KEY" in os.environ:
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
         embeddings = provider.embed(["hello world", "testing embeddings"])

@@ -1,11 +1,12 @@
 [project]
-name = "ragnar"
+name = "raghilda"
 version = "0.1.0"
 description = "RAG made simple"
 license = "MIT"
 readme = "README.md"
 authors = [
-    { name = "Daniel Falbel", email = "daniel@posit.co" }
+    { name = "Daniel Falbel", email = "daniel@posit.co" },
+    { name = "Tomasz Kalinowski", email = "tomasz@posit.co" },
 ]
 requires-python = ">=3.11, <3.14"
 dependencies = [
@@ -24,26 +25,16 @@ requires = ["uv_build>=0.8.0,<0.9"]
 build-backend = "uv_build"
 
 [project.optional-dependencies]
-docs = [
-    "jupyter>=1.1.1",
-    "quartodoc>=0.7",
-]
-test = [
-    "pyright>=1.1.405",
-    "pytest>=8.4.1",
-    "ruff>=0.12.11",
-]
+docs = ["jupyter>=1.1.1", "quartodoc>=0.7"]
+test = ["pyright>=1.1.405", "pytest>=8.4.1", "ruff>=0.12.11"]
 
 [dependency-groups]
-dev = [
-    "dotenv>=0.9.9",
-    "taskipy>=1.14.1",
-]
+dev = ["dotenv>=0.9.9", "taskipy>=1.14.1"]
 
 [tool.taskipy.tasks]
-docs_build = { cmd = "../.venv/bin/quartodoc build && quarto render", cwd = "docs", help = "build docs" }
-docs_preview = { cmd = "../.venv/bin/quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
-docs = { cmd = "../.venv/bin/quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
+docs_build = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render", cwd = "docs", help = "build docs" }
+docs_preview = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
+docs = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
 tests = { cmd = "./.venv/bin/pytest tests", help = "run pytest suite" }
 types_check = { cmd = "./.venv/bin/pyright --pythonpath ./.venv/bin/python", help = "run pyright" }
 format = { cmd = "./.venv/bin/ruff format src tests", help = "format code" }

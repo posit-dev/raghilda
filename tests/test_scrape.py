@@ -1,7 +1,7 @@
 import textwrap
 from pathlib import Path
 
-from ragnar.scrape import find_links
+from raghilda.scrape import find_links
 
 
 def _write(tmp_path: Path, relative: str, html: str) -> Path:

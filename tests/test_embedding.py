@@ -1,6 +1,6 @@
 import pytest
 import os
-from ragnar import EmbeddingOpenAI
+from raghilda import EmbeddingOpenAI
 
 
 class TestEmbeddingOpenAI:
