@@ -1,11 +1,10 @@
-from chonkie.chunker.base import BaseChunker
-from chonkie.tokenizer import TokenizerProtocol
-from chonkie.types import Chunk
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Sequence, cast
+from typing import Any, List, Optional, Sequence
 import bisect
 import re
 import commonmark
+
+from ._types import Chunk, BaseChunker
 
 
 @dataclass
@@ -16,18 +15,12 @@ class MarkdownChunk(Chunk):
 class RaghildaMarkdownChunker(BaseChunker):
     def __init__(
         self,
-        tokenizer_or_token_counter: str
-        | TokenizerProtocol
-        | Callable[[str], int] = "character",
         chunk_size: int = 1600,
         target_overlap: float = 0.5,
         *,
         max_snap_distance: int = 20,
         segment_by_heading_levels: Optional[list[int]] = None,
     ) -> None:
-        # AutoTokenizer supports callables even though BaseChunker only advertises strings/protocols.
-        tokenizer_for_base = cast(str | TokenizerProtocol, tokenizer_or_token_counter)
-        super().__init__(tokenizer_for_base)
         self.chunk_size = chunk_size
         self.target_overlap = target_overlap
         self.max_snap_distance = max_snap_distance
@@ -241,7 +234,7 @@ class RaghildaMarkdownChunker(BaseChunker):
                         break
 
             chunk_text = text[s:e]
-            token_count = self.tokenizer.count_tokens(chunk_text)
+            token_count = len(chunk_text)
 
             ctx_lines = self._heading_context(headings, s)
             ctx = "\n".join(ctx_lines) if len(ctx_lines) > 0 else None
