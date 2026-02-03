@@ -60,7 +60,7 @@ class TestChonkieDocumentCompatibility:
     def test_from_any_converts_chonkie_document(self):
         """Document.from_any should convert a chonkie Document."""
         chonkie_doc = ChonkieDocument(content="hello world")
-        result = Document.from_any(chonkie_doc)
+        result = Document.from_any(chonkie_doc)  # type: ignore[arg-type]
 
         assert isinstance(result, Document)
         assert result.content == "hello world"
@@ -72,9 +72,10 @@ class TestChonkieDocumentCompatibility:
             ChonkieChunk(text="hello", start_index=0, end_index=5, token_count=1),
             ChonkieChunk(text="world", start_index=6, end_index=11, token_count=1),
         ]
-        result = Document.from_any(chonkie_doc)
+        result = Document.from_any(chonkie_doc)  # type: ignore[arg-type]
 
         assert isinstance(result, Document)
+        assert result.chunks is not None
         assert len(result.chunks) == 2
         assert all(isinstance(c, Chunk) for c in result.chunks)
         assert result.chunks[0].text == "hello"

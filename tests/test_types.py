@@ -99,7 +99,7 @@ class TestIntoChunkProtocol:
         assert isinstance(BadConvertible(), IntoChunk)
         # But from_any raises TypeError due to runtime validation
         with pytest.raises(TypeError, match="must return a Chunk, got NoneType"):
-            Chunk.from_any(BadConvertible())
+            Chunk.from_any(BadConvertible())  # type: ignore[arg-type]
 
     def test_to_chunk_wrong_signature_returns_string(self):
         """to_chunk() that returns wrong type."""
@@ -111,7 +111,7 @@ class TestIntoChunkProtocol:
         assert isinstance(BadConvertible(), IntoChunk)
         # from_any raises TypeError due to runtime validation
         with pytest.raises(TypeError, match="must return a Chunk, got str"):
-            Chunk.from_any(BadConvertible())
+            Chunk.from_any(BadConvertible())  # type: ignore[arg-type]
 
     def test_to_chunk_with_required_args_fails_at_runtime(self):
         """to_chunk() that requires arguments will fail when called."""
@@ -124,7 +124,7 @@ class TestIntoChunkProtocol:
 
         assert isinstance(BadConvertible(), IntoChunk)
         with pytest.raises(TypeError, match="required_arg"):
-            Chunk.from_any(BadConvertible())
+            Chunk.from_any(BadConvertible())  # type: ignore[arg-type]
 
     def test_to_chunk_as_property_not_method(self):
         """to_chunk as a property instead of method."""
@@ -138,7 +138,7 @@ class TestIntoChunkProtocol:
         assert isinstance(PropertyChunk(), IntoChunk)
         # But from_any raises TypeError because it's not callable
         with pytest.raises(TypeError, match="must be a method"):
-            Chunk.from_any(PropertyChunk())
+            Chunk.from_any(PropertyChunk())  # type: ignore[arg-type]
 
 
 class TestIsinstance:
@@ -209,7 +209,7 @@ class TestDocumentProtocols:
             content = "hello world"
             chunks = None
 
-        result = Document.from_any(MyDoc())
+        result = Document.from_any(MyDoc())  # type: ignore[arg-type]
         assert isinstance(result, Document)
         assert result.content == "hello world"
 
@@ -224,7 +224,8 @@ class TestDocumentProtocols:
             content = "chunk1 chunk2"
             chunks = [MyChunk()]
 
-        result = Document.from_any(MyDoc())
+        result = Document.from_any(MyDoc())  # type: ignore[arg-type]
+        assert result.chunks is not None
         assert len(result.chunks) == 1
         assert isinstance(result.chunks[0], Chunk)
         assert result.chunks[0].text == "chunk1"
@@ -246,11 +247,11 @@ class TestErrorCases:
             pass
 
         with pytest.raises(TypeError, match="Cannot convert"):
-            Chunk.from_any(Invalid())
+            Chunk.from_any(Invalid())  # type: ignore[arg-type]
 
     def test_document_from_any_raises_for_invalid_type(self):
         class Invalid:
             pass
 
         with pytest.raises(TypeError, match="Cannot convert"):
-            Document.from_any(Invalid())
+            Document.from_any(Invalid())  # type: ignore[arg-type]
