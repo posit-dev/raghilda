@@ -302,7 +302,7 @@ class DuckDBStore(Store):
         else:
             chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
 
-        # Map Chonkie field names to database field names
+        # Map Chunk field names to database field names
         chunks.rename(
             columns={"start_index": "start", "end_index": "end"}, inplace=True
         )
@@ -323,7 +323,7 @@ class DuckDBStore(Store):
             )  # content -> text
             chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
             chunks.drop(
-                columns=["id"], inplace=True
+                columns=["id"], inplace=True, errors="ignore"
             )  # id -> chunk_id (auto). the id here can be discarded
 
             _duckdb_append(cursor, "documents", doc)
