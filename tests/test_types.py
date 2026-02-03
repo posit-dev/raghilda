@@ -5,7 +5,6 @@ from raghilda._types import (
     IntoChunk,
     Document,
     DocumentLike,
-    IntoDocument,
 )
 
 
@@ -73,7 +72,9 @@ class TestIntoChunkProtocol:
     def test_class_with_to_chunk_satisfies_into_chunk(self):
         class Convertible:
             def to_chunk(self) -> Chunk:
-                return Chunk(text="converted", start_index=0, end_index=9, token_count=9)
+                return Chunk(
+                    text="converted", start_index=0, end_index=9, token_count=9
+                )
 
         assert isinstance(Convertible(), IntoChunk)
 

@@ -5,10 +5,10 @@ import pytest
 # Skip all tests in this module if chonkie is not installed
 chonkie = pytest.importorskip("chonkie")
 
-from chonkie.types import Chunk as ChonkieChunk, Document as ChonkieDocument
-from raghilda._types import Chunk, Document, ChunkLike, IntoChunk, DocumentLike
-from raghilda._store import DuckDBStore
-from raghilda.document import MarkdownDocument
+from chonkie.types import Chunk as ChonkieChunk, Document as ChonkieDocument  # noqa: E402
+from raghilda._types import Chunk, Document, ChunkLike, DocumentLike  # noqa: E402
+from raghilda._store import DuckDBStore  # noqa: E402
+from raghilda.document import MarkdownDocument  # noqa: E402
 
 
 class TestChonkieChunkCompatibility:
@@ -96,7 +96,9 @@ class TestChonkieChunkerWithStore:
 
         # Use chonkie's TokenChunker
         chunker = TokenChunker(chunk_size=50, chunk_overlap=10)
-        text = "This is a test document. It has multiple sentences. We want to chunk it."
+        text = (
+            "This is a test document. It has multiple sentences. We want to chunk it."
+        )
 
         # Chunk the text using chonkie
         chonkie_chunks = chunker.chunk(text)
