@@ -55,6 +55,7 @@ funding:
 # Repository
 # ----------
 repo: https://github.com/dfalbel/py-ragnar
+github_style: widget  # "widget" shows star count, "icon" shows just the icon
 
 # API Reference Structure
 # -----------------------
