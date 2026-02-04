@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import os
 from .embedding import EmbeddingProvider
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
-from .chunker import RaghildaMarkdownChunker
+from .chunker import MarkdownChunker
 from .read import read_as_markdown
 from .document import Document, MarkdownDocument
 from typing import Optional, Sequence, Callable
@@ -87,31 +87,80 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
 
 
 class BaseStore(ABC):
+    """Abstract base class for vector stores.
+
+    A store is responsible for storing documents and their embeddings,
+    and retrieving relevant chunks based on similarity search.
+
+    Subclasses must implement all abstract methods to provide a concrete
+    storage backend (e.g., DuckDB, OpenAI Vector Store).
+    """
+
     @staticmethod
     @abstractmethod
     def connect(*args, **kwargs) -> "BaseStore":
+        """Connect to an existing store.
+
+        Returns
+        -------
+        BaseStore
+            A connected store instance.
+        """
         pass
 
     @staticmethod
     @abstractmethod
     def create(*args, **kwargs) -> "BaseStore":
+        """Create a new store.
+
+        Returns
+        -------
+        BaseStore
+            A newly created store instance.
+        """
         pass
 
     @abstractmethod
     def insert(self, document: Document) -> None:
+        """Insert a document into the store.
+
+        The document will be chunked and embedded before storage.
+
+        Parameters
+        ----------
+        document
+            The document to insert.
+        """
         pass
 
     @abstractmethod
     def retrieve(
         self, text: str, top_k: int, *args, **kwargs
     ) -> Sequence[RetrievedChunk]:
+        """Retrieve the most similar chunks to the given text.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return.
+
+        Returns
+        -------
+        Sequence[RetrievedChunk]
+            The most similar chunks, ordered by relevance.
+        """
         pass
 
     @abstractmethod
     def size(self) -> int:
-        """
-        Counts the number of documents in the store.
-        Note: It's documents, not chunks!
+        """Count the number of documents in the store.
+
+        Returns
+        -------
+        int
+            The number of documents (not chunks) in the store.
         """
         pass
 
@@ -135,11 +184,52 @@ class IndexType(StrEnum):
 
 
 class DuckDBStore(BaseStore):
+    """A vector store backed by DuckDB.
+
+    DuckDBStore provides local vector storage with support for both
+    semantic search (using embeddings) and full-text search (using BM25).
+    Data is persisted to a DuckDB database file.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.store import DuckDBStore
+    from raghilda.embedding import EmbeddingOpenAI
+
+    # Create a new store with embeddings
+    store = DuckDBStore.create(
+        location="my_store.db",
+        embed=EmbeddingOpenAI(),
+    )
+
+    # Insert documents
+    store.ingest(["https://example.com/doc1.md", "https://example.com/doc2.md"])
+
+    # Retrieve similar chunks
+    chunks = store.retrieve("How do I use this?", top_k=5)
+    ```
+    """
+
     @staticmethod
     def connect(
         location: str | Path = ":memory:",
         read_only: bool = False,
     ):
+        """Connect to an existing DuckDB store.
+
+        Parameters
+        ----------
+        location
+            Path to the DuckDB database file.
+        read_only
+            Whether to open the database in read-only mode.
+
+        Returns
+        -------
+        DuckDBStore
+            A connected store instance.
+        """
         con = duckdb.connect(database=location, read_only=read_only)
         _check_is_raghilda_con(con)
 
@@ -161,6 +251,27 @@ class DuckDBStore(BaseStore):
         name: Optional[str] = None,
         title: Optional[str] = None,
     ):
+        """Create a new DuckDB store.
+
+        Parameters
+        ----------
+        location
+            Path where the DuckDB database file will be created.
+        embed
+            Embedding provider for generating vector embeddings.
+            If None, only full-text search will be available.
+        overwrite
+            Whether to overwrite an existing database at the location.
+        name
+            Internal name for the store.
+        title
+            Human-readable title for the store.
+
+        Returns
+        -------
+        DuckDBStore
+            A newly created store instance.
+        """
         _overwrite_or_error(location, overwrite)
         con = duckdb.connect(database=location)
 
@@ -264,7 +375,7 @@ class DuckDBStore(BaseStore):
             num_workers = os.cpu_count() or 1
 
         if prepare is None:
-            chunker = RaghildaMarkdownChunker()
+            chunker = MarkdownChunker()
 
             def _prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
