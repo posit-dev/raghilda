@@ -1,3 +1,4 @@
-from ._chunker import RaghildaMarkdownChunker, MarkdownChunk
+from ._chunker import BaseChunker, RaghildaMarkdownChunker
+from .chunk import MarkdownChunk
 
-__all__ = ["RaghildaMarkdownChunker", "MarkdownChunk"]
+__all__ = ["BaseChunker", "RaghildaMarkdownChunker", "MarkdownChunk"]

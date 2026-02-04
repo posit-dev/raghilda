@@ -1,14 +1,10 @@
 from abc import ABC, abstractmethod
 import os
-from ._embedding import EmbeddingProvider
-from ._chunker import MarkdownChunk, RaghildaMarkdownChunker
+from .embedding import EmbeddingProvider
+from .chunk import MarkdownChunk, RetrievedChunk, Metric
+from .chunker import RaghildaMarkdownChunker
 from .read import read_as_markdown
-from .document import (
-    Document,
-    MarkdownDocument,
-    RetrievedChunk,
-    Metric,
-)
+from .document import Document, MarkdownDocument
 from typing import Optional, Sequence, Callable
 import duckdb
 from dataclasses import dataclass, asdict
@@ -90,15 +86,15 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
         self.metrics = metrics
 
 
-class Store(ABC):
+class BaseStore(ABC):
     @staticmethod
     @abstractmethod
-    def connect(*args, **kwargs) -> "Store":
+    def connect(*args, **kwargs) -> "BaseStore":
         pass
 
     @staticmethod
     @abstractmethod
-    def create(*args, **kwargs) -> "Store":
+    def create(*args, **kwargs) -> "BaseStore":
         pass
 
     @abstractmethod
@@ -138,7 +134,7 @@ class IndexType(StrEnum):
     HNSW = "hnsw"
 
 
-class DuckDBStore(Store):
+class DuckDBStore(BaseStore):
     @staticmethod
     def connect(
         location: str | Path = ":memory:",

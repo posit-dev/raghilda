@@ -2,13 +2,10 @@ import os
 import pytest
 from raghilda.store import DuckDBStore, OpenAIStore
 from raghilda.scrape import find_links
-from raghilda.document import (
-    MarkdownDocument,
-    RetrievedChunk,
-)
-from raghilda._chunker import MarkdownChunk
-from raghilda._store import RetrievedDuckDBMarkdownChunk
-from raghilda import EmbeddingOpenAI
+from raghilda.document import MarkdownDocument
+from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda._store import RetrievedDuckDBMarkdownChunk  # internal implementation
+from raghilda.embedding import EmbeddingOpenAI
 
 
 class TestDuckDBStore:

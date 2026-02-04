@@ -46,6 +46,7 @@ def read_as_markdown(
     Examples
     --------
     ```{python}
+    #| eval: false
     from raghilda.read import read_as_markdown
 
     # Read from a local file

@@ -1,15 +1,25 @@
-from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 import bisect
 import re
 import commonmark
 
-from ._types import Chunk, BaseChunker
+from .chunk import Chunk, MarkdownChunk
+from .document import Document
 
 
-@dataclass
-class MarkdownChunk(Chunk):
-    pass
+class BaseChunker:
+    """Base class for chunkers."""
+
+    def chunk(self, text: str) -> Sequence[Chunk]:
+        raise NotImplementedError
+
+    def chunk_document(self, doc: Document) -> Document:
+        """Chunk a document and return it with chunks attached."""
+        doc.chunks = list(self.chunk(doc.content))
+        return doc
+
+    def __call__(self, text: str) -> Sequence[Chunk]:
+        return self.chunk(text)
 
 
 class RaghildaMarkdownChunker(BaseChunker):
@@ -174,7 +184,7 @@ class RaghildaMarkdownChunker(BaseChunker):
         return [h["text"] for h in stack]
 
     # Main -----------------------------------------------------------------
-    def chunk(self, text: str) -> List[Chunk]:
+    def chunk(self, text: str) -> List[MarkdownChunk]:
         md_len = len(text)
         headings = self._heading_positions(text)
 
@@ -219,7 +229,7 @@ class RaghildaMarkdownChunker(BaseChunker):
         }
 
         # build chunks ------------------------------------------------------
-        chunks: List[Chunk] = []
+        chunks: List[MarkdownChunk] = []
         sorted_snaps = sorted(snap_table_int.values())
         for start, end in chunk_targets:
             s = snap_table_int[start]
@@ -240,7 +250,7 @@ class RaghildaMarkdownChunker(BaseChunker):
             ctx = "\n".join(ctx_lines) if len(ctx_lines) > 0 else None
 
             chunks.append(
-                Chunk(
+                MarkdownChunk(
                     text=chunk_text,
                     start_index=s,
                     end_index=e,
@@ -250,12 +260,12 @@ class RaghildaMarkdownChunker(BaseChunker):
             )
 
         # remove duplicates
-        unique: dict[int, Chunk] = {}
+        unique: dict[int, MarkdownChunk] = {}
         for c in sorted(chunks, key=lambda c: (c.start_index, -c.end_index)):
             existing = unique.get(c.start_index)
             if existing is None or c.end_index > existing.end_index:
                 unique[c.start_index] = c
-        by_end: dict[int, Chunk] = {}
+        by_end: dict[int, MarkdownChunk] = {}
         for c in sorted(unique.values(), key=lambda c: (c.end_index, c.start_index)):
             existing = by_end.get(c.end_index)
             if existing is None or c.start_index < existing.start_index:
