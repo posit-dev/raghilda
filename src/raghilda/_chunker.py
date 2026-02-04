@@ -22,7 +22,77 @@ class BaseChunker:
         return self.chunk(text)
 
 
-class RaghildaMarkdownChunker(BaseChunker):
+class MarkdownChunker(BaseChunker):
+    """Chunk Markdown documents into overlapping segments at semantic boundaries.
+
+    This chunker divides Markdown text into smaller, overlapping chunks while
+    intelligently positioning cut points at semantic boundaries like headings,
+    paragraphs, sentences, and words. Rather than cutting rigidly at character
+    counts, it nudges cut points to the nearest sensible boundary, producing
+    more semantically coherent chunks suitable for RAG applications.
+
+    Parameters
+    ----------
+    chunk_size
+        Target size for each chunk in characters (approximately 4 characters
+        per token). The chunker attempts to create chunks near this size,
+        though actual sizes may vary based on semantic boundaries.
+        Default is 1600 characters (~400 tokens).
+    target_overlap
+        Fraction of overlap between successive chunks, from 0 to 1.
+        Default is 0.5 (50% overlap). Even with 0, some overlap may occur
+        because the last chunk is anchored to the document end.
+    max_snap_distance
+        Maximum distance (in characters) to move a cut point to reach a
+        semantic boundary. If no boundary is found within this distance,
+        the cut point stays at its original position. Default is 20.
+    segment_by_heading_levels
+        List of heading levels (1-6) that act as hard boundaries. When
+        specified, no chunk will cross these headings, and segments between
+        them are chunked independently. For example, `[1, 2]` ensures chunks
+        never span across h1 or h2 headings.
+
+    Examples
+    --------
+    ```{python}
+    from raghilda.chunker import MarkdownChunker
+
+    chunker = MarkdownChunker(
+        chunk_size=100,
+        target_overlap=0.2,
+        segment_by_heading_levels=[1, 2],
+    )
+
+    text = '''# Introduction
+    This is the introduction section with some content.
+
+    ## Background
+    Here is background information that provides context.
+
+    ## Methods
+    The methods section describes our approach.
+    '''
+
+    chunks = chunker.chunk(text)
+    for chunk in chunks:
+        print(f"[{chunk.start_index}:{chunk.end_index}] {chunk.text[:40]}...")
+    ```
+
+    Notes
+    -----
+    The chunking algorithm works as follows:
+
+    1. Parse the Markdown to identify semantic boundaries (headings,
+       paragraphs, sentences, lines, words)
+    2. If `segment_by_heading_levels` is set, split the document at those
+       headings first
+    3. For each segment, calculate target chunk boundaries based on
+       `chunk_size` and `target_overlap`
+    4. Snap each boundary to the nearest semantic boundary (preferring
+       headings > paragraphs > sentences > lines > words)
+    5. Extract chunks with their positional information and heading context
+    """
+
     def __init__(
         self,
         chunk_size: int = 1600,
@@ -125,14 +195,14 @@ class RaghildaMarkdownChunker(BaseChunker):
 
     @staticmethod
     def _heading_positions(text: str) -> List[dict[str, Any]]:
-        headings = RaghildaMarkdownChunker._markdown_node_positions(text, ["heading"])
+        headings = MarkdownChunker._markdown_node_positions(text, ["heading"])
         for h in headings:
             h["text"] = text[h["start"] : h["end"]].strip()
         return headings
 
     @staticmethod
     def _paragraph_starts(text: str) -> List[int]:
-        paragraphs = RaghildaMarkdownChunker._markdown_node_positions(
+        paragraphs = MarkdownChunker._markdown_node_positions(
             text, ["paragraph"]
         )
         starts = [0, *[p["start"] for p in paragraphs]]
