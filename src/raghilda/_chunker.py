@@ -202,9 +202,7 @@ class MarkdownChunker(BaseChunker):
 
     @staticmethod
     def _paragraph_starts(text: str) -> List[int]:
-        paragraphs = MarkdownChunker._markdown_node_positions(
-            text, ["paragraph"]
-        )
+        paragraphs = MarkdownChunker._markdown_node_positions(text, ["paragraph"])
         starts = [0, *[p["start"] for p in paragraphs]]
         return sorted(set(starts))
 
