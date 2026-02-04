@@ -1,5 +1,5 @@
 import textwrap
-from raghilda.chunker import RaghildaMarkdownChunker
+from raghilda.chunker import MarkdownChunker
 
 
 def test_markdown_chunker_basic() -> None:
@@ -31,7 +31,7 @@ def test_markdown_chunker_basic() -> None:
         """
     ).strip()
 
-    chunker = RaghildaMarkdownChunker(chunk_size=40)
+    chunker = MarkdownChunker(chunk_size=40)
     chunks = chunker.chunk(md)
     assert len(chunks) >= 3
     first = chunks[0]
@@ -46,9 +46,7 @@ def test_markdown_chunker_basic() -> None:
 
 def test_chunker_overlap() -> None:
     text = "abcdefghijklmnopqrstuvwxyz0123"
-    chunker = RaghildaMarkdownChunker(
-        chunk_size=10, target_overlap=0.5, max_snap_distance=0
-    )
+    chunker = MarkdownChunker(chunk_size=10, target_overlap=0.5, max_snap_distance=0)
     chunks = chunker.chunk(text)
     assert len(chunks) == 5
     for c in chunks:
@@ -60,7 +58,7 @@ def test_chunker_overlap() -> None:
 
 def test_chunker_heading_context() -> None:
     md = "# Title\n\n## Section\n\n" + "A" * 60 + "\n\n### Subsection\n\n" + "B" * 60
-    chunker = RaghildaMarkdownChunker(
+    chunker = MarkdownChunker(
         chunk_size=50,
         target_overlap=0,
         segment_by_heading_levels=[2],
@@ -75,10 +73,8 @@ def test_chunker_heading_context() -> None:
 
 def test_chunker_max_snap_distance() -> None:
     text = "aaaaa bbbbb ccccc"
-    chunker_snap = RaghildaMarkdownChunker(
-        chunk_size=5, target_overlap=0, max_snap_distance=2
-    )
-    chunker_no_snap = RaghildaMarkdownChunker(
+    chunker_snap = MarkdownChunker(chunk_size=5, target_overlap=0, max_snap_distance=2)
+    chunker_no_snap = MarkdownChunker(
         chunk_size=5, target_overlap=0, max_snap_distance=0
     )
     chunks_snap = chunker_snap.chunk(text)
@@ -96,7 +92,7 @@ def test_chunker_max_snap_distance() -> None:
 
 def test_chunker_heading_context_sibling_sections() -> None:
     md = "# Title\n\n## Section A\n\nAAA\n\n## Section B\n\nBBB"
-    chunker = RaghildaMarkdownChunker(
+    chunker = MarkdownChunker(
         chunk_size=50,
         target_overlap=0,
         segment_by_heading_levels=[2],
@@ -126,7 +122,7 @@ def test_chunker_heading_context_nested_siblings() -> None:
         "### Section B1\n\n"
         "BBB1"
     )
-    chunker = RaghildaMarkdownChunker(
+    chunker = MarkdownChunker(
         chunk_size=50,
         target_overlap=0,
         segment_by_heading_levels=[2, 3],
@@ -148,12 +144,10 @@ def test_chunker_heading_context_nested_siblings() -> None:
 
 def test_heading_positions_ignore_code_blocks() -> None:
     md = "# Title\n\n```\n# Not a heading\n```\n\n## Section\n\nParagraph"
-    headings = RaghildaMarkdownChunker._heading_positions(md)
+    headings = MarkdownChunker._heading_positions(md)
     assert len(headings) == 2
     assert all("Not a heading" not in h["text"] for h in headings)
-    chunker = RaghildaMarkdownChunker(
-        chunk_size=20, target_overlap=0, max_snap_distance=0
-    )
+    chunker = MarkdownChunker(chunk_size=20, target_overlap=0, max_snap_distance=0)
     chunks = chunker.chunk(md)
     para_start = md.index("Paragraph")
     para_chunk = next(c for c in chunks if c.start_index <= para_start < c.end_index)
@@ -163,7 +157,7 @@ def test_heading_positions_ignore_code_blocks() -> None:
 
 def test_chunker_recognizes_setext_headings() -> None:
     md = "Title\n=====\n\nSome text\n\nSubtitle\n-----\nMore text"
-    chunker = RaghildaMarkdownChunker(
+    chunker = MarkdownChunker(
         chunk_size=50,
         target_overlap=0,
         segment_by_heading_levels=[2],
@@ -178,9 +172,7 @@ def test_chunker_recognizes_setext_headings() -> None:
 
 def test_heading_with_space() -> None:
     md = "# Title\n hello world"
-    chunker = RaghildaMarkdownChunker(
-        chunk_size=50, target_overlap=0, max_snap_distance=0
-    )
+    chunker = MarkdownChunker(chunk_size=50, target_overlap=0, max_snap_distance=0)
     chunks = chunker.chunk(md)
     assert len(chunks) == 1
     assert chunks[0].context is None

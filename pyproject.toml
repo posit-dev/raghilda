@@ -24,16 +24,19 @@ requires = ["uv_build>=0.8.0,<0.9"]
 build-backend = "uv_build"
 
 [project.optional-dependencies]
-docs = ["jupyter>=1.1.1", "quartodoc>=0.7"]
 test = ["pyright>=1.1.405", "pytest>=8.4.1", "ruff>=0.12.11", "chonkie>=1.0.0"]
 
 [dependency-groups]
-dev = ["dotenv>=0.9.9", "taskipy>=1.14.1"]
+dev = [
+    "dotenv>=0.9.9",
+    "great-docs",
+    "taskipy>=1.14.1",
+]
 
 [tool.taskipy.tasks]
-docs_build = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render", cwd = "docs", help = "build docs" }
-docs_preview = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
-docs = { cmd = "source ../.venv/bin/activate && quartodoc build && quarto render && quarto preview", cwd = "docs", help = "build docs and launch preview" }
+docs_build = { cmd = "./.venv/bin/great-docs build", help = "build docs" }
+docs_preview = { cmd = "./.venv/bin/great-docs preview", help = "build docs and launch preview" }
+docs = { cmd = "./.venv/bin/great-docs preview", help = "build docs and launch preview" }
 tests = { cmd = "./.venv/bin/pytest tests", help = "run pytest suite" }
 types_check = { cmd = "./.venv/bin/pyright --pythonpath ./.venv/bin/python", help = "run pyright" }
 format = { cmd = "./.venv/bin/ruff format src tests", help = "format code" }
@@ -41,3 +44,6 @@ format_check = { cmd = "./.venv/bin/ruff format --check src tests", help = "form
 lint_check = { cmd = "./.venv/bin/ruff check", help = "ruff lint" }
 lint = { cmd = "./.venv/bin/ruff check --fix", help = "ruff lint --fix" }
 check = { cmd = "./.venv/bin/ruff format --check src tests && ./.venv/bin/ruff check && ./.venv/bin/pyright --pythonpath ./.venv/bin/python && ./.venv/bin/pytest tests", help = "format+lint+types+tests" }
+
+[tool.uv.sources]
+great-docs = { git = "https://github.com/rich-iannone/great-docs.git" }

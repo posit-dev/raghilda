@@ -65,12 +65,57 @@ class RetrievedOpenAIMarkdownChunk(OpenAIMarkdownChunk, RetrievedChunk):
 
 
 class OpenAIStore(BaseStore):
+    """A vector store backed by OpenAI's Vector Store API.
+
+    OpenAIStore uses OpenAI's hosted vector storage service for document
+    storage and retrieval. Documents are uploaded as files and automatically
+    chunked and embedded by OpenAI.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.store import OpenAIStore
+
+    # Create a new store
+    store = OpenAIStore.create(name="my-store")
+
+    # Or connect to an existing store
+    store = OpenAIStore.connect(store_id="vs_abc123")
+
+    # Insert documents
+    from raghilda.document import MarkdownDocument
+    doc = MarkdownDocument(content="# Hello\\nWorld", origin="example.md")
+    store.insert(doc)
+
+    # Retrieve similar chunks
+    chunks = store.retrieve("greeting", top_k=5)
+    ```
+    """
+
     @staticmethod
     def create(
         base_url: str = "https://api.openai.com/v1",
         api_key: Optional[str] = None,
         **kwargs,
     ):
+        """Create a new OpenAI vector store.
+
+        Parameters
+        ----------
+        base_url
+            Base URL for the OpenAI API.
+        api_key
+            OpenAI API key. If None, uses the OPENAI_API_KEY environment variable.
+        **kwargs
+            Additional arguments passed to the vector store creation
+            (e.g., name, expires_after).
+
+        Returns
+        -------
+        OpenAIStore
+            A newly created store instance.
+        """
         client = openai.Client(api_key=api_key, base_url=base_url)
         vector_store = client.vector_stores.create(**kwargs)
         return OpenAIStore(client, vector_store.id)
@@ -81,6 +126,22 @@ class OpenAIStore(BaseStore):
         base_url: str = "https://api.openai.com/v1",
         api_key: Optional[str] = None,
     ):
+        """Connect to an existing OpenAI vector store.
+
+        Parameters
+        ----------
+        store_id
+            The ID of the vector store to connect to (e.g., "vs_abc123").
+        base_url
+            Base URL for the OpenAI API.
+        api_key
+            OpenAI API key. If None, uses the OPENAI_API_KEY environment variable.
+
+        Returns
+        -------
+        OpenAIStore
+            A connected store instance.
+        """
         client = openai.Client(api_key=api_key, base_url=base_url)
         return OpenAIStore(client, store_id)
 

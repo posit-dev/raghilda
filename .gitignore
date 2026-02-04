@@ -17,3 +17,6 @@ uv.lock
 
 /.luarc.json
 .claude/settings.local.json
+
+# Great Docs build directory (ephemeral, do not commit)
+great-docs/
