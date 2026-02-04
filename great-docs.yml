@@ -1,0 +1,135 @@
+# Great Docs Configuration
+# See https://rich-iannone.github.io/great-docs/user-guide/03-configuration.html
+
+# Module Name (optional)
+# ----------------------
+# Set this if your importable module name differs from the project name.
+# Example: project 'py-yaml12' with module name 'yaml12'
+# module: yaml12
+
+# Docstring Parser
+# ----------------
+# The docstring format used in your package (numpy, google, or sphinx)
+parser: numpy
+
+# Dynamic Introspection
+# ---------------------
+# Use runtime introspection for more accurate documentation (default: true)
+# Set to false if your package has cyclic alias issues (e.g., PyO3/Rust bindings)
+dynamic: true
+
+# API Discovery Settings
+# ----------------------
+# Exclude items from auto-documentation
+# exclude:
+#   - InternalClass
+#   - helper_function
+
+# Author Information
+# ------------------
+# Author metadata for display in the landing page sidebar
+# You can add additional fields: github, orcid, affiliation, homepage
+authors:
+  - name: Daniel Falbel
+    role: Author
+    # affiliation: 
+    email: daniel@posit.co
+    # github: 
+    # orcid: 
+    # homepage: 
+  - name: Tomasz Kalinowski
+    role: Author
+    # affiliation: 
+    email: tomasz@posit.co
+    # github: 
+    # orcid: 
+    # homepage: 
+
+# Funding / Copyright Holder
+# --------------------------
+# Credit the organization that funds or holds copyright for this package.
+# Displays in sidebar and footer. Homepage and ROR provide links.
+# funding:
+#   name: "Posit Software, PBC"
+#   roles:
+#     - Copyright holder
+#     - funder
+#   homepage: https://posit.co
+#   ror: https://ror.org/03wc8by49
+
+# API Reference Structure
+# -----------------------
+# Customize the sections below to organize your API documentation.
+# - Reorder items within a section to change their display order
+# - Move items between sections or create new sections
+# - Use 'members: false' to exclude methods from documentation
+# - Add 'desc:' to sections for descriptions
+
+reference:
+  - title: Store
+    desc: Vector storage backends for storing and retrieving chunks
+    contents:
+      - store.BaseStore
+      - store.DuckDBStore
+      - store.OpenAIStore
+
+  - title: Embedding
+    desc: Embedding providers for generating vector representations
+    contents:
+      - embedding.EmbeddingProvider
+      - embedding.EmbeddingOpenAI
+
+  - title: Chunker
+    desc: Text chunking utilities for splitting documents
+    contents:
+      - chunker.BaseChunker
+      - chunker.MarkdownChunker
+
+  - title: Utilities
+    desc: Utility functions for reading and scraping content
+    contents:
+      - read.read_as_markdown
+      - scrape.find_links
+
+  - title: Chunk
+    desc: Chunk data types
+    contents:
+      - chunk.Chunk
+      - chunk.MarkdownChunk
+      - chunk.RetrievedChunk
+      - chunk.Metric
+
+  - title: Document
+    desc: Document types with metadata
+    contents:
+      - document.Document
+      - document.MarkdownDocument
+
+  - title: Types
+    desc: Protocol types for type checking compatibility
+    contents:
+      - types.ChunkLike
+      - types.DocumentLike
+      - types.ChunkerLike
+      - types.IntoChunk
+      - types.IntoDocument
+
+# Site Settings
+# -------------
+# site:
+#   theme: flatly              # Quarto theme (default: flatly)
+#   toc: true                  # Show table of contents (default: true)
+#   toc-depth: 2               # TOC heading depth (default: 2)
+#   toc-title: On this page    # TOC title
+
+# Jupyter Kernel
+# --------------
+# Jupyter kernel to use for executing code cells in .qmd files.
+jupyter: python3
+
+# CLI Documentation
+# -----------------
+# cli:
+#   enabled: true              # Enable CLI documentation
+#   module: my_package.cli     # Module containing Click commands
+#   name: cli                  # Name of the Click command object
