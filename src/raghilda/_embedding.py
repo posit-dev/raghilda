@@ -48,14 +48,14 @@ class EmbeddingOpenAI(EmbeddingProvider):
     Examples
     --------
     ```{python}
-    import os
-    from raghilda import EmbeddingOpenAI
-    if "OPENAI_API_KEY" in os.environ:
-        provider = EmbeddingOpenAI(model="text-embedding-3-small")
-        embeddings = provider.embed(["hello world", "testing embeddings"])
-        print(len(embeddings))
-        print(len(embeddings[0]))  # Dimension of the embedding
-        print(embeddings[0][:10])  # The embedding vector
+    #| eval: false
+    from raghilda.embedding import EmbeddingOpenAI
+
+    provider = EmbeddingOpenAI(model="text-embedding-3-small")
+    embeddings = provider.embed(["hello world", "testing embeddings"])
+    print(len(embeddings))
+    print(len(embeddings[0]))  # Dimension of the embedding
+    print(embeddings[0][:10])  # The embedding vector
     ```
     """
 

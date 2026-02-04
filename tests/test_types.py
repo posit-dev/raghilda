@@ -1,11 +1,7 @@
 import pytest
-from raghilda._types import (
-    Chunk,
-    ChunkLike,
-    IntoChunk,
-    Document,
-    DocumentLike,
-)
+from raghilda.chunk import Chunk
+from raghilda.document import Document
+from raghilda.types import ChunkLike, DocumentLike, IntoChunk
 
 
 class TestChunkLikeProtocol:
