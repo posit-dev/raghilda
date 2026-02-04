@@ -82,10 +82,10 @@ def find_links(
         Additional keyword arguments forwarded to :func:`requests.Session.get`
         (and ``head`` during validation) when fetching HTTP resources.
 
-    Yields
-    ------
-    str
-        Absolute link targets, deduplicated and ordered as discovered.
+    Returns
+    -------
+    Iterator[str]
+        Yields absolute link targets, deduplicated and ordered as discovered.
     """
     if isinstance(x, (str, Path)):
         entries: list[str] = [str(x)]

@@ -1,12 +1,7 @@
 import openai
-from ._store import Store
-from ._chunker import MarkdownChunk
-from .document import (
-    Document,
-    RetrievedChunk,
-    MarkdownDocument,
-    Metric,
-)
+from ._store import BaseStore
+from .chunk import MarkdownChunk, RetrievedChunk, Metric
+from .document import Document, MarkdownDocument
 from typing import Optional, Sequence
 from dataclasses import dataclass
 
@@ -69,7 +64,7 @@ class RetrievedOpenAIMarkdownChunk(OpenAIMarkdownChunk, RetrievedChunk):
         self.metrics = metrics
 
 
-class OpenAIStore(Store):
+class OpenAIStore(BaseStore):
     @staticmethod
     def create(
         base_url: str = "https://api.openai.com/v1",
