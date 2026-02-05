@@ -110,7 +110,9 @@ class TestDuckDBStore:
                     assert (
                         chunk1.end_index <= chunk2.start_index
                         or chunk2.end_index <= chunk1.start_index
-                    ), f"Chunks overlap: [{chunk1.start_index}, {chunk1.end_index}) and [{chunk2.start_index}, {chunk2.end_index})"
+                    ), (
+                        f"Chunks overlap: [{chunk1.start_index}, {chunk1.end_index}) and [{chunk2.start_index}, {chunk2.end_index})"
+                    )
 
 
 class TestOpenAIStore:

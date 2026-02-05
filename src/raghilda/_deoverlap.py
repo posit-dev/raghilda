@@ -219,7 +219,7 @@ def test__deoverlap_chunks_adjacent_not_merged():
 
 def test__deoverlap_chunks_empty():
     """Empty input should return empty output."""
-    result = deoverlap_chunks([], key=lambda c: c.doc_id)
+    result = deoverlap_chunks([], key=lambda c: None)
     assert len(result) == 0
 
 
