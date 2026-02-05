@@ -77,7 +77,9 @@ reference:
     desc: Embedding providers for generating vector representations
     contents:
       - embedding.EmbeddingProvider
+      - embedding.EmbedInputType
       - embedding.EmbeddingOpenAI
+      - embedding.EmbeddingCohere
 
   - title: Chunker
     desc: Text chunking utilities for splitting documents

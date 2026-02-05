@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import os
-from .embedding import EmbeddingProvider
+from .embedding import EmbeddingProvider, EmbedInputType
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .read import read_as_markdown
@@ -406,7 +406,9 @@ class DuckDBStore(BaseStore):
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
         if self.metadata.embed is not None:
-            chunks["embedding"] = self.metadata.embed.embed(chunks.text.tolist())
+            chunks["embedding"] = self.metadata.embed.embed(
+                chunks.text.tolist(), EmbedInputType.DOCUMENT
+            )
         else:
             chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
 
@@ -532,7 +534,7 @@ class DuckDBStore(BaseStore):
         if isinstance(query, str):
             if self.metadata.embed is None:
                 raise ValueError("No embedding function available in the store")
-            query = self.metadata.embed.embed([query])[0]
+            query = self.metadata.embed.embed([query], EmbedInputType.QUERY)[0]
 
         func, order = _vss_method_info(method)
         sql = f"""
