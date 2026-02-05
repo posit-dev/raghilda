@@ -384,8 +384,11 @@ class DuckDBStore(BaseStore):
             prepare = _prepare
 
         def do_ingest_work(uri: str) -> None:
-            chunked_doc = prepare(uri)
-            self.insert(chunked_doc)
+            try:
+                chunked_doc = prepare(uri)
+                self.insert(chunked_doc)
+            except Exception as e:
+                raise RuntimeError(f"Failed to ingest '{uri}': {e}") from e
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             list(
@@ -749,8 +752,10 @@ def _overwrite_or_error(location: str | Path, overwrite: bool) -> None:
     if os.path.exists(location) or os.path.exists(location / ".wal"):
         if overwrite:
             logger.info(f"Overwriting existing database at: {location}")
-            os.remove(location)
-            os.remove(location / ".wal")
+            if os.path.exists(location):
+                os.remove(location)
+            if os.path.exists(location / ".wal"):
+                os.remove(location / ".wal")
         else:
             raise FileExistsError(f"File already exists: {location}")
 

@@ -106,6 +106,17 @@ class EmbeddingOpenAI(EmbeddingProvider):
         if isinstance(x, str):
             raise TypeError("Input must be a sequence of strings, not a single string.")
 
+        if len(x) == 0:
+            return []
+
+        # Check for empty strings
+        empty_indices = [i for i, text in enumerate(x) if not text or not text.strip()]
+        if empty_indices:
+            raise ValueError(
+                f"Input contains empty strings at indices: {empty_indices}. "
+                "Empty strings cannot be embedded."
+            )
+
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
             data = x[i : i + self.batch_size]
@@ -181,6 +192,17 @@ class EmbeddingCohere(EmbeddingProvider):
     ) -> Sequence[Sequence[float]]:
         if isinstance(x, str):
             raise TypeError("Input must be a sequence of strings, not a single string.")
+
+        if len(x) == 0:
+            return []
+
+        # Check for empty strings
+        empty_indices = [i for i, text in enumerate(x) if not text or not text.strip()]
+        if empty_indices:
+            raise ValueError(
+                f"Input contains empty strings at indices: {empty_indices}. "
+                "Empty strings cannot be embedded."
+            )
 
         # Map our enum to Cohere's input_type values
         cohere_input_type = (
