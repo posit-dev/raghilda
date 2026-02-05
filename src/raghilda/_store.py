@@ -14,6 +14,7 @@ import pandas as pd
 from enum import StrEnum
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+from ._deoverlap import deoverlap_chunks
 
 
 logger = logging.getLogger(__name__)
@@ -447,6 +448,28 @@ class DuckDBStore(BaseStore):
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
     ) -> Sequence[RetrievedDuckDBMarkdownChunk]:
+        """Retrieve the most similar chunks to the given text.
+
+        Combines results from vector similarity search (if embeddings are available)
+        and BM25 full-text search, then optionally merges overlapping chunks.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return from each retrieval method.
+        deoverlap
+            If True (default), merge overlapping chunks from the same document.
+            Overlapping chunks are identified by their `start_index` and `end_index`
+            positions. When merged, the resulting chunk spans the union of the
+            original ranges and combines their metrics.
+
+        Returns
+        -------
+        Sequence[RetrievedDuckDBMarkdownChunk]
+            The retrieved chunks with their relevance metrics.
+        """
         retrieved_chunks = []
         if self.metadata.embed is not None:
             retrieved_chunks = self.retrieve_vss(text, top_k)
@@ -464,10 +487,12 @@ class DuckDBStore(BaseStore):
             else:
                 combined_chunks[key].metrics.extend(chunk.metrics or [])
 
-        if deoverlap:
-            raise NotImplementedError("Deoverlap not implemented yet")
+        chunks = list(combined_chunks.values())
 
-        return list(combined_chunks.values())
+        if deoverlap:
+            chunks = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+
+        return chunks
 
     def retrieve_vss(
         self,
@@ -476,6 +501,34 @@ class DuckDBStore(BaseStore):
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
+        """Retrieve chunks using vector similarity search.
+
+        Uses DuckDB's `vss` extension for vector similarity search.
+        See https://duckdb.org/docs/extensions/vss.html for more details.
+
+        Parameters
+        ----------
+        query
+            The query text or embedding vector. If a string is provided,
+            it will be embedded using the store's embedding provider.
+        top_k
+            The maximum number of chunks to return.
+        method
+            The similarity method to use. Options are:
+            - `COSINE_DISTANCE`: Cosine distance (default)
+            - `EUCLIDEAN_DISTANCE`: L2/Euclidean distance
+            - `NEGATIVE_INNER_PRODUCT`: Negative dot product
+
+        Returns
+        -------
+        list[RetrievedDuckDBMarkdownChunk]
+            The most similar chunks with similarity metrics.
+
+        Raises
+        ------
+        ValueError
+            If query is a string but no embedding provider is configured.
+        """
         if isinstance(query, str):
             if self.metadata.embed is None:
                 raise ValueError("No embedding function available in the store")
@@ -533,6 +586,32 @@ class DuckDBStore(BaseStore):
         b: float = 0.75,
         conjunctive: bool = False,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
+        """Retrieve chunks using BM25 full-text search.
+
+        Uses DuckDB's `fts` (Full-Text Search) extension for BM25 ranking.
+        See https://duckdb.org/docs/extensions/full_text_search.html for more details.
+
+        Parameters
+        ----------
+        query
+            The search query text.
+        top_k
+            The maximum number of chunks to return.
+        k
+            BM25 term frequency saturation parameter. Higher values increase
+            the impact of term frequency. Default is 1.2.
+        b
+            BM25 length normalization parameter (0-1). Higher values penalize
+            longer documents more. Default is 0.75.
+        conjunctive
+            If True, all query terms must be present (AND). If False (default),
+            any query term can match (OR).
+
+        Returns
+        -------
+        list[RetrievedDuckDBMarkdownChunk]
+            The matching chunks ranked by BM25 score.
+        """
         sql = """
         SELECT
             e.doc_id, 
