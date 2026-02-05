@@ -448,6 +448,28 @@ class DuckDBStore(BaseStore):
     def retrieve(
         self, text: str, top_k: int = 3, *, deoverlap: bool = True
     ) -> Sequence[RetrievedDuckDBMarkdownChunk]:
+        """Retrieve the most similar chunks to the given text.
+
+        Combines results from vector similarity search (if embeddings are available)
+        and BM25 full-text search, then optionally merges overlapping chunks.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return from each retrieval method.
+        deoverlap
+            If True (default), merge overlapping chunks from the same document.
+            Overlapping chunks are identified by their `start_index` and `end_index`
+            positions. When merged, the resulting chunk spans the union of the
+            original ranges and combines their metrics.
+
+        Returns
+        -------
+        Sequence[RetrievedDuckDBMarkdownChunk]
+            The retrieved chunks with their relevance metrics.
+        """
         retrieved_chunks = []
         if self.metadata.embed is not None:
             retrieved_chunks = self.retrieve_vss(text, top_k)
