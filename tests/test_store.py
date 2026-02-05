@@ -79,6 +79,39 @@ class TestDuckDBStore:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
 
+    def test_retrieve_with_deoverlap(self, store):
+        # Create a document with overlapping chunks
+        # "hello world test document" = 24 chars
+        doc = MarkdownDocument(
+            origin="test_deoverlap", content="hello world test document"
+        )
+        doc.chunks = [
+            _get_markdown_chunk(doc, start=0, end=11),  # "hello world"
+            _get_markdown_chunk(doc, start=6, end=16),  # "world test"
+            _get_markdown_chunk(doc, start=12, end=25),  # "test document"
+        ]
+        store.insert(doc)
+        store.build_index("bm25")
+
+        # Without deoverlap, we may get multiple overlapping chunks
+        results_no_deoverlap = store.retrieve("test", top_k=5, deoverlap=False)
+
+        # With deoverlap, overlapping chunks should be merged
+        results_deoverlap = store.retrieve("test", top_k=5, deoverlap=True)
+
+        # Deoverlapped results should have fewer or equal chunks
+        assert len(results_deoverlap) <= len(results_no_deoverlap)
+
+        # Check that deoverlapped chunks don't have overlapping ranges
+        for i, chunk1 in enumerate(results_deoverlap):
+            for chunk2 in results_deoverlap[i + 1 :]:
+                if chunk1.doc_id == chunk2.doc_id:
+                    # Same document - ranges should not overlap
+                    assert (
+                        chunk1.end_index <= chunk2.start_index
+                        or chunk2.end_index <= chunk1.start_index
+                    ), f"Chunks overlap: [{chunk1.start_index}, {chunk1.end_index}) and [{chunk2.start_index}, {chunk2.end_index})"
+
 
 class TestOpenAIStore:
     @pytest.fixture(autouse=True)

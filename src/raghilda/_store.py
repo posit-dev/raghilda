@@ -14,6 +14,7 @@ import pandas as pd
 from enum import StrEnum
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+from ._deoverlap import deoverlap_chunks
 
 
 logger = logging.getLogger(__name__)
@@ -464,10 +465,12 @@ class DuckDBStore(BaseStore):
             else:
                 combined_chunks[key].metrics.extend(chunk.metrics or [])
 
-        if deoverlap:
-            raise NotImplementedError("Deoverlap not implemented yet")
+        chunks = list(combined_chunks.values())
 
-        return list(combined_chunks.values())
+        if deoverlap:
+            chunks = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+
+        return chunks
 
     def retrieve_vss(
         self,

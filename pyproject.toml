@@ -37,13 +37,13 @@ dev = [
 docs_build = { cmd = "./.venv/bin/great-docs build", help = "build docs" }
 docs_preview = { cmd = "./.venv/bin/great-docs preview", help = "build docs and launch preview" }
 docs = { cmd = "./.venv/bin/great-docs preview", help = "build docs and launch preview" }
-tests = { cmd = "./.venv/bin/pytest tests", help = "run pytest suite" }
+tests = { cmd = "./.venv/bin/pytest tests src", help = "run pytest suite" }
 types_check = { cmd = "./.venv/bin/pyright --pythonpath ./.venv/bin/python", help = "run pyright" }
 format = { cmd = "./.venv/bin/ruff format src tests", help = "format code" }
 format_check = { cmd = "./.venv/bin/ruff format --check src tests", help = "format check" }
 lint_check = { cmd = "./.venv/bin/ruff check", help = "ruff lint" }
 lint = { cmd = "./.venv/bin/ruff check --fix", help = "ruff lint --fix" }
-check = { cmd = "./.venv/bin/ruff format --check src tests && ./.venv/bin/ruff check && ./.venv/bin/pyright --pythonpath ./.venv/bin/python && ./.venv/bin/pytest tests", help = "format+lint+types+tests" }
+check = { cmd = "./.venv/bin/ruff format --check src tests && ./.venv/bin/ruff check && ./.venv/bin/pyright --pythonpath ./.venv/bin/python && ./.venv/bin/pytest tests src", help = "format+lint+types+tests" }
 
 [tool.uv.sources]
 great-docs = { git = "https://github.com/rich-iannone/great-docs.git" }
