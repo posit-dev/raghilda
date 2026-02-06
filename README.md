@@ -23,7 +23,7 @@ raghilda handles the complete RAG pipeline:
 1. **Document Processing** — Convert documents to Markdown using MarkItDown
 2. **Text Chunking** — Split text at semantic boundaries (headings, paragraphs, sentences)
 3. **Embedding** — Generate vector representations via OpenAI or other providers
-4. **Storage** — Store chunks and embeddings in DuckDB or OpenAI Vector Stores
+4. **Storage** — Store chunks and embeddings in DuckDB, ChromaDB, or OpenAI Vector Stores
 5. **Retrieval** — Find relevant chunks using similarity search or BM25
 
 ## Usage
