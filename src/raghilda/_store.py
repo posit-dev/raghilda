@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+import json
 import os
-from .embedding import EmbeddingProvider, EmbedInputType
+from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .read import read_as_markdown
@@ -234,12 +235,25 @@ class DuckDBStore(BaseStore):
         con = duckdb.connect(database=location, read_only=read_only)
         _check_is_raghilda_con(con)
 
-        metadata = con.execute("SELECT name, title from metadata").fetchall()
+        row = con.execute("SELECT name, title, embed_config from metadata").fetchone()
+        if row is None:
+            raise ValueError("No metadata found in the database")
+
+        name, title, embed_config_json = row
+
+        # Restore embedding provider from config
+        embed = None
+        if embed_config_json is not None:
+            embed_config = json.loads(embed_config_json)
+            try:
+                embed = embedding_from_config(embed_config)
+            except ValueError as e:
+                logger.warning(f"Could not restore embedding provider: {e}")
+
         metadata = DuckDBStoreMetadata(
-            name=metadata[0][0],
-            title=metadata[0][1],
-            # TODO: figure out the api for reloading embedding functions
-            embed=None,
+            name=name,
+            title=title,
+            embed=embed,
         )
 
         return DuckDBStore(con, metadata)
@@ -288,8 +302,19 @@ class DuckDBStore(BaseStore):
             embedding_size = len(embed.embed(["foo"])[0])
             embedding_sql = f"embedding FLOAT[{embedding_size}]"
 
+        # Get embed config as JSON if provider is given
+        embed_config_json = None
+        if embed is not None:
+            embed_config_json = json.dumps(embed.get_config())
+
         con.execute(f"""
         CREATE SEQUENCE chunk_id_seq START 1; -- need a unique id for fts
+
+        CREATE OR REPLACE TABLE metadata (
+            name VARCHAR,
+            title VARCHAR,
+            embed_config VARCHAR
+        );
 
         CREATE OR REPLACE TABLE documents (
             doc_id VARCHAR PRIMARY KEY DEFAULT uuid(),
@@ -321,6 +346,12 @@ class DuckDBStore(BaseStore):
             (doc_id)
         );
         """)
+
+        # Insert metadata
+        con.execute(
+            "INSERT INTO metadata (name, title, embed_config) VALUES (?, ?, ?)",
+            [name, title, embed_config_json],
+        )
 
         return DuckDBStore(
             con,

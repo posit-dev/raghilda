@@ -1,8 +1,90 @@
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence, Type, TypeVar
 
 from openai import OpenAI
+
+# Global registry for embedding providers
+_EMBEDDING_REGISTRY: dict[str, Type["EmbeddingProvider"]] = {}
+
+T = TypeVar("T", bound="EmbeddingProvider")
+
+
+def register_embedding_provider(name: str):
+    """
+    Decorator to register an embedding provider class.
+
+    Registered providers can be automatically restored when connecting to a
+    database that was created with that provider.
+
+    Parameters
+    ----------
+    name
+        The name to register the provider under. This should be unique.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.embedding import EmbeddingProvider, register_embedding_provider
+
+    @register_embedding_provider("MyCustomEmbedding")
+    class MyCustomEmbedding(EmbeddingProvider):
+        def __init__(self, model: str = "default"):
+            self.model = model
+
+        def embed(self, x, input_type=None):
+            ...
+
+        def get_config(self):
+            return {"type": "MyCustomEmbedding", "model": self.model}
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(model=config.get("model", "default"))
+    ```
+    """
+
+    def decorator(cls: Type[T]) -> Type[T]:
+        _EMBEDDING_REGISTRY[name] = cls
+        return cls
+
+    return decorator
+
+
+def embedding_from_config(config: dict[str, Any]) -> "EmbeddingProvider":
+    """
+    Create an embedding provider from a configuration dict.
+
+    Parameters
+    ----------
+    config
+        Configuration dict with a "type" key specifying the provider class name.
+
+    Returns
+    -------
+    EmbeddingProvider
+        An instance of the specified embedding provider.
+
+    Raises
+    ------
+    ValueError
+        If the provider type is not found in the registry.
+    """
+    provider_type = config.get("type")
+    if provider_type is None:
+        raise ValueError("Config must contain a 'type' key")
+
+    if provider_type not in _EMBEDDING_REGISTRY:
+        registered = ", ".join(_EMBEDDING_REGISTRY.keys())
+        raise ValueError(
+            f"Unknown embedding provider type: '{provider_type}'. "
+            f"Registered providers: {registered}. "
+            "You can pass `embed=` to connect() to provide the provider manually."
+        )
+
+    cls = _EMBEDDING_REGISTRY[provider_type]
+    return cls.from_config(config)
 
 
 class EmbedInputType(StrEnum):
@@ -23,6 +105,40 @@ class EmbedInputType(StrEnum):
 class EmbeddingProvider(ABC):
     """
     Interface for embedding function providers.
+
+    To create a custom embedding provider:
+
+    1. Subclass `EmbeddingProvider` and implement `embed()`, `get_config()`, and `from_config()`
+    2. Register it with `@register_embedding_provider("MyProvider")`
+
+    Registered providers are automatically restored when connecting to a database
+    that was created with that provider.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.embedding import EmbeddingProvider, register_embedding_provider
+
+    @register_embedding_provider("MyCustomEmbedding")
+    class MyCustomEmbedding(EmbeddingProvider):
+        def __init__(self, model: str = "default", api_key: str | None = None):
+            self.model = model
+            self.api_key = api_key
+            # Initialize your embedding client here
+
+        def embed(self, x, input_type=None):
+            # Return list of embedding vectors
+            ...
+
+        def get_config(self):
+            # Return config dict (exclude sensitive values like api_key)
+            return {"type": "MyCustomEmbedding", "model": self.model}
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(model=config.get("model", "default"))
+    ```
     """
 
     @abstractmethod
@@ -50,7 +166,42 @@ class EmbeddingProvider(ABC):
         """
         NotImplementedError("embed method is not implemented")
 
+    @abstractmethod
+    def get_config(self) -> dict[str, Any]:
+        """
+        Get the configuration dict for this provider.
 
+        The config should contain all parameters needed to recreate the provider,
+        except for sensitive values like API keys. It must include a "type" key
+        with the registered name of the provider.
+
+        Returns
+        -------
+        dict
+            Configuration dict that can be passed to `from_config()`.
+        """
+        NotImplementedError("get_config method is not implemented")
+
+    @classmethod
+    @abstractmethod
+    def from_config(cls, config: dict[str, Any]) -> "EmbeddingProvider":
+        """
+        Create a provider instance from a configuration dict.
+
+        Parameters
+        ----------
+        config
+            Configuration dict from `get_config()`.
+
+        Returns
+        -------
+        EmbeddingProvider
+            A new instance of the provider.
+        """
+        NotImplementedError("from_config method is not implemented")
+
+
+@register_embedding_provider("EmbeddingOpenAI")
 class EmbeddingOpenAI(EmbeddingProvider):
     """
     Creates an embedding function provider backed by OpenAI's embedding models
@@ -96,6 +247,23 @@ class EmbeddingOpenAI(EmbeddingProvider):
 
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "type": "EmbeddingOpenAI",
+            "model": self.model,
+            "base_url": self.base_url,
+            "batch_size": self.batch_size,
+            # api_key intentionally omitted for security
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "EmbeddingOpenAI":
+        return cls(
+            model=config.get("model", "text-embedding-3-small"),
+            base_url=config.get("base_url", "https://api.openai.com/v1"),
+            batch_size=config.get("batch_size", 20),
+        )
+
     def embed(
         self,
         x: Sequence[str],
@@ -128,6 +296,7 @@ class EmbeddingOpenAI(EmbeddingProvider):
         return result
 
 
+@register_embedding_provider("EmbeddingCohere")
 class EmbeddingCohere(EmbeddingProvider):
     """
     Creates an embedding function provider backed by Cohere's embedding models.
@@ -184,6 +353,21 @@ class EmbeddingCohere(EmbeddingProvider):
         self.batch_size = batch_size
 
         self.client = cohere.Client(api_key=self.api_key)
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "type": "EmbeddingCohere",
+            "model": self.model,
+            "batch_size": self.batch_size,
+            # api_key intentionally omitted for security
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "EmbeddingCohere":
+        return cls(
+            model=config.get("model", "embed-english-v3.0"),
+            batch_size=config.get("batch_size", 96),
+        )
 
     def embed(
         self,
