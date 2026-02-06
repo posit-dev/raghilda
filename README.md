@@ -13,7 +13,7 @@ pip install raghilda
 Or install from GitHub:
 
 ```bash
-pip install git+https://github.com/dfalbel/py-ragnar.git
+pip install git+https://github.com/dfalbel/raghilda.git
 ```
 
 ## Key Steps
@@ -51,6 +51,6 @@ for chunk in chunks:
 
 ## Links
 
-- [Documentation](https://dfalbel.github.io/py-ragnar/)
-- [Source Code](https://github.com/dfalbel/py-ragnar)
-- [Report Issues](https://github.com/dfalbel/py-ragnar/issues)
+- [Documentation](https://dfalbel.github.io/raghilda/)
+- [Source Code](https://github.com/dfalbel/raghilda)
+- [Report Issues](https://github.com/dfalbel/raghilda/issues)

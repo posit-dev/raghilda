@@ -176,3 +176,36 @@ def test_ingest():
     )
 
     store.ingest(links)
+
+
+def test_connect(tmp_path):
+    db_path = tmp_path / "test.db"
+
+    # Create a store with embeddings
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=EmbeddingOpenAI(model="text-embedding-3-small"),
+        name="connect_test",
+        title="Connect Test Store",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc.chunks = [_get_markdown_chunk(doc, start=0, end=5)]
+    store.insert(doc)
+    store.build_index()
+    store.con.close()
+
+    # Connect to existing store
+    store2 = DuckDBStore.connect(str(db_path))
+    assert store2.metadata.name == "connect_test"
+    assert store2.metadata.title == "Connect Test Store"
+    assert store2.size() == 1
+
+    # Embedding provider should be restored
+    assert store2.metadata.embed is not None
+    assert isinstance(store2.metadata.embed, EmbeddingOpenAI)
+    assert store2.metadata.embed.model == "text-embedding-3-small"
+
+    # Retrieve should work (uses both BM25 and VSS)
+    results = store2.retrieve("hello", top_k=1)
+    assert len(results) >= 1
+    assert results[0].text == "hello"
