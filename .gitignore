@@ -20,3 +20,6 @@ uv.lock
 
 # Great Docs build directory (ephemeral, do not commit)
 great-docs/
+
+# Example databases
+examples/*.db
