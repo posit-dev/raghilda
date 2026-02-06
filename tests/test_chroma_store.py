@@ -5,40 +5,22 @@ pytest.importorskip("chromadb")
 from raghilda.store import ChromaDBStore
 from raghilda.document import MarkdownDocument
 from raghilda.chunk import MarkdownChunk, RetrievedChunk
-from raghilda.embedding import (
-    EmbeddingProvider,
-    EmbedInputType,
-    register_embedding_provider,
-)
 
 
-@register_embedding_provider("TestEmbedding")
-class TestEmbedding(EmbeddingProvider):
-    def __init__(self, dims: int = 3):
-        self.dims = dims
-
-    def embed(self, x, input_type: EmbedInputType = EmbedInputType.DOCUMENT):
-        if isinstance(x, str):
-            raise TypeError("embed expects a sequence of strings")
+class TestEmbeddingFunction:
+    def __call__(self, input):
+        if isinstance(input, str):
+            raise TypeError("Embedding function expects a sequence of strings")
         embeddings = []
-        for text in x:
-            base = [
-                float(len(text)),
-                float(sum(ord(c) for c in text) % 1000),
-                float(len(text.split())),
-            ]
-            if self.dims <= len(base):
-                embeddings.append(base[: self.dims])
-            else:
-                embeddings.append(base + [0.0] * (self.dims - len(base)))
+        for text in input:
+            embeddings.append(
+                [
+                    float(len(text)),
+                    float(sum(ord(c) for c in text) % 1000),
+                    float(len(text.split())),
+                ]
+            )
         return embeddings
-
-    def get_config(self):
-        return {"type": "TestEmbedding", "dims": self.dims}
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(dims=config.get("dims", 3))
 
 
 def _make_doc():
@@ -81,7 +63,6 @@ def _make_doc():
 def test_create_store():
     store = ChromaDBStore.create(
         location=":memory:",
-        embed=TestEmbedding(),
         name="test_store",
         title="Test ChromaDB Store",
         overwrite=True,
@@ -89,13 +70,12 @@ def test_create_store():
     assert isinstance(store, ChromaDBStore)
     assert store.metadata.name == "test_store"
     assert store.metadata.title == "Test ChromaDB Store"
-    assert isinstance(store.metadata.embed, TestEmbedding)
 
 
 def test_insert_and_retrieve():
     store = ChromaDBStore.create(
         location=":memory:",
-        embed=TestEmbedding(),
+        embedding_function=TestEmbeddingFunction(),
         name="test_store_insert",
         overwrite=True,
     )
@@ -109,11 +89,12 @@ def test_insert_and_retrieve():
         assert chunk.text is not None
 
 
-def test_connect_restores_embed(tmp_path):
+def test_connect_with_embedding_function(tmp_path):
     location = tmp_path / "chroma_store"
+    embedding_function = TestEmbeddingFunction()
     store = ChromaDBStore.create(
         location=str(location),
-        embed=TestEmbedding(dims=5),
+        embedding_function=embedding_function,
         name="connect_test",
         overwrite=True,
     )
@@ -124,9 +105,8 @@ def test_connect_restores_embed(tmp_path):
     store2 = ChromaDBStore.connect(
         location=str(location),
         name="connect_test",
+        embedding_function=embedding_function,
     )
-    assert isinstance(store2.metadata.embed, TestEmbedding)
-    assert store2.metadata.embed.dims == 5
     assert store2.size() == 1
     results = store2.retrieve("document", top_k=1)
     assert len(results) == 1
