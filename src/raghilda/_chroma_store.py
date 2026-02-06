@@ -12,6 +12,7 @@ from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .document import Document, MarkdownDocument
 from .read import read_as_markdown
+from ._deoverlap import deoverlap_chunks
 from tqdm import tqdm
 
 
@@ -319,8 +320,33 @@ class ChromaDBStore(BaseStore):
             )
 
     def retrieve(
-        self, text: str, top_k: int, **kwargs
+        self, text: str, top_k: int, *, deoverlap: bool = True, **kwargs
     ) -> Sequence[RetrievedChromaDBMarkdownChunk]:
+        """Retrieve the most similar chunks to the given text.
+
+        Uses ChromaDB's vector similarity search to find relevant chunks,
+        then optionally merges overlapping chunks from the same document.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return.
+        deoverlap
+            If True (default), merge overlapping chunks from the same document.
+            Overlapping chunks are identified by their `start_index` and `end_index`
+            positions. When merged, the resulting chunk spans the union of the
+            original ranges and combines their metrics.
+        **kwargs
+            Additional arguments passed to ChromaDB's `query()` method,
+            such as `where` for metadata filtering.
+
+        Returns
+        -------
+        Sequence[RetrievedChromaDBMarkdownChunk]
+            The retrieved chunks with their relevance metrics.
+        """
         results = self.collection.query(
             query_texts=[text],
             n_results=top_k,
@@ -354,6 +380,9 @@ class ChromaDBStore(BaseStore):
                 metrics=metrics,
             )
             output.append(chunk)
+
+        if deoverlap:
+            output = deoverlap_chunks(output, key=lambda c: c.doc_id)
 
         return output
 

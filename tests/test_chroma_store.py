@@ -7,10 +7,14 @@ from raghilda.document import MarkdownDocument
 from raghilda.chunk import MarkdownChunk, RetrievedChunk
 
 
-class TestEmbeddingFunction:
-    def __call__(self, input):
-        if isinstance(input, str):
-            raise TypeError("Embedding function expects a sequence of strings")
+from chromadb import EmbeddingFunction, Embeddings, Documents
+
+
+class DummyEmbeddingFunction(EmbeddingFunction):
+    def name(self) -> str:
+        return "test_embedding_function"
+
+    def _embed(self, input: Documents) -> Embeddings:
         embeddings = []
         for text in input:
             embeddings.append(
@@ -21,6 +25,15 @@ class TestEmbeddingFunction:
                 ]
             )
         return embeddings
+
+    def __call__(self, input: Documents) -> Embeddings:
+        return self._embed(input)
+
+    def embed_documents(self, input: Documents) -> Embeddings:
+        return self._embed(input)
+
+    def embed_query(self, input: Documents) -> Embeddings:
+        return self._embed(input)
 
 
 def _make_doc():
@@ -75,7 +88,7 @@ def test_create_store():
 def test_insert_and_retrieve():
     store = ChromaDBStore.create(
         location=":memory:",
-        embedding_function=TestEmbeddingFunction(),
+        embedding_function=DummyEmbeddingFunction(),
         name="test_store_insert",
         overwrite=True,
     )
@@ -91,7 +104,7 @@ def test_insert_and_retrieve():
 
 def test_connect_with_embedding_function(tmp_path):
     location = tmp_path / "chroma_store"
-    embedding_function = TestEmbeddingFunction()
+    embedding_function = DummyEmbeddingFunction()
     store = ChromaDBStore.create(
         location=str(location),
         embedding_function=embedding_function,
@@ -110,3 +123,46 @@ def test_connect_with_embedding_function(tmp_path):
     assert store2.size() == 1
     results = store2.retrieve("document", top_k=1)
     assert len(results) == 1
+
+
+def _make_doc_with_overlapping_chunks():
+    """Create a document with overlapping chunks for testing deoverlap."""
+    content = "hello world hello"
+    doc = MarkdownDocument(origin="test_overlap", content=content)
+    doc.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=11,
+            text=content[0:11],  # "hello world"
+            token_count=11,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=17,
+            text=content[6:17],  # "world hello"
+            token_count=11,
+        ),
+    ]
+    return doc
+
+
+def test_retrieve_with_deoverlap():
+    """Test that overlapping chunks are merged when deoverlap=True."""
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embedding_function=DummyEmbeddingFunction(),
+        name="test_deoverlap",
+        overwrite=True,
+    )
+    store.insert(_make_doc_with_overlapping_chunks())
+
+    # With deoverlap=True (default), overlapping chunks should be merged
+    results_merged = store.retrieve("hello", top_k=2, deoverlap=True)
+    assert len(results_merged) == 1
+    assert results_merged[0].start_index == 0
+    assert results_merged[0].end_index == 17
+    assert results_merged[0].text == "hello world hello"
+
+    # With deoverlap=False, both chunks should be returned
+    results_separate = store.retrieve("hello", top_k=2, deoverlap=False)
+    assert len(results_separate) == 2
