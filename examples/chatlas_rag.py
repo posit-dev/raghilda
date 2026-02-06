@@ -63,7 +63,7 @@ def build_rag_index():
 
 def create_chat_with_rag():
     """Create a chatlas chat with RAG tool registered."""
-    from chatlas import ChatOpenAI
+    from chatlas import ChatOpenAI  # type: ignore[reportMissingImports]
 
     # Connect to existing store or build if it doesn't exist
     if DB_PATH.exists():
