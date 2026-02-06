@@ -17,11 +17,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
 from raghilda.scrape import find_links
+
+load_dotenv()
 
 # Path to store the RAG database
 DB_PATH = Path(__file__).parent / "chatlas_docs.db"
