@@ -122,7 +122,6 @@ If you're not sure about something, say so rather than making things up.""",
     # Show tool requests but not results
     def handle_tool_request(request):
         print(f"🔍 Searching: {request.arguments.get('query', '')}")
-        return True  # Allow the tool call to proceed
 
     chat.on_tool_request(handle_tool_request)
 
