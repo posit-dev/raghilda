@@ -1,0 +1,229 @@
+---
+title: "Getting Started"
+guide-section: "ChromaDB Store"
+---
+
+ChromaDB is an open-source vector database designed for AI applications. raghilda's
+`ChromaDBStore` provides a convenient interface for storing and retrieving document
+chunks using ChromaDB as the backend.
+
+## Installation
+
+ChromaDB is an optional dependency. Install it with:
+
+```bash
+pip install chromadb
+```
+
+Or install raghilda with ChromaDB support:
+
+```bash
+pip install "raghilda[chromadb]"
+```
+
+## Creating a Store
+
+Create a new ChromaDB store with `ChromaDBStore.create()`:
+
+```{python}
+#| eval: false
+from raghilda.store import ChromaDBStore
+from raghilda.embedding import EmbeddingOpenAI
+
+# Create a persistent store
+store = ChromaDBStore.create(
+    location="my_vector_store",
+    name="documents",
+    embed=EmbeddingOpenAI(),
+)
+```
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `location` | Path for persistent storage. Use `":memory:"` or `None` for in-memory storage. |
+| `name` | Collection name within the store. Defaults to `"raghilda_chroma"`. |
+| `title` | Human-readable title for the store. |
+| `embed` | Embedding function (raghilda provider or ChromaDB function). |
+| `overwrite` | If `True`, delete existing collection with the same name. |
+| `client` | Optional pre-configured ChromaDB client (e.g., `HttpClient`). |
+
+### In-Memory vs Persistent Storage
+
+```{python}
+#| eval: false
+# In-memory store (data lost when process ends)
+store = ChromaDBStore.create(location=":memory:", embed=EmbeddingOpenAI())
+
+# Persistent store (data saved to disk)
+store = ChromaDBStore.create(location="./my_store", embed=EmbeddingOpenAI())
+```
+
+## Inserting Documents
+
+Insert chunked documents into the store:
+
+```{python}
+#| eval: false
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+# Create and chunk a document
+doc = MarkdownDocument(
+    origin="example.md",
+    content="# Hello World\n\nThis is a sample document with some content."
+)
+
+chunker = MarkdownChunker()
+chunked_doc = chunker.chunk_document(doc)
+
+# Insert into store
+store.insert(chunked_doc)
+```
+
+### Batch Ingestion
+
+For multiple documents, use `ingest()` which handles reading, chunking, and insertion:
+
+```{python}
+#| eval: false
+# Ingest multiple files
+store.ingest([
+    "docs/guide.md",
+    "docs/reference.md",
+    "docs/tutorial.md",
+])
+
+# With custom preparation function
+def prepare(uri):
+    doc = read_as_markdown(uri)
+    return MarkdownChunker(chunk_size=500).chunk_document(doc)
+
+store.ingest(files, prepare=prepare, num_workers=4)
+```
+
+## Retrieving Documents
+
+Search for relevant chunks using semantic similarity:
+
+```{python}
+#| eval: false
+# Find the 5 most relevant chunks
+results = store.retrieve("How do I get started?", top_k=5)
+
+for chunk in results:
+    print(f"Score: {chunk.metrics[0].value:.4f}")
+    print(f"Text: {chunk.text[:100]}...")
+    print()
+```
+
+### Deoverlapping Results
+
+By default, overlapping chunks from the same document are merged:
+
+```{python}
+#| eval: false
+# Merged overlapping chunks (default)
+results = store.retrieve("query", top_k=5, deoverlap=True)
+
+# Keep chunks separate
+results = store.retrieve("query", top_k=5, deoverlap=False)
+```
+
+### Metadata Filtering
+
+Pass ChromaDB `where` filters to narrow results:
+
+```{python}
+#| eval: false
+# Filter by document origin
+results = store.retrieve(
+    "query",
+    top_k=5,
+    where={"origin": "guide.md"}
+)
+```
+
+## Connecting to Existing Stores
+
+Reconnect to a previously created store:
+
+```{python}
+#| eval: false
+# Connect to existing store
+store = ChromaDBStore.connect(
+    name="documents",
+    location="my_vector_store",
+)
+
+# Check how many documents are stored
+print(f"Documents in store: {store.size()}")
+```
+
+::: {.callout-note}
+When using ChromaDB's built-in embedding functions or raghilda's `EmbeddingOpenAI`/`EmbeddingCohere`,
+the embedding function is automatically restored from the stored configuration.
+See [Embedding Functions](51-chromadb-embedding-functions.qmd) for details.
+:::
+
+## Using a Remote ChromaDB Server
+
+Connect to a ChromaDB server running elsewhere:
+
+```{python}
+#| eval: false
+import chromadb
+
+# Connect to remote ChromaDB server
+client = chromadb.HttpClient(host="localhost", port=8000)
+
+# Use the client with raghilda
+store = ChromaDBStore.create(
+    client=client,
+    name="documents",
+    embed=EmbeddingOpenAI(),
+)
+```
+
+## Complete Example
+
+Here's a complete workflow from ingestion to retrieval:
+
+```{python}
+#| eval: false
+from raghilda.store import ChromaDBStore
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+# 1. Create store
+store = ChromaDBStore.create(
+    location="knowledge_base",
+    name="docs",
+    embed=EmbeddingOpenAI(),
+    overwrite=True,
+)
+
+# 2. Ingest documents
+store.ingest([
+    "README.md",
+    "docs/getting-started.md",
+    "docs/api-reference.md",
+])
+
+print(f"Indexed {store.size()} documents")
+
+# 3. Search
+results = store.retrieve("How do I install the package?", top_k=3)
+
+for i, chunk in enumerate(results, 1):
+    print(f"\n--- Result {i} ---")
+    print(f"From: {chunk.doc_id}")
+    print(f"Text: {chunk.text[:200]}...")
+```
+
+## Next Steps
+
+- Learn about [Embedding Functions](51-chromadb-embedding-functions.qmd) for advanced embedding configuration
+- Explore the [API Reference](/reference/store.ChromaDBStore.qmd) for all available methods

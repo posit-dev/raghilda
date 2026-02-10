@@ -1,11 +1,45 @@
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Any, Optional, Sequence, Type, TypeVar
+from typing import Any, Optional, Protocol, Sequence, Type, TypeVar, runtime_checkable
 
 from openai import OpenAI
 
 # Global registry for embedding providers
 _EMBEDDING_REGISTRY: dict[str, Type["EmbeddingProvider"]] = {}
+
+
+@runtime_checkable
+class ChromaConvertible(Protocol):
+    """Protocol for embedding providers that can convert to ChromaDB functions.
+
+    Implement this protocol to enable automatic conversion of raghilda embedding
+    providers to ChromaDB's built-in embedding functions. This provides cross-language
+    compatibility since ChromaDB's built-in functions work in both Python and TypeScript.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.embedding import EmbeddingOpenAI
+    from raghilda.store import ChromaDBStore
+
+    provider = EmbeddingOpenAI(model="text-embedding-3-small")
+
+    # Automatic conversion - provider.to_chroma() is called internally
+    store = ChromaDBStore.create(location="my_store", embed=provider)
+    ```
+    """
+
+    def to_chroma(self) -> Any:
+        """Convert to a ChromaDB embedding function.
+
+        Returns
+        -------
+        EmbeddingFunction
+            A ChromaDB-compatible embedding function instance.
+        """
+        ...
+
 
 T = TypeVar("T", bound="EmbeddingProvider")
 
@@ -295,6 +329,40 @@ class EmbeddingOpenAI(EmbeddingProvider):
 
         return result
 
+    def to_chroma(self) -> Any:
+        """Convert to a ChromaDB OpenAIEmbeddingFunction.
+
+        Returns
+        -------
+        OpenAIEmbeddingFunction
+            A ChromaDB-compatible embedding function using the same model and settings.
+        """
+        import os
+
+        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+
+        # Check if we can use environment variables for persistence
+        if os.getenv("CHROMA_OPENAI_API_KEY"):
+            # ChromaDB's preferred env var is set
+            return OpenAIEmbeddingFunction(
+                model_name=self.model,
+                api_base=self.base_url,
+            )
+        elif self.api_key is None or self.api_key == os.getenv("OPENAI_API_KEY"):
+            # Using standard OpenAI env var
+            return OpenAIEmbeddingFunction(
+                model_name=self.model,
+                api_base=self.base_url,
+                api_key_env_var="OPENAI_API_KEY",
+            )
+        else:
+            # Custom api_key passed - won't persist but will work
+            return OpenAIEmbeddingFunction(
+                api_key=self.api_key,
+                model_name=self.model,
+                api_base=self.base_url,
+            )
+
 
 @register_embedding_provider("EmbeddingCohere")
 class EmbeddingCohere(EmbeddingProvider):
@@ -409,3 +477,40 @@ class EmbeddingCohere(EmbeddingProvider):
                 result.extend(embeddings.float_)  # type: ignore[union-attr]
 
         return result
+
+    def to_chroma(self) -> Any:
+        """Convert to a ChromaDB CohereEmbeddingFunction.
+
+        Returns
+        -------
+        CohereEmbeddingFunction
+            A ChromaDB-compatible embedding function using the same model and settings.
+        """
+        import os
+
+        from chromadb.utils.embedding_functions import CohereEmbeddingFunction
+
+        # Check if we can use environment variables for persistence
+        if os.getenv("CHROMA_COHERE_API_KEY"):
+            # ChromaDB's preferred env var is set
+            return CohereEmbeddingFunction(
+                model_name=self.model,
+            )
+        elif os.getenv("COHERE_API_KEY"):
+            # ChromaDB also checks COHERE_API_KEY
+            return CohereEmbeddingFunction(
+                model_name=self.model,
+                api_key_env_var="COHERE_API_KEY",
+            )
+        elif self.api_key is None or self.api_key == os.getenv("CO_API_KEY"):
+            # Using raghilda's default env var
+            return CohereEmbeddingFunction(
+                model_name=self.model,
+                api_key_env_var="CO_API_KEY",
+            )
+        else:
+            # Custom api_key passed - won't persist but will work
+            return CohereEmbeddingFunction(
+                api_key=self.api_key,
+                model_name=self.model,
+            )

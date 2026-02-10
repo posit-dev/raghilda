@@ -1,0 +1,208 @@
+---
+title: "Embedding Functions"
+guide-section: "ChromaDB Store"
+---
+
+Embedding functions convert text into numerical vectors that capture semantic meaning.
+These vectors enable similarity search — finding documents that are conceptually related
+to a query, even when they don't share exact keywords.
+
+When using `ChromaDBStore`, you can pass embedding functions via the `embed` parameter.
+raghilda handles the conversion automatically, supporting both raghilda embedding providers
+and ChromaDB's native embedding functions.
+
+## Basic Usage
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import ChromaDBStore
+
+# Create a store with a raghilda embedding provider
+store = ChromaDBStore.create(
+    location="my_store",
+    name="documents",
+    embed=EmbeddingOpenAI(model="text-embedding-3-small"),
+)
+```
+
+## Three Approaches to Embedding Functions
+
+There are three ways to provide embedding functions to ChromaDB, each with different
+trade-offs:
+
+### 1. raghilda Providers with Native ChromaDB Equivalents (Recommended)
+
+For `EmbeddingOpenAI` and `EmbeddingCohere`, raghilda automatically converts to
+ChromaDB's built-in embedding functions:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import ChromaDBStore
+
+store = ChromaDBStore.create(
+    location="my_store",
+    embed=EmbeddingOpenAI(model="text-embedding-3-small"),
+)
+```
+
+**Benefits:**
+
+- Full serialization support — ChromaDB can restore the embedding function when reconnecting
+- Cross-language compatibility — TypeScript clients can access the same collection
+- Proper query/document embedding distinction for providers like Cohere
+
+**How it works:** raghilda providers implement `to_chroma()` which returns the equivalent
+ChromaDB embedding function (e.g., `OpenAIEmbeddingFunction`).
+
+### 2. ChromaDB Embedding Functions Directly
+
+You can pass ChromaDB's built-in embedding functions directly:
+
+```{python}
+#| eval: false
+from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from raghilda.store import ChromaDBStore
+
+chroma_embed = OpenAIEmbeddingFunction(
+    model_name="text-embedding-3-small",
+    api_key_env_var="OPENAI_API_KEY",
+)
+
+store = ChromaDBStore.create(
+    location="my_store",
+    embed=chroma_embed,
+)
+```
+
+**Benefits:**
+
+- Direct control over ChromaDB configuration
+- Access to ChromaDB-specific features
+- Full serialization and cross-language support
+
+**When to use:** When you need ChromaDB-specific options not exposed by raghilda providers.
+
+### 3. Custom Embedding Providers (Adapter Fallback)
+
+For custom `EmbeddingProvider` implementations without a ChromaDB equivalent,
+raghilda automatically wraps them in an adapter:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingProvider, EmbedInputType, register_embedding_provider
+
+@register_embedding_provider("MyCustomEmbedding")
+class MyCustomEmbedding(EmbeddingProvider):
+    def __init__(self, model: str = "custom-model"):
+        self.model = model
+        # Initialize your embedding client
+
+    def embed(self, x, input_type=EmbedInputType.DOCUMENT):
+        # Generate embeddings using your custom logic
+        return [[0.1, 0.2, 0.3] for _ in x]
+
+    def get_config(self):
+        return {"type": "MyCustomEmbedding", "model": self.model}
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(model=config.get("model", "custom-model"))
+
+# Use with ChromaDB - automatically wrapped in adapter
+store = ChromaDBStore.create(
+    location="my_store",
+    embed=MyCustomEmbedding(),
+)
+```
+
+**Benefits:**
+
+- Works with any `EmbeddingProvider` implementation
+- Serialization support via raghilda's provider registry
+- Proper query/document embedding handling
+
+**Limitations:**
+
+- Python-only — TypeScript clients cannot restore these providers
+- Requires registering the provider with `@register_embedding_provider`
+
+::: {.callout-important}
+Custom providers must be registered with `@register_embedding_provider` for
+serialization to work. The decorator ensures the provider can be restored when
+reconnecting to an existing collection.
+:::
+
+## Reconnecting to Existing Collections
+
+When reconnecting to a ChromaDB collection, the embedding function handling depends
+on which approach you used:
+
+### Native ChromaDB Functions (Approaches 1 & 2)
+
+ChromaDB can automatically restore the embedding function from stored configuration:
+
+```{python}
+#| eval: false
+# No need to specify embed — ChromaDB restores it automatically
+store = ChromaDBStore.connect(
+    name="documents",
+    location="my_store",
+)
+```
+
+### Custom Providers (Approach 3)
+
+For custom providers, ensure the provider class is imported before connecting:
+
+```{python}
+#| eval: false
+# Import to register the provider
+from my_package import MyCustomEmbedding
+
+# ChromaDB + raghilda restore the provider from config
+store = ChromaDBStore.connect(
+    name="documents",
+    location="my_store",
+)
+```
+
+## API Key Handling
+
+raghilda embedding providers intelligently handle API keys for ChromaDB compatibility:
+
+1. **Environment variables (recommended):** Set `OPENAI_API_KEY` or `CO_API_KEY` and
+   the provider will configure ChromaDB to use them for persistence.
+
+2. **ChromaDB-specific variables:** If `CHROMA_OPENAI_API_KEY` or `CHROMA_COHERE_API_KEY`
+   are set, those take precedence.
+
+3. **Direct API keys:** You can pass `api_key` directly, but ChromaDB will emit a
+   deprecation warning since direct keys aren't persisted.
+
+```{python}
+#| eval: false
+import os
+os.environ["OPENAI_API_KEY"] = "sk-..."
+
+# Provider uses the environment variable — persists correctly
+provider = EmbeddingOpenAI()
+store = ChromaDBStore.create(location="my_store", embed=provider)
+
+# Later, reconnect without specifying the key
+store = ChromaDBStore.connect(name="raghilda_chroma", location="my_store")
+```
+
+## Choosing the Right Approach
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| OpenAI or Cohere embeddings | raghilda provider (Approach 1) |
+| Need TypeScript client access | ChromaDB function directly (Approach 2) |
+| Custom embedding model | Custom provider with adapter (Approach 3) |
+| Maximum portability | ChromaDB function directly (Approach 2) |
+| Unified raghilda API | raghilda provider (Approach 1 or 3) |
+
+For most use cases, using raghilda's built-in providers (`EmbeddingOpenAI`,
+`EmbeddingCohere`) provides the best balance of convenience and compatibility.
