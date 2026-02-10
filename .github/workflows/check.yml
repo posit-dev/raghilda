@@ -24,7 +24,7 @@ jobs:
       run: uv python install
     
     - name: Install dependencies
-      run: uv sync --extra test
+      run: uv sync --all-extras
     
     - name: Run checks
       run: uv run task check
