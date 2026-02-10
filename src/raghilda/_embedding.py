@@ -40,6 +40,7 @@ class ChromaConvertible(Protocol):
         """
         ...
 
+
 T = TypeVar("T", bound="EmbeddingProvider")
 
 
