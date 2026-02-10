@@ -11,7 +11,8 @@ from chromadb import EmbeddingFunction, Embeddings, Documents
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
-    def name(self) -> str:
+    @staticmethod
+    def name() -> str:
         return "test_embedding_function"
 
     def _embed(self, input: Documents) -> Embeddings:
