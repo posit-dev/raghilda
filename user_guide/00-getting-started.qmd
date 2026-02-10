@@ -39,17 +39,6 @@ store = DuckDBStore.create(
 
 raghilda supports multiple embedding providers (OpenAI, Cohere) and storage backends (DuckDB, ChromaDB, OpenAI Vector Stores). See the [API Reference](/reference/index.qmd) for all options.
 
-### Connecting to an Existing Store
-
-Use `connect()` to open a store that was previously created:
-
-```{python}
-#| eval: false
-store = DuckDBStore.connect("quarto_docs.db")
-```
-
-The embedding configuration is automatically restored from the stored metadata. Use `create()` for new stores and `connect()` for existing ones.
-
 ## Finding Documents
 
 Next, identify the documents to include. The `find_links()` function can crawl a website to discover pages:
