@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import importlib
 import os
 from pathlib import Path
-from typing import Any, Optional, Sequence, Callable
+from typing import Any, Optional, Sequence, Callable, TYPE_CHECKING, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from ._store import BaseStore
@@ -13,10 +13,149 @@ from .chunker import MarkdownChunker
 from .document import Document, MarkdownDocument
 from .read import read_as_markdown
 from ._deoverlap import deoverlap_chunks
+from ._embedding import (
+    ChromaConvertible,
+    EmbeddingProvider,
+    EmbedInputType,
+    embedding_from_config,
+)
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    import numpy as np
+    from chromadb.api.types import EmbeddingFunction
+
+    ChromaEmbedding = Union[EmbeddingProvider, EmbeddingFunction]
 
 
 _METADATA_TITLE_KEY = "raghilda_title"
+_ADAPTER_NAME = "raghilda_embedding_adapter"
+
+
+class ChromaEmbeddingAdapter:
+    """Adapter to use any raghilda EmbeddingProvider with ChromaDB.
+
+    This adapter wraps a raghilda `EmbeddingProvider` to make it compatible with
+    ChromaDB's `EmbeddingFunction` protocol, including serialization support.
+    Use this for custom embedding providers that don't have a native ChromaDB equivalent.
+
+    The adapter is automatically used when passing an `EmbeddingProvider` to
+    `ChromaDBStore.create()` or `connect()` if the provider doesn't implement
+    `ChromaConvertible`.
+
+    Note: This adapter stores the provider config for serialization, but cross-language
+    compatibility (e.g., TypeScript) is not supported since the provider is Python-only.
+
+    Parameters
+    ----------
+    provider
+        A raghilda EmbeddingProvider instance.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.embedding import EmbeddingOpenAI
+    from raghilda.store import ChromaDBStore, ChromaEmbeddingAdapter
+
+    # Manual wrapping (usually not needed - automatic conversion is preferred)
+    provider = EmbeddingOpenAI(model="text-embedding-3-small")
+    adapter = ChromaEmbeddingAdapter(provider)
+
+    store = ChromaDBStore.create(
+        location="my_store",
+        name="docs",
+        embed=adapter,
+    )
+    ```
+    """
+
+    def __init__(self, provider: EmbeddingProvider) -> None:
+        self._provider = provider
+
+    def __call__(self, input: Sequence[str]) -> list[np.ndarray]:
+        """Generate embeddings for documents.
+
+        This method is called by ChromaDB when adding/upserting documents.
+        """
+        import numpy as np
+
+        embeddings = self._provider.embed(list(input), EmbedInputType.DOCUMENT)
+        return [np.array(emb, dtype=np.float32) for emb in embeddings]
+
+    def embed_query(self, input: Sequence[str]) -> list[np.ndarray]:
+        """Generate embeddings for queries.
+
+        This method is called by ChromaDB when querying the collection.
+        """
+        import numpy as np
+
+        embeddings = self._provider.embed(list(input), EmbedInputType.QUERY)
+        return [np.array(emb, dtype=np.float32) for emb in embeddings]
+
+    @staticmethod
+    def name() -> str:
+        """Return the name of this embedding function for ChromaDB registry."""
+        return _ADAPTER_NAME
+
+    def get_config(self) -> dict[str, Any]:
+        """Return configuration for serialization.
+
+        The config includes the wrapped provider's config so it can be restored.
+        """
+        return {
+            "provider_config": self._provider.get_config(),
+        }
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "ChromaEmbeddingAdapter":
+        """Restore the adapter from a configuration dict.
+
+        This reconstructs both the adapter and the wrapped provider.
+        """
+        provider_config = config.get("provider_config", {})
+        provider = embedding_from_config(provider_config)
+        return ChromaEmbeddingAdapter(provider)
+
+
+def _register_adapter() -> None:
+    """Register the ChromaEmbeddingAdapter with ChromaDB's embedding function registry."""
+    try:
+        from chromadb.utils.embedding_functions import register_embedding_function
+
+        register_embedding_function(ChromaEmbeddingAdapter)
+    except ImportError:
+        pass  # ChromaDB not installed
+
+
+# Register on module load
+_register_adapter()
+
+
+def _to_chroma_embedding_function(
+    embed: Optional[ChromaEmbedding],
+) -> Optional[EmbeddingFunction]:
+    """Convert an embedding provider to a ChromaDB embedding function if needed.
+
+    Parameters
+    ----------
+    embed
+        Either a raghilda EmbeddingProvider (implementing ChromaConvertible)
+        or a ChromaDB embedding function.
+
+    Returns
+    -------
+    EmbeddingFunction | None
+        A ChromaDB-compatible embedding function.
+    """
+    if embed is None:
+        return None
+    if isinstance(embed, ChromaConvertible):
+        return embed.to_chroma()
+    if isinstance(embed, EmbeddingProvider):
+        # Fallback: wrap in adapter for providers without ChromaDB equivalent
+        return ChromaEmbeddingAdapter(embed)
+    return embed  # type: ignore[return-value]
 
 
 def _import_chromadb():
@@ -131,7 +270,7 @@ class ChromaDBStore(BaseStore):
         overwrite: bool = False,
         name: Optional[str] = None,
         title: Optional[str] = None,
-        embedding_function: Any = None,
+        embed: Optional[ChromaEmbedding] = None,
         collection_metadata: Optional[dict[str, Any]] = None,
         client: Any = None,
     ):
@@ -148,9 +287,11 @@ class ChromaDBStore(BaseStore):
             Collection name for the store.
         title
             Human-readable title for the store.
-        embedding_function
-            Optional ChromaDB embedding function. If None, Chroma's default
-            embedding function is used.
+        embed
+            Optional embedding function. Can be either a raghilda EmbeddingProvider
+            (e.g., EmbeddingOpenAI, EmbeddingCohere) or a ChromaDB embedding function.
+            Raghilda providers are automatically converted to their ChromaDB equivalents.
+            If None, Chroma's default embedding function is used.
         collection_metadata
             Additional metadata to attach to the Chroma collection.
         client
@@ -161,6 +302,8 @@ class ChromaDBStore(BaseStore):
         ChromaDBStore
             A newly created store instance.
         """
+        embedding_function = _to_chroma_embedding_function(embed)
+
         if name is None:
             name = "raghilda_chroma"
         if title is None:
@@ -197,7 +340,7 @@ class ChromaDBStore(BaseStore):
         name: str,
         location: str | Path | None = None,
         *,
-        embedding_function: Any = None,
+        embed: Optional[ChromaEmbedding] = None,
         client: Any = None,
     ):
         """Connect to an existing ChromaDB store.
@@ -209,10 +352,12 @@ class ChromaDBStore(BaseStore):
         location
             Path where ChromaDB persists its data. Use ":memory:" or None
             for an in-memory store.
-        embedding_function
-            Optional ChromaDB embedding function. If None, Chroma's default
-            embedding function is used. If you used a custom embedding function
-            when creating the collection, pass the same function here.
+        embed
+            Optional embedding function. Can be either a raghilda EmbeddingProvider
+            (e.g., EmbeddingOpenAI, EmbeddingCohere) or a ChromaDB embedding function.
+            Raghilda providers are automatically converted to their ChromaDB equivalents.
+            If None, ChromaDB will attempt to restore the embedding function from
+            the collection's stored configuration.
         client
             Optional pre-configured Chroma client (e.g., HttpClient).
 
@@ -221,6 +366,8 @@ class ChromaDBStore(BaseStore):
         ChromaDBStore
             A connected store instance.
         """
+        embedding_function = _to_chroma_embedding_function(embed)
+
         if client is None:
             client = _get_client(location)
 
