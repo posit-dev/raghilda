@@ -18,7 +18,7 @@ pip install chromadb
 Or install raghilda with ChromaDB support:
 
 ```bash
-pip install raghilda[chromadb]
+pip install "raghilda[chromadb]"
 ```
 
 ## Creating a Store
