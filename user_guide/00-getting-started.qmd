@@ -180,15 +180,9 @@ store = DuckDBStore.connect("quarto_docs.db", read_only=True)
 # Define a search tool
 def search_docs(query: str) -> str:
     """Search the Quarto documentation for relevant information."""
+    import json
     chunks = store.retrieve(query, top_k=5, deoverlap=True)
-    if not chunks:
-        return "No relevant documentation found."
-
-    results = []
-    for chunk in chunks:
-        context = f" ({chunk.context})" if chunk.context else ""
-        results.append(f"Source: {chunk.origin}{context}\n{chunk.text}")
-    return "\n\n---\n\n".join(results)
+    return json.dumps([{"text": chunk.text, "context": chunk.context} for chunk in chunks])
 
 # Create chat with RAG tool
 chat = ChatOpenAI(
