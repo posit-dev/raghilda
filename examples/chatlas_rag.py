@@ -90,19 +90,12 @@ def create_chat_with_rag():
             num_results: Number of relevant chunks to return (default: 5).
 
         Returns:
-            Relevant excerpts from the chatlas documentation.
+            JSON array of relevant excerpts from the chatlas documentation.
         """
+        import json
+
         chunks = store.retrieve(query, top_k=num_results, deoverlap=True)
-
-        if not chunks:
-            return "No relevant documentation found."
-
-        results = []
-        for i, chunk in enumerate(chunks, 1):
-            context = f" (from: {chunk.context})" if chunk.context else ""
-            results.append(f"[{i}]{context}\n{chunk.text}")
-
-        return "\n\n---\n\n".join(results)
+        return json.dumps([{"text": chunk.text, "context": chunk.context} for chunk in chunks])
 
     # Create the chat with system prompt
     chat = ChatOpenAI(
