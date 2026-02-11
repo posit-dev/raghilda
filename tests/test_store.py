@@ -178,6 +178,61 @@ def test_ingest():
     store.ingest(links)
 
 
+def test_ingest_with_generator():
+    """Test that ingest works with a generator (iterable without __len__)."""
+    from raghilda.chunker import MarkdownChunker
+
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="ingest_generator_db",
+    )
+
+    chunker = MarkdownChunker()
+
+    def make_docs():
+        for i in range(3):
+            doc = MarkdownDocument(origin=f"test_{i}", content=f"Document number {i}")
+            yield doc
+
+    # Use identity prepare since we're yielding MarkdownDocuments that need chunking
+    store.ingest(
+        make_docs(), prepare=lambda doc: chunker.chunk_document(doc), progress=False
+    )
+    assert store.size() == 3
+
+
+def test_ingest_with_custom_prepare():
+    """Test that ingest works with a custom prepare function."""
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="ingest_prepare_db",
+    )
+
+    def custom_prepare(item: dict) -> MarkdownDocument:
+        doc = MarkdownDocument(origin=item["id"], content=item["text"])
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(item["text"]),
+                text=item["text"],
+                token_count=len(item["text"]),
+            )
+        ]
+        return doc
+
+    items = [
+        {"id": "doc1", "text": "First document content"},
+        {"id": "doc2", "text": "Second document content"},
+    ]
+
+    store.ingest(items, prepare=custom_prepare, progress=False)
+    assert store.size() == 2
+
+
 def test_connect(tmp_path):
     db_path = tmp_path / "test.db"
 
