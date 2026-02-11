@@ -1,0 +1,161 @@
+---
+title: "Chunking"
+guide-section: "Getting Started"
+---
+
+Chunking is the process of splitting documents into smaller pieces for embedding and retrieval. Good chunking improves retrieval quality by ensuring each chunk contains a coherent, self-contained piece of information.
+
+## Why Chunking Matters
+
+Embedding models have token limits, and even when they don't, shorter texts tend to produce more focused embeddings. A document about multiple topics will have an embedding that averages across all of them, making it less likely to match specific queries.
+
+Chunking also affects what gets returned to the LLM. Smaller chunks mean more precise retrieval, but chunks that are too small may lack context.
+
+## The MarkdownChunker
+
+raghilda's `MarkdownChunker` splits Markdown documents at semantic boundaries rather than arbitrary character positions:
+
+```{python}
+#| eval: false
+from raghilda.chunker import MarkdownChunker
+
+chunker = MarkdownChunker(
+    chunk_size=1600,      # ~400 tokens
+    target_overlap=0.5,   # 50% overlap
+)
+
+chunks = chunker.chunk(markdown_text)
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `chunk_size` | 1600 | Target size in characters (~4 chars per token) |
+| `target_overlap` | 0.5 | Fraction of overlap between chunks (0 to 1) |
+| `max_snap_distance` | 20 | Max distance to move cut point to reach a boundary |
+| `segment_by_heading_levels` | None | Heading levels that act as hard boundaries |
+
+### Semantic Boundaries
+
+The chunker identifies boundaries in order of preference:
+
+1. **Headings** — `# H1`, `## H2`, etc.
+2. **Paragraphs** — Blank lines between text blocks
+3. **Sentences** — Periods, exclamation marks, question marks followed by whitespace
+4. **Lines** — Newline characters
+5. **Words** — Whitespace between words
+
+When calculating where to cut, the chunker "snaps" to the nearest semantic boundary within `max_snap_distance` characters, preferring higher-priority boundaries.
+
+### Overlap
+
+Overlap helps ensure relevant content isn't lost at chunk boundaries. With 50% overlap, consecutive chunks share half their content:
+
+```
+Chunk 1: [====================]
+Chunk 2:          [====================]
+Chunk 3:                    [====================]
+```
+
+This redundancy means a piece of information near a boundary will appear in multiple chunks, increasing the chance of retrieval.
+
+### Hard Boundaries with Heading Levels
+
+Use `segment_by_heading_levels` to prevent chunks from crossing major section boundaries:
+
+```{python}
+#| eval: false
+chunker = MarkdownChunker(
+    chunk_size=1600,
+    segment_by_heading_levels=[1, 2],  # Never cross h1 or h2
+)
+```
+
+This ensures chunks stay within their logical sections, which is useful for documents with distinct topics under each heading.
+
+### Heading Context
+
+Each chunk includes the heading hierarchy it falls under:
+
+```{python}
+#| eval: false
+for chunk in chunks:
+    if chunk.context:
+        print(f"Context: {chunk.context}")
+    print(f"Text: {chunk.text[:100]}...")
+```
+
+This context is stored alongside the chunk and can help the LLM understand where the content came from.
+
+## Chunking Documents
+
+To chunk a full document (not just text), use `chunk_document()`:
+
+```{python}
+#| eval: false
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+doc = read_as_markdown("article.md")
+chunker = MarkdownChunker(chunk_size=800)
+
+chunked_doc = chunker.chunk_document(doc)
+print(f"Created {len(chunked_doc.chunks)} chunks")
+```
+
+The chunks are attached to the document's `chunks` attribute, preserving the association with the source.
+
+## Custom Chunking with Ingest
+
+The `ingest()` method uses default chunking, but you can customize it with a `prepare` function:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(location="store.db", embed=embed)
+
+# Custom chunker with smaller chunks
+chunker = MarkdownChunker(
+    chunk_size=800,
+    target_overlap=0.3,
+    segment_by_heading_levels=[1],
+)
+
+def prepare(uri):
+    doc = read_as_markdown(uri)
+    return chunker.chunk_document(doc)
+
+store.ingest(files, prepare=prepare)
+```
+
+## Using Chonkie Chunkers
+
+raghilda is compatible with [chonkie](https://github.com/chonkie-ai/chonkie), a library providing various chunking strategies. Any chonkie chunker can be used with raghilda:
+
+```{python}
+#| eval: false
+from chonkie import TokenChunker, SemanticChunker
+from raghilda.chunk import Chunk
+from raghilda.document import MarkdownDocument
+from raghilda.read import read_as_markdown
+
+# Use chonkie's TokenChunker
+chunker = TokenChunker(chunk_size=512, chunk_overlap=128)
+
+def prepare(uri):
+    doc = read_as_markdown(uri)
+    chonkie_chunks = chunker.chunk(doc.content)
+    # Convert chonkie chunks to raghilda chunks
+    return MarkdownDocument(
+        content=doc.content,
+        origin=uri,
+        chunks=[Chunk.from_any(c) for c in chonkie_chunks],
+    )
+
+store.ingest(files, prepare=prepare)
+```
+

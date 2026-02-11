@@ -1,0 +1,254 @@
+---
+title: "Core Concepts"
+guide-section: "Getting Started"
+---
+
+Large language models (LLMs) sometimes generate confident but incorrect information—a phenomenon known as hallucination. This happens because LLMs work by predicting the most likely next words based on patterns learned during training, without any inherent concept of truth or factual accuracy.
+
+## Why RAG?
+
+Retrieval-Augmented Generation (RAG) addresses this by grounding LLM responses in trusted source material. Instead of relying solely on the model's training data, RAG retrieves relevant content from a curated knowledge base and includes it in the prompt. This shifts the model's role from open-ended generation to summarizing vetted content.
+
+While RAG doesn't eliminate hallucinations entirely, it significantly reduces them for domain-specific applications by ensuring responses are anchored in authoritative sources.
+
+## Building a RAG System
+
+A RAG system has two main phases:
+
+1. **Preparation**: Building a searchable knowledge store from your documents
+2. **Retrieval**: Finding relevant content to augment LLM prompts
+
+Let's walk through building a RAG system using the [Quarto documentation](https://quarto.org/docs/guide/) as our knowledge base.
+
+## Creating a Store
+
+First, create a store with an embedding provider. The store will hold your document chunks and their vector embeddings:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingOpenAI
+
+store = DuckDBStore.create(
+    location="quarto_docs.db",
+    embed=EmbeddingOpenAI(),
+    name="quarto",
+    title="Quarto Documentation",
+)
+```
+
+raghilda supports multiple embedding providers (OpenAI, Cohere) and storage backends (DuckDB, ChromaDB, OpenAI Vector Stores). See the [API Reference](/reference/index.qmd) for all options.
+
+## Finding Documents
+
+Next, identify the documents to include. The `find_links()` function can crawl a website to discover pages:
+
+```{python}
+#| eval: false
+from raghilda.scrape import find_links
+
+links = find_links(
+    "https://quarto.org/docs/guide/",
+    depth=1,
+    children_only=True,
+    progress=True,
+)
+print(f"Found {len(links)} pages")
+```
+
+The `depth` parameter controls how many levels of links to follow, and `children_only=True` restricts crawling to pages under the starting URL.
+
+You can also work with local files or provide a list of URLs directly:
+
+```{python}
+#| eval: false
+# Local files
+links = ["docs/guide.md", "docs/reference.md", "docs/tutorial.md"]
+
+# Or use glob patterns with pathlib
+from pathlib import Path
+links = list(Path("docs").glob("**/*.md"))
+```
+
+## Converting to Markdown
+
+raghilda works with Markdown as its standard document format. The `read_as_markdown()` function converts various file types (HTML, PDF, DOCX, etc.) to Markdown:
+
+```{python}
+#| eval: false
+from raghilda.read import read_as_markdown
+
+doc = read_as_markdown("https://quarto.org/docs/guide/")
+print(doc.content[:500])
+```
+
+This conversion is handled automatically during ingestion, but understanding it helps when you need to customize the pipeline.
+
+## Chunking Documents
+
+Documents are split into smaller chunks for more precise retrieval. The `MarkdownChunker` splits text at semantic boundaries (headings, paragraphs, sentences) while maintaining context:
+
+```{python}
+#| eval: false
+from raghilda.chunker import MarkdownChunker
+
+chunker = MarkdownChunker(
+    chunk_size=1600,      # Target size in characters (~400 tokens)
+    target_overlap=0.5,   # 50% overlap between chunks
+)
+```
+
+Overlap between chunks helps ensure relevant content isn't split across chunk boundaries. The chunker preserves heading context so each chunk knows where it came from in the document structure.
+
+## Ingesting Documents
+
+The `ingest()` method handles reading, chunking, embedding, and storing in one step:
+
+```{python}
+#| eval: false
+store.ingest(links, progress=True)
+print(f"Ingested {store.size()} chunks")
+```
+
+For custom processing, provide a `prepare` function:
+
+```{python}
+#| eval: false
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+def prepare(uri):
+    doc = read_as_markdown(uri)
+    chunker = MarkdownChunker(chunk_size=800)
+    return chunker.chunk_document(doc)
+
+store.ingest(links, prepare=prepare, num_workers=4)
+```
+
+## Building Indexes
+
+After ingestion, build indexes to speed up retrieval:
+
+```{python}
+#| eval: false
+store.build_index()
+```
+
+This creates both a vector similarity index (HNSW) for semantic search and a BM25 index for keyword search.
+
+## Retrieving Content
+
+Now you can search your knowledge base:
+
+```{python}
+#| eval: false
+chunks = store.retrieve("How do I create a Quarto presentation?", top_k=5)
+
+for chunk in chunks:
+    print(f"Source: {chunk.origin}")
+    print(f"Context: {chunk.context}")
+    print(f"Score: {chunk.metrics[0].value:.4f}")
+    print(chunk.text[:200])
+    print("---")
+```
+
+The `retrieve()` method combines vector similarity search (semantic matching) with BM25 (keyword matching) for hybrid retrieval. By default, overlapping chunks from the same document are merged (`deoverlap=True`) to provide more coherent results.
+
+You can also use the individual search methods:
+
+
+```{python}
+#| eval: false
+# Vector similarity search only
+chunks = store.retrieve_vss("presentations", top_k=5)
+
+# BM25 keyword search only
+chunks = store.retrieve_bm25("presentations", top_k=5)
+```
+
+## Using with an LLM
+
+The retrieved chunks can augment your LLM prompts. Here's an example using [chatlas](https://posit-dev.github.io/chatlas/):
+
+```{python}
+#| eval: false
+from chatlas import ChatOpenAI
+
+# Connect to existing store
+store = DuckDBStore.connect("quarto_docs.db", read_only=True)
+
+# Define a search tool
+def search_docs(query: str) -> str:
+    """Search the Quarto documentation for relevant information."""
+    import json
+    chunks = store.retrieve(query, top_k=5, deoverlap=True)
+    return json.dumps([{"text": chunk.text, "context": chunk.context} for chunk in chunks])
+
+# Create chat with RAG tool
+chat = ChatOpenAI(
+    model="gpt-4o-mini",
+    system_prompt="""Answer questions about Quarto using the search tool.
+Always search the documentation before answering.""",
+)
+chat.register_tool(search_docs)
+
+# Ask a question
+chat.chat("How do I add citations to a Quarto document?")
+```
+
+## Reconnecting to a Store
+
+To reuse an existing store:
+
+```{python}
+#| eval: false
+store = DuckDBStore.connect("quarto_docs.db")
+print(f"Store contains {store.size()} chunks")
+```
+
+The embedding configuration is automatically restored, so you can immediately start retrieving.
+
+## Complete Example
+
+Here's the full workflow in one script:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.scrape import find_links
+
+# 1. Create store
+store = DuckDBStore.create(
+    location="quarto_docs.db",
+    embed=EmbeddingOpenAI(),
+    name="quarto",
+    title="Quarto Documentation",
+    overwrite=True,
+)
+
+# 2. Find documents
+links = find_links(
+    "https://quarto.org/docs/guide/",
+    depth=1,
+    children_only=True,
+)
+
+# 3. Ingest
+store.ingest(links, progress=True)
+
+# 4. Build indexes
+store.build_index()
+
+# 5. Retrieve
+chunks = store.retrieve("How do I create a presentation?", top_k=3)
+for chunk in chunks:
+    print(f"\n## {chunk.origin}")
+    print(chunk.text[:300])
+```
+
+## Next Steps
+
+- Explore [ChromaDB Store](50-chromadb-store.qmd) for an alternative storage backend
+- See the [API Reference](/reference/index.qmd) for detailed documentation
+- Check out the [examples](https://github.com/dfalbel/py-ragnar/tree/main/examples) for more use cases
