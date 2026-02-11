@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import importlib
 import os
 from pathlib import Path
-from typing import Any, Optional, Sequence, Callable, TYPE_CHECKING, Union
+from collections.abc import Sized
+from typing import Any, Iterable, Optional, Sequence, Callable, TYPE_CHECKING, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from ._store import BaseStore
@@ -417,23 +418,27 @@ class ChromaDBStore(BaseStore):
 
     def ingest(
         self,
-        uris: Sequence[str],
-        prepare: Optional[Callable[[str], Document]] = None,
+        items: Iterable[Any],
+        prepare: Optional[Callable[[Any], Document]] = None,
         num_workers: Optional[int] = None,
-        progress=True,
+        progress: bool = True,
     ) -> None:
         """
-        Ingest multiple documents from a list of URIs.
+        Ingest multiple documents.
 
         Parameters
         ----------
-        uris
-            A sequence of URIs (file paths, URLs, etc.) to ingest.
+        items
+            An iterable of items to ingest. Each item will be passed to
+            the prepare function to create a Document. By default, items
+            are expected to be URIs (file paths or URLs) that will be read
+            with read_as_markdown and chunked.
         prepare
-            A callable that takes a URI and returns a MarkdownDocument with chunks computed.
+            A callable that takes an item and returns a Document with chunks computed.
+            If None, items are treated as URIs and read with read_as_markdown.
         num_workers
-            The number of worker threads to use for parallel ingestion. If None, defaults
-            to the number of CPU cores.
+            The number of worker threads to use for parallel ingestion.
+            If None, defaults to the number of CPU cores.
         progress
             Whether to display a progress bar during ingestion. Default is True.
         """
@@ -443,23 +448,30 @@ class ChromaDBStore(BaseStore):
         if prepare is None:
             chunker = MarkdownChunker()
 
-            def _prepare(uri: str) -> Document:
+            def default_prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
 
-            prepare = _prepare
+            prepare = default_prepare
 
-        def do_ingest_work(uri: str) -> None:
+        total = len(items) if isinstance(items, Sized) else None
+
+        def do_ingest_work(item: Any) -> None:
             try:
-                chunked_doc = prepare(uri)
-                self.insert(chunked_doc)
+                result = prepare(item)
+                # Handle both single document and list of documents
+                if isinstance(result, (list, tuple)):
+                    for doc in result:
+                        self.insert(doc)
+                else:
+                    self.insert(result)
             except Exception as e:
-                raise RuntimeError(f"Failed to ingest '{uri}': {e}") from e
+                raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             list(
                 tqdm(
-                    pool.map(do_ingest_work, uris),
-                    total=len(uris),
+                    pool.map(do_ingest_work, items),
+                    total=total,
                     disable=not progress,
                 )
             )
