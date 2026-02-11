@@ -423,13 +423,8 @@ class DuckDBStore(BaseStore):
 
         def do_ingest_work(item: Any) -> None:
             try:
-                result = prepare(item)
-                # Handle both single document and list of documents
-                if isinstance(result, (list, tuple)):
-                    for doc in result:
-                        self.insert(doc)
-                else:
-                    self.insert(result)
+                doc = prepare(item)
+                self.insert(doc)
             except Exception as e:
                 raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
