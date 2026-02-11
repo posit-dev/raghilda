@@ -6,7 +6,7 @@ from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .read import read_as_markdown
 from .document import Document, MarkdownDocument
-from typing import Optional, Sequence, Callable
+from typing import Any, Callable, Iterable, Optional, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
@@ -383,49 +383,58 @@ class DuckDBStore(BaseStore):
 
     def ingest(
         self,
-        uris: Sequence[str],
-        prepare: Optional[Callable[[str], Document]] = None,
+        items: Iterable[Any],
+        prepare: Optional[Callable[[Any], Document]] = None,
         num_workers: Optional[int] = None,
-        progress=True,
+        progress: bool = True,
     ) -> None:
         """
-        Ingest multiple documents from a list of URIs.
+        Ingest multiple documents.
 
         Parameters
         ----------
-        uris
-            A sequence of URIs (file paths, URLs, etc.) to ingest.
+        items
+            An iterable of items to ingest. Each item will be passed to
+            the prepare function to create a Document. By default, items
+            are expected to be URIs (file paths or URLs) that will be read
+            with read_as_markdown and chunked.
         prepare
-            A callable that takes a URI and returns a MarkdownDocument with chunks computed..
+            A callable that takes an item and returns a Document with chunks computed.
+            If None, items are treated as URIs and read with read_as_markdown.
         num_workers
-            The number of worker threads to use for parallel ingestion. If None, to the number of CPU cores.
+            The number of worker threads to use for parallel ingestion.
+            If None, defaults to the number of CPU cores.
         progress
             Whether to display a progress bar during ingestion. Default is True.
         """
-        # This functions uses a thread pool to insert documents in the databse
         if num_workers is None:
             num_workers = os.cpu_count() or 1
 
         if prepare is None:
             chunker = MarkdownChunker()
 
-            def _prepare(uri: str) -> Document:
+            def prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
 
-            prepare = _prepare
+        total = len(items) if hasattr(items, "__len__") else None
 
-        def do_ingest_work(uri: str) -> None:
+        def do_ingest_work(item: Any) -> None:
             try:
-                chunked_doc = prepare(uri)
-                self.insert(chunked_doc)
+                result = prepare(item)
+                # Handle both single document and list of documents
+                if isinstance(result, (list, tuple)):
+                    for doc in result:
+                        self.insert(doc)
+                else:
+                    self.insert(result)
             except Exception as e:
-                raise RuntimeError(f"Failed to ingest '{uri}': {e}") from e
+                raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             list(
                 tqdm(
-                    pool.map(do_ingest_work, uris),
-                    total=len(uris),
+                    pool.map(do_ingest_work, items),
+                    total=total,
                     disable=not progress,
                 )
             )
