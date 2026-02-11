@@ -188,7 +188,9 @@ def test_ingest_with_generator():
             yield doc
 
     # Use prepare to chunk the documents since we're yielding MarkdownDocuments
-    store.ingest(make_docs(), prepare=lambda doc: chunker.chunk_document(doc), progress=False)
+    store.ingest(
+        make_docs(), prepare=lambda doc: chunker.chunk_document(doc), progress=False
+    )
     assert store.size() == 3
 
 
