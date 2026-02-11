@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sized
 import json
 import os
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
@@ -413,10 +414,12 @@ class DuckDBStore(BaseStore):
         if prepare is None:
             chunker = MarkdownChunker()
 
-            def prepare(uri: str) -> Document:
+            def default_prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
 
-        total = len(items) if hasattr(items, "__len__") else None
+            prepare = default_prepare
+
+        total = len(items) if isinstance(items, Sized) else None
 
         def do_ingest_work(item: Any) -> None:
             try:
@@ -782,9 +785,6 @@ class DuckDBStore(BaseStore):
 
 
 def _overwrite_or_error(location: str | Path, overwrite: bool) -> None:
-    if not overwrite:
-        return
-
     if location == ":memory:":
         return
 
