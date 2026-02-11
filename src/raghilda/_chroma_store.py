@@ -424,23 +424,71 @@ class ChromaDBStore(BaseStore):
         progress: bool = True,
     ) -> None:
         """
-        Ingest multiple documents.
+        Ingest multiple documents in parallel.
+
+        This method processes items through a prepare function to create Documents,
+        then inserts them into the store. Items are processed in parallel using
+        a thread pool for improved performance.
 
         Parameters
         ----------
         items
-            An iterable of items to ingest. Each item will be passed to
-            the prepare function to create a Document. By default, items
-            are expected to be URIs (file paths or URLs) that will be read
-            with read_as_markdown and chunked.
+            An iterable of items to ingest. Can be any iterable including lists,
+            generators, or other iterables. Each item will be passed to the prepare
+            function to create a Document. By default, items are expected to be
+            URIs (file paths or URLs) that will be read with read_as_markdown
+            and chunked automatically.
         prepare
             A callable that takes an item and returns a Document with chunks computed.
-            If None, items are treated as URIs and read with read_as_markdown.
+            Use this to customize how items are converted to documents. The function
+            should handle chunking if needed. If None, items are treated as URIs
+            and processed with read_as_markdown followed by MarkdownChunker.
         num_workers
             The number of worker threads to use for parallel ingestion.
             If None, defaults to the number of CPU cores.
         progress
             Whether to display a progress bar during ingestion. Default is True.
+            The progress bar shows the total count only if items has a known length
+            (e.g., a list). For generators, it shows progress without a total.
+
+        Examples
+        --------
+        Ingest files from a list of paths:
+
+        ```{python}
+        #| eval: false
+        store.ingest(["doc1.md", "doc2.pdf", "doc3.html"])
+        ```
+
+        Ingest from a generator:
+
+        ```{python}
+        #| eval: false
+        def get_urls():
+            for url in scrape_sitemap("https://example.com/sitemap.xml"):
+                yield url
+
+        store.ingest(get_urls())
+        ```
+
+        Ingest with a custom prepare function:
+
+        ```{python}
+        #| eval: false
+        from raghilda.chunker import MarkdownChunker
+
+        chunker = MarkdownChunker()
+
+        def prepare_record(record: dict) -> MarkdownDocument:
+            doc = MarkdownDocument(
+                origin=record["id"],
+                content=record["text"]
+            )
+            return chunker.chunk_document(doc)
+
+        records = [{"id": "1", "text": "Hello"}, {"id": "2", "text": "World"}]
+        store.ingest(records, prepare=prepare_record)
+        ```
         """
         if num_workers is None:
             num_workers = os.cpu_count() or 1
