@@ -6,7 +6,7 @@ from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .read import read_as_markdown
 from .document import Document, MarkdownDocument
-from typing import Optional, Sequence, Callable
+from typing import Any, Callable, Iterable, Optional, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
@@ -235,6 +235,10 @@ class DuckDBStore(BaseStore):
         con = duckdb.connect(database=location, read_only=read_only)
         _check_is_raghilda_con(con)
 
+        # Migration: add metadata column if missing
+        if not read_only:
+            _migrate_add_metadata_column(con)
+
         row = con.execute("SELECT name, title, embed_config from metadata").fetchone()
         if row is None:
             raise ValueError("No metadata found in the database")
@@ -307,6 +311,9 @@ class DuckDBStore(BaseStore):
         if embed is not None:
             embed_config_json = json.dumps(embed.get_config())
 
+        metadata_sql = "metadata JSON" if embedding_sql else "metadata JSON"
+        column_list = f"{embedding_sql}, {metadata_sql}" if embedding_sql else metadata_sql
+
         con.execute(f"""
         CREATE SEQUENCE chunk_id_seq START 1; -- need a unique id for fts
 
@@ -330,7 +337,7 @@ class DuckDBStore(BaseStore):
             "end" INTEGER,
             PRIMARY KEY (doc_id, start, "end"),
             context VARCHAR,
-            {embedding_sql}
+            {column_list}
         );
 
         CREATE OR REPLACE VIEW chunks AS (
@@ -383,49 +390,58 @@ class DuckDBStore(BaseStore):
 
     def ingest(
         self,
-        uris: Sequence[str],
-        prepare: Optional[Callable[[str], Document]] = None,
+        items: Iterable[Any],
+        prepare: Optional[Callable[[Any], Document]] = None,
         num_workers: Optional[int] = None,
-        progress=True,
+        progress: bool = True,
     ) -> None:
         """
-        Ingest multiple documents from a list of URIs.
+        Ingest multiple documents.
 
         Parameters
         ----------
-        uris
-            A sequence of URIs (file paths, URLs, etc.) to ingest.
+        items
+            An iterable of items to ingest. Each item will be passed to
+            the prepare function to create a Document. By default, items
+            are expected to be URIs (file paths or URLs) that will be read
+            with read_as_markdown and chunked.
         prepare
-            A callable that takes a URI and returns a MarkdownDocument with chunks computed..
+            A callable that takes an item and returns a Document with chunks computed.
+            If None, items are treated as URIs and read with read_as_markdown.
         num_workers
-            The number of worker threads to use for parallel ingestion. If None, to the number of CPU cores.
+            The number of worker threads to use for parallel ingestion.
+            If None, defaults to the number of CPU cores.
         progress
             Whether to display a progress bar during ingestion. Default is True.
         """
-        # This functions uses a thread pool to insert documents in the databse
         if num_workers is None:
             num_workers = os.cpu_count() or 1
 
         if prepare is None:
             chunker = MarkdownChunker()
 
-            def _prepare(uri: str) -> Document:
+            def prepare(uri: str) -> Document:
                 return chunker.chunk_document(read_as_markdown(uri))
 
-            prepare = _prepare
+        total = len(items) if hasattr(items, "__len__") else None
 
-        def do_ingest_work(uri: str) -> None:
+        def do_ingest_work(item: Any) -> None:
             try:
-                chunked_doc = prepare(uri)
-                self.insert(chunked_doc)
+                result = prepare(item)
+                # Handle both single document and list of documents
+                if isinstance(result, (list, tuple)):
+                    for doc in result:
+                        self.insert(doc)
+                else:
+                    self.insert(result)
             except Exception as e:
-                raise RuntimeError(f"Failed to ingest '{uri}': {e}") from e
+                raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             list(
                 tqdm(
-                    pool.map(do_ingest_work, uris),
-                    total=len(uris),
+                    pool.map(do_ingest_work, items),
+                    total=total,
                     disable=not progress,
                 )
             )
@@ -435,9 +451,17 @@ class DuckDBStore(BaseStore):
         assert chunked_doc.chunks is not None
 
         doc = pd.DataFrame([asdict(chunked_doc)])
-        # Shpuld we really drop metadata? Perhaps we want to add it to the schema definition
+        # Store document-level metadata separately, don't include in documents table
+        doc_metadata = chunked_doc.metadata
         doc.drop(columns=["chunks", "metadata"], inplace=True, errors="ignore")
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
+
+        # Propagate document metadata to all chunks
+        if doc_metadata is not None:
+            chunks["metadata"] = [json.dumps(doc_metadata)] * len(chunks)
+        else:
+            # Remove chunk-level metadata column if present (not using chunk metadata)
+            chunks.drop(columns=["metadata"], inplace=True, errors="ignore")
 
         if self.metadata.embed is not None:
             chunks["embedding"] = self.metadata.embed.embed(
@@ -482,7 +506,12 @@ class DuckDBStore(BaseStore):
                 raise e
 
     def retrieve(
-        self, text: str, top_k: int = 3, *, deoverlap: bool = True
+        self,
+        text: str,
+        top_k: int = 3,
+        *,
+        deoverlap: bool = True,
+        where: Optional[dict[str, Any]] = None,
     ) -> Sequence[RetrievedDuckDBMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -500,6 +529,10 @@ class DuckDBStore(BaseStore):
             Overlapping chunks are identified by their `start_index` and `end_index`
             positions. When merged, the resulting chunk spans the union of the
             original ranges and combines their metrics.
+        where
+            Optional metadata filter. Supports simple equality ({"key": value}),
+            comparison operators ({"key": {"$gt": 5}}), and logical operators
+            ({"$and": [...]}). See _build_where_clause for full syntax.
 
         Returns
         -------
@@ -508,9 +541,9 @@ class DuckDBStore(BaseStore):
         """
         retrieved_chunks = []
         if self.metadata.embed is not None:
-            retrieved_chunks = self.retrieve_vss(text, top_k)
+            retrieved_chunks = self.retrieve_vss(text, top_k, where=where)
 
-        retrieved_chunks.extend(self.retrieve_bm25(text, top_k))
+        retrieved_chunks.extend(self.retrieve_bm25(text, top_k, where=where))
 
         # combine chunks by `doc_id` and `chunk_id` and then merge metrics
         combined_chunks: dict[
@@ -536,6 +569,7 @@ class DuckDBStore(BaseStore):
         top_k: int,
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
+        where: Optional[dict[str, Any]] = None,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
         """Retrieve chunks using vector similarity search.
 
@@ -554,6 +588,10 @@ class DuckDBStore(BaseStore):
             - `COSINE_DISTANCE`: Cosine distance (default)
             - `EUCLIDEAN_DISTANCE`: L2/Euclidean distance
             - `NEGATIVE_INNER_PRODUCT`: Negative dot product
+        where
+            Optional metadata filter. Supports simple equality ({"key": value}),
+            comparison operators ({"key": {"$gt": 5}}), and logical operators
+            ({"$and": [...]}). See _build_where_clause for full syntax.
 
         Returns
         -------
@@ -571,22 +609,28 @@ class DuckDBStore(BaseStore):
             query = self.metadata.embed.embed([query], EmbedInputType.QUERY)[0]
 
         func, order = _vss_method_info(method)
+
+        # Build WHERE clause for metadata filtering
+        where_clause, where_params = _build_where_clause(where, table_alias="e")
+        where_sql = f"WHERE {where_clause}" if where_clause else ""
+
         sql = f"""
         SELECT
-            e.doc_id, 
-            e.chunk_id, 
-            e.start AS start_index, 
-            e.end AS end_index, 
-            e.context, 
+            e.doc_id,
+            e.chunk_id,
+            e.start AS start_index,
+            e.end AS end_index,
+            e.context,
             doc.text[ e.start: e.end ] AS text,
             e.metric_name,
-            e.metric_value 
+            e.metric_value
         FROM (
             SELECT
                 *,
                 '{method}' AS metric_name,
                 {func}(embedding, [{",".join(str(x) for x in query)}]::FLOAT[{len(query)}]) AS metric_value
-            FROM embeddings
+            FROM embeddings e
+            {where_sql}
             ORDER BY metric_value {order}
             LIMIT {top_k}
         ) AS e
@@ -596,7 +640,7 @@ class DuckDBStore(BaseStore):
 
         cursor = self.con.cursor()
 
-        cursor.execute(sql)
+        cursor.execute(sql, where_params)
         results = cursor.fetchall()
 
         if cursor.description is None:
@@ -621,6 +665,7 @@ class DuckDBStore(BaseStore):
         k: float = 1.2,
         b: float = 0.75,
         conjunctive: bool = False,
+        where: Optional[dict[str, Any]] = None,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
         """Retrieve chunks using BM25 full-text search.
 
@@ -642,40 +687,50 @@ class DuckDBStore(BaseStore):
         conjunctive
             If True, all query terms must be present (AND). If False (default),
             any query term can match (OR).
+        where
+            Optional metadata filter. Supports simple equality ({"key": value}),
+            comparison operators ({"key": {"$gt": 5}}), and logical operators
+            ({"$and": [...]}). See _build_where_clause for full syntax.
 
         Returns
         -------
         list[RetrievedDuckDBMarkdownChunk]
             The matching chunks ranked by BM25 score.
         """
-        sql = """
+        # Build WHERE clause for metadata filtering
+        where_clause, where_params = _build_where_clause(where, table_alias="e")
+        where_sql = f"WHERE {where_clause}" if where_clause else ""
+
+        sql = f"""
         SELECT
-            e.doc_id, 
-            e.chunk_id, 
-            e.start AS start_index, 
-            e.end AS end_index, 
-            e.context, 
+            e.doc_id,
+            e.chunk_id,
+            e.start AS start_index,
+            e.end AS end_index,
+            e.context,
             doc.text[ e.start: e.end ] AS text,
             'bm25' AS metric_name,
             fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
         FROM embeddings e
         JOIN documents doc USING (doc_id)
+        {where_sql}
         ORDER BY metric_value DESC
         LIMIT $top_k
         """
 
         cursor = self.con.cursor()
 
-        cursor.execute(
-            sql,
-            {
-                "query": query,
-                "top_k": top_k,
-                "k": k,
-                "b": b,
-                "conjunctive": conjunctive,
-            },
-        )
+        # Merge query params with where params
+        params = {
+            "query": query,
+            "top_k": top_k,
+            "k": k,
+            "b": b,
+            "conjunctive": conjunctive,
+            **where_params,
+        }
+
+        cursor.execute(sql, params)
         results = cursor.fetchall()
 
         if cursor.description is None:
@@ -799,6 +854,16 @@ def _check_is_raghilda_con(con: duckdb.DuckDBPyConnection):
         raise ValueError("Not a valid Raghilda database connection")
 
 
+def _migrate_add_metadata_column(con: duckdb.DuckDBPyConnection):
+    """Add metadata column to embeddings table if it doesn't exist."""
+    columns = con.execute("PRAGMA table_info('embeddings')").fetchall()
+    column_names = [col[1] for col in columns]
+
+    if "metadata" not in column_names:
+        logger.info("Migrating database: adding metadata column to embeddings table")
+        con.execute("ALTER TABLE embeddings ADD COLUMN metadata JSON")
+
+
 def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
     try:
         con.register(f"tmp_data_{table}", data)
@@ -819,6 +884,123 @@ def _quote_identifier(identifier: str) -> str:
     """
     identifier = identifier.replace('"', '""')
     return f'"{identifier}"'
+
+
+def _build_where_clause(
+    where: Optional[dict[str, Any]], table_alias: str = "e"
+) -> tuple[str, dict[str, Any]]:
+    """Build a SQL WHERE clause from a metadata filter dict.
+
+    Parameters
+    ----------
+    where
+        A dictionary specifying filter conditions. Supports:
+        - Simple equality: {"key": value}
+        - Comparison operators: {"key": {"$eq": v}}, {"key": {"$ne": v}},
+          {"key": {"$gt": v}}, {"key": {"$gte": v}}, {"key": {"$lt": v}},
+          {"key": {"$lte": v}}
+        - List membership: {"key": {"$in": [v1, v2]}}
+        - Logical operators: {"$and": [...]}, {"$or": [...]}
+    table_alias
+        The table alias to use for the metadata column (default: "e").
+
+    Returns
+    -------
+    tuple[str, dict[str, Any]]
+        A tuple of (SQL clause string, parameters dict).
+    """
+    if where is None or len(where) == 0:
+        return "", {}
+
+    params: dict[str, Any] = {}
+    param_counter = [0]
+
+    def get_param_name() -> str:
+        name = f"where_p{param_counter[0]}"
+        param_counter[0] += 1
+        return name
+
+    def to_sql_value(v: Any) -> str:
+        """Convert a Python value to a string for SQL comparison.
+
+        The ->> operator in DuckDB extracts JSON values as strings,
+        so we need to convert our comparison values to match.
+        """
+        if v is None:
+            return "null"
+        elif isinstance(v, bool):
+            return "true" if v else "false"
+        elif isinstance(v, (int, float)):
+            return str(v)
+        else:
+            # For strings and other types, just use str()
+            return str(v)
+
+    def build_condition(key: str, value: Any) -> str:
+        """Build a condition for a single key-value pair."""
+        col = f"{table_alias}.metadata"
+
+        if isinstance(value, dict):
+            # Operator syntax
+            if len(value) != 1:
+                raise ValueError(f"Expected single operator, got: {value}")
+            op, op_value = next(iter(value.items()))
+
+            if op == "$eq":
+                param_name = get_param_name()
+                params[param_name] = to_sql_value(op_value)
+                return f"{col}->>'{key}' = ${param_name}"
+            elif op == "$ne":
+                param_name = get_param_name()
+                params[param_name] = to_sql_value(op_value)
+                return f"{col}->>'{key}' != ${param_name}"
+            elif op in ("$gt", "$gte", "$lt", "$lte"):
+                param_name = get_param_name()
+                params[param_name] = op_value
+                sql_op = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}[op]
+                # Use CAST for numeric comparisons
+                if isinstance(op_value, (int, float)):
+                    return f"CAST({col}->>'{key}' AS DOUBLE) {sql_op} ${param_name}"
+                else:
+                    params[param_name] = to_sql_value(op_value)
+                    return f"{col}->>'{key}' {sql_op} ${param_name}"
+            elif op == "$in":
+                if not isinstance(op_value, list):
+                    raise ValueError(f"$in requires a list, got: {type(op_value)}")
+                placeholders = []
+                for v in op_value:
+                    param_name = get_param_name()
+                    params[param_name] = to_sql_value(v)
+                    placeholders.append(f"${param_name}")
+                return f"{col}->>'{key}' IN ({', '.join(placeholders)})"
+            else:
+                raise ValueError(f"Unknown operator: {op}")
+        else:
+            # Simple equality
+            param_name = get_param_name()
+            params[param_name] = to_sql_value(value)
+            return f"{col}->>'{key}' = ${param_name}"
+
+    def build_clause(conditions: dict[str, Any]) -> str:
+        """Build a clause from a conditions dict."""
+        parts = []
+        for key, value in conditions.items():
+            if key == "$and":
+                if not isinstance(value, list):
+                    raise ValueError(f"$and requires a list, got: {type(value)}")
+                sub_clauses = [build_clause(sub) for sub in value]
+                parts.append(f"({' AND '.join(sub_clauses)})")
+            elif key == "$or":
+                if not isinstance(value, list):
+                    raise ValueError(f"$or requires a list, got: {type(value)}")
+                sub_clauses = [build_clause(sub) for sub in value]
+                parts.append(f"({' OR '.join(sub_clauses)})")
+            else:
+                parts.append(build_condition(key, value))
+        return " AND ".join(parts) if parts else "1=1"
+
+    clause = build_clause(where)
+    return clause, params
 
 
 def _vss_method_info(method: VSSMethod) -> tuple[str, str]:

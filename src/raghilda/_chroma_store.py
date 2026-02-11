@@ -386,6 +386,11 @@ class ChromaDBStore(BaseStore):
         self.collection = collection
         self.metadata = metadata
 
+    # Reserved metadata keys used by ChromaDB store
+    _RESERVED_METADATA_KEYS = frozenset(
+        ["doc_id", "chunk_id", "start_index", "end_index", "token_count", "context", "origin"]
+    )
+
     def insert(self, document: Document) -> None:
         if not isinstance(document, MarkdownDocument):
             raise ValueError("Only MarkdownDocument is supported for ChromaDBStore")
@@ -398,7 +403,18 @@ class ChromaDBStore(BaseStore):
         metadatas = []
         for idx, chunk in enumerate(document.chunks):
             ids.append(f"{document.id}:{idx}")
-            metadata = {
+
+            # Start with user metadata (excluding reserved keys)
+            user_metadata = {}
+            if document.metadata:
+                user_metadata = {
+                    k: v
+                    for k, v in document.metadata.items()
+                    if k not in self._RESERVED_METADATA_KEYS
+                }
+
+            # Add system metadata (these take precedence)
+            system_metadata = {
                 "doc_id": document.id,
                 "chunk_id": idx,
                 "start_index": chunk.start_index,
@@ -407,7 +423,10 @@ class ChromaDBStore(BaseStore):
                 "context": chunk.context,
                 "origin": document.origin,
             }
-            metadatas.append({k: v for k, v in metadata.items() if v is not None})
+
+            # Merge: user metadata first, then system metadata (system takes precedence)
+            merged_metadata = {**user_metadata, **system_metadata}
+            metadatas.append({k: v for k, v in merged_metadata.items() if v is not None})
 
         self.collection.upsert(
             ids=ids,
@@ -465,7 +484,12 @@ class ChromaDBStore(BaseStore):
             )
 
     def retrieve(
-        self, text: str, top_k: int, *, deoverlap: bool = True, **kwargs
+        self,
+        text: str,
+        top_k: int,
+        *,
+        deoverlap: bool = True,
+        where: Optional[dict[str, Any]] = None,
     ) -> Sequence[RetrievedChromaDBMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -483,20 +507,29 @@ class ChromaDBStore(BaseStore):
             Overlapping chunks are identified by their `start_index` and `end_index`
             positions. When merged, the resulting chunk spans the union of the
             original ranges and combines their metrics.
-        **kwargs
-            Additional arguments passed to ChromaDB's `query()` method,
-            such as `where` for metadata filtering.
+        where
+            Optional metadata filter using ChromaDB's query syntax.
+            Examples:
+            - Simple equality: `{"category": "tutorial"}`
+            - Comparison: `{"version": {"$gte": 2}}`
+            - Logical operators: `{"$and": [{"category": "tutorial"}, {"language": "en"}]}`
+
+            See ChromaDB documentation for full filter syntax.
 
         Returns
         -------
         Sequence[RetrievedChromaDBMarkdownChunk]
             The retrieved chunks with their relevance metrics.
         """
+        query_kwargs: dict[str, Any] = {}
+        if where is not None:
+            query_kwargs["where"] = where
+
         results = self.collection.query(
             query_texts=[text],
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
-            **kwargs,
+            **query_kwargs,
         )
 
         documents = (results.get("documents") or [[]])[0]
