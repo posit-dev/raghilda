@@ -288,7 +288,9 @@ def test_ingest_lazy_evaluation():
         return doc
 
     # Use only 2 workers to make the test more deterministic
-    store.ingest(tracking_generator(), prepare=slow_prepare, num_workers=2, progress=False)
+    store.ingest(
+        tracking_generator(), prepare=slow_prepare, num_workers=2, progress=False
+    )
 
     assert store.size() == 20
     # With lazy evaluation, max concurrent should be bounded by num_workers (plus some buffer)
