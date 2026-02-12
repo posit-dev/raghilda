@@ -358,6 +358,8 @@ class EmbeddingOpenAI(EmbeddingProvider):
         if last_error:
             raise last_error
 
+        raise RuntimeError("Unexpected state: no result and no error")
+
     def _get_retry_after(self, error) -> float:
         """Extract retry wait time from rate limit error headers."""
         import re
