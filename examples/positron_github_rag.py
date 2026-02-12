@@ -1,49 +1,38 @@
 # /// script
-# dependencies = ["PyGithub", "raghilda", "chatlas"]
+# dependencies = ["PyGithub", "raghilda", "chatlas", "typer", "rich"]
 #
 # [tool.uv.sources]
 # raghilda = { path = "..", editable = true }
 # ///
 """
-Example: Building a RAG store from Positron GitHub Issues, PRs, and Discussions
-
-Two-phase approach:
-1. Download: Fetch GitHub data to JSON files (supports incremental updates)
-2. Ingest: Build RAG store from JSON files
-
-Requirements:
-- OpenAI API key set in OPENAI_API_KEY environment variable
-- GitHub token set in GITHUB_TOKEN environment variable (or use gh auth token)
+Example: Building a RAG store from GitHub Issues and PRs
 
 Usage:
-    # Download all issues (or update existing dump)
-    uv run examples/positron_github_rag.py download
-
-    # Ingest from JSON into RAG store
-    uv run examples/positron_github_rag.py ingest
-
-    # Do both
-    uv run examples/positron_github_rag.py download ingest
-
-    # Chat with the RAG store using ellmer
-    uv run examples/positron_github_rag.py chat
+    uv run examples/positron_github_rag.py sync posit-dev/positron   # Download & ingest
+    uv run examples/positron_github_rag.py chat posit-dev/positron   # Interactive chat
+    uv run examples/positron_github_rag.py query posit-dev/positron "search term"
+    uv run examples/positron_github_rag.py status posit-dev/positron # Show status
 """
 
-import argparse
 import json
 import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
-from github import Github
+import typer
+from github import Auth, Github
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
-# Configuration
-REPO = "posit-dev/positron"
-DATA_DIR = Path("positron_data")
-ISSUES_FILE = DATA_DIR / "issues.jsonl"
-METADATA_FILE = DATA_DIR / "metadata.json"
-DB_PATH = "positron_github.db"
+app = typer.Typer(help="GitHub RAG CLI")
+console = Console()
+
+
+def get_default_db_path(repo: str) -> Path:
+    """Get default database path for a repo."""
+    return Path(repo.replace("/", "_") + ".db")
 
 
 def get_github_token() -> str:
@@ -57,29 +46,23 @@ def get_github_token() -> str:
     raise RuntimeError("No GitHub token found. Set GITHUB_TOKEN or run 'gh auth login'")
 
 
-def load_metadata() -> dict:
-    """Load download metadata (last update time, etc.)."""
-    if METADATA_FILE.exists():
-        return json.loads(METADATA_FILE.read_text())
+def get_metadata_path(db_path: Path) -> Path:
+    """Get the metadata file path for a database."""
+    return db_path.with_suffix(".meta.json")
+
+
+def load_metadata(db_path: Path) -> dict:
+    """Load sync metadata."""
+    metadata_file = get_metadata_path(db_path)
+    if metadata_file.exists():
+        return json.loads(metadata_file.read_text())
     return {}
 
 
-def save_metadata(metadata: dict):
-    """Save download metadata."""
-    METADATA_FILE.write_text(json.dumps(metadata, indent=2, default=str))
-
-
-def load_existing_issues() -> dict[int, dict]:
-    """Load existing issues from JSONL file, keyed by issue number."""
-    if ISSUES_FILE.exists():
-        issues = {}
-        with open(ISSUES_FILE) as f:
-            for line in f:
-                if line.strip():
-                    issue = json.loads(line)
-                    issues[issue["number"]] = issue
-        return issues
-    return {}
+def save_metadata(db_path: Path, metadata: dict):
+    """Save sync metadata."""
+    metadata_file = get_metadata_path(db_path)
+    metadata_file.write_text(json.dumps(metadata, indent=2, default=str))
 
 
 def issue_to_dict(issue) -> dict:
@@ -91,7 +74,6 @@ def issue_to_dict(issue) -> dict:
             "body": comment.body,
             "created_at": comment.created_at.isoformat(),
         })
-
     return {
         "number": issue.number,
         "title": issue.title,
@@ -107,66 +89,12 @@ def issue_to_dict(issue) -> dict:
     }
 
 
-def download_issues():
-    """Download issues from GitHub, with incremental update support."""
-    DATA_DIR.mkdir(exist_ok=True)
-
-    token = get_github_token()
-    g = Github(token)
-    repo = g.get_repo(REPO)
-
-    # Load existing data
-    existing = load_existing_issues()
-    metadata = load_metadata()
-    last_update = metadata.get("last_update")
-
-    if last_update and existing:
-        print(f"Incremental update since {last_update}")
-        since = datetime.fromisoformat(last_update)
-        issues_iter = repo.get_issues(state="all", sort="updated", since=since)
-    else:
-        print("Full download of all issues...")
-        issues_iter = repo.get_issues(state="all", sort="updated")
-
-    # Fetch and write issues as we go
-    update_time = datetime.now(timezone.utc)
-    count = 0
-
-    try:
-        for issue in issues_iter:
-            existing[issue.number] = issue_to_dict(issue)
-            count += 1
-            if count % 100 == 0:
-                print(f"  Fetched {count} issues...")
-                # Periodic save
-                _save_issues(existing, metadata, update_time)
-    finally:
-        # Always save on exit (even if interrupted)
-        _save_issues(existing, metadata, update_time)
-        print(f"  Fetched {count} new/updated issues")
-        print(f"  Total issues: {len(existing)}")
-        print(f"Saved to {ISSUES_FILE}")
-
-
-def _save_issues(existing: dict, metadata: dict, update_time: datetime):
-    """Save issues to JSONL and update metadata."""
-    all_issues = sorted(existing.values(), key=lambda x: x["number"], reverse=True)
-    with open(ISSUES_FILE, "w") as f:
-        for issue in all_issues:
-            f.write(json.dumps(issue) + "\n")
-
-    metadata["last_update"] = update_time.isoformat()
-    metadata["total_issues"] = len(all_issues)
-    save_metadata(metadata)
-
-
 def prepare_issue(issue: dict):
-    """Convert an issue dict to a Document with chunks for body + comments."""
+    """Convert an issue dict to a Document with chunks."""
     from raghilda.document import MarkdownDocument
     from raghilda.chunker import MarkdownChunker
 
     chunker = MarkdownChunker()
-
     item_type = "PR" if issue.get("is_pull_request") else "Issue"
     labels = ", ".join(issue.get("labels", []))
 
@@ -178,7 +106,6 @@ def prepare_issue(issue: dict):
         "labels": issue.get("labels", []),
     }
 
-    # Build content
     lines = [
         f"# {item_type} #{issue['number']}: {issue['title']}",
         "",
@@ -205,89 +132,180 @@ def prepare_issue(issue: dict):
     content = "\n".join(lines)
     doc = MarkdownDocument(content=content, origin=issue["url"], metadata=metadata)
     doc = chunker.chunk_document(doc)
-
     return doc
 
 
-def ingest_issues():
-    """Ingest issues from JSON into RAG store."""
+@app.command()
+def sync(
+    repo: Annotated[str, typer.Argument(help="GitHub repo (e.g., posit-dev/positron)")],
+    db_path: Annotated[Path | None, typer.Option(help="Database path")] = None,
+):
+    """Download and ingest issues from GitHub (incremental)."""
     from raghilda.store import DuckDBStore
     from raghilda.embedding import EmbeddingOpenAI
 
-    if not ISSUES_FILE.exists():
-        print(f"No issues file found at {ISSUES_FILE}. Run 'download' first.")
-        return
+    if db_path is None:
+        db_path = get_default_db_path(repo)
 
-    print(f"Creating store at {DB_PATH}...")
-    store = DuckDBStore.create(
-        location=DB_PATH,
-        embed=EmbeddingOpenAI(),
-        overwrite=True,
-        name="positron_github",
-        title="Positron GitHub Issues and PRs",
-    )
+    token = get_github_token()
+    g = Github(auth=Auth.Token(token))
+    github_repo = g.get_repo(repo)
 
-    # Generator that yields issues from JSONL
+    metadata = load_metadata(db_path)
+    last_update = metadata.get("last_update")
+
+    # Create or connect to store
+    if db_path.exists():
+        console.print(f"[cyan]Connecting to store at {db_path}...[/cyan]")
+        store = DuckDBStore.connect(location=str(db_path))
+    else:
+        console.print(f"[cyan]Creating store at {db_path}...[/cyan]")
+        store = DuckDBStore.create(
+            location=str(db_path),
+            embed=EmbeddingOpenAI(),
+            overwrite=True,
+            name="positron_github",
+            title="Positron GitHub Issues and PRs",
+        )
+
+    if last_update:
+        console.print(f"[cyan]Incremental update since {last_update}[/cyan]")
+        since = datetime.fromisoformat(last_update)
+        issues_iter = github_repo.get_issues(state="all", sort="updated", since=since)
+    else:
+        console.print("[cyan]Full download of all issues...[/cyan]")
+        issues_iter = github_repo.get_issues(state="all", sort="updated")
+
+    update_time = datetime.now(timezone.utc)
+    count = 0
+
     def issue_generator():
-        with open(ISSUES_FILE) as f:
-            for line in f:
-                if line.strip():
-                    yield json.loads(line)
+        nonlocal count
+        for issue in issues_iter:
+            count += 1
+            yield issue_to_dict(issue)
 
-    store.ingest(issue_generator(), prepare=prepare_issue)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Syncing issues...", total=None)
 
-    print("\nBuilding search indexes...")
-    store.build_index()
+        def tracking_generator():
+            for issue in issue_generator():
+                progress.update(task, description=f"Syncing issues... ({count} fetched)")
+                yield issue
 
-    print(f"\nDone! Store contains {store.size()} documents.")
-    print(f"Database saved to: {Path(DB_PATH).absolute()}")
+        store.ingest(tracking_generator(), prepare=prepare_issue)
+
+    if count == 0:
+        console.print("[cyan]No new issues to sync.[/cyan]")
+    else:
+        console.print(f"[green]Synced {count} issues.[/green]")
+        console.print("[cyan]Building search indexes...[/cyan]")
+        store.build_index()
+
+    # Save metadata
+    metadata["last_update"] = update_time.isoformat()
+    save_metadata(db_path, metadata)
+
+    console.print(f"[green]Done! Store contains {store.size()} documents.[/green]")
 
 
-def chat():
-    """Start a chat session using chatlas with RAG context."""
+@app.command()
+def chat(
+    repo: Annotated[str, typer.Argument(help="GitHub repo (e.g., posit-dev/positron)")],
+    db_path: Annotated[Path | None, typer.Option(help="Database path")] = None,
+):
+    """Interactive chat with RAG context."""
     from raghilda.store import DuckDBStore
     from chatlas import ChatOpenAI
 
-    if not Path(DB_PATH).exists():
-        print(f"No database found at {DB_PATH}. Run 'download' and 'ingest' first.")
-        return
+    if db_path is None:
+        db_path = get_default_db_path(repo)
 
-    store = DuckDBStore.connect(location=DB_PATH)
+    if not db_path.exists():
+        console.print(f"[red]No database found at {db_path}. Run 'sync' first.[/red]")
+        raise typer.Exit(1)
+
+    store = DuckDBStore.connect(location=str(db_path))
 
     def retrieve(query: str, top_k: int = 5) -> str:
-        """Search the Positron GitHub issues and PRs for relevant information.
-
-        Args:
-            query: The search query to find relevant issues, PRs, or discussions.
-            top_k: Maximum number of results to return (default: 5).
-
-        Returns:
-            Relevant chunks from GitHub issues and PRs matching the query.
-        """
+        """Search the Positron GitHub issues and PRs for relevant information."""
         chunks = store.retrieve(query, top_k=top_k)
         results = []
         for chunk in chunks:
             results.append({"text": chunk.text, "context": chunk.context})
         return json.dumps(results)
 
-    chat = ChatOpenAI()
-    chat.register_tool(retrieve)
-    chat.console()
+    chat_session = ChatOpenAI()
+    chat_session.register_tool(retrieve)
+    chat_session.console()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Positron GitHub RAG")
-    parser.add_argument("commands", nargs="+", choices=["download", "ingest", "chat"])
-    args = parser.parse_args()
+@app.command()
+def query(
+    repo: Annotated[str, typer.Argument(help="GitHub repo (e.g., posit-dev/positron)")],
+    search_query: Annotated[str, typer.Argument(help="Query to search for")],
+    db_path: Annotated[Path | None, typer.Option(help="Database path")] = None,
+    top_k: Annotated[int, typer.Option(help="Number of results")] = 5,
+):
+    """One-off query against the RAG store."""
+    from raghilda.store import DuckDBStore
 
-    for cmd in args.commands:
-        if cmd == "download":
-            download_issues()
-        elif cmd == "ingest":
-            ingest_issues()
-        elif cmd == "chat":
-            chat()
+    if db_path is None:
+        db_path = get_default_db_path(repo)
+
+    if not db_path.exists():
+        console.print(f"[red]No database found at {db_path}. Run 'sync' first.[/red]")
+        raise typer.Exit(1)
+
+    store = DuckDBStore.connect(location=str(db_path))
+    chunks = store.retrieve(search_query, top_k=top_k)
+
+    if not chunks:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    for i, chunk in enumerate(chunks, 1):
+        console.print(f"\n[bold cyan]Result {i}[/bold cyan]")
+        console.print(f"[dim]{chunk.context}[/dim]")
+        console.print(chunk.text[:500] + "..." if len(chunk.text) > 500 else chunk.text)
+
+
+@app.command()
+def status(
+    repo: Annotated[str, typer.Argument(help="GitHub repo (e.g., posit-dev/positron)")],
+    db_path: Annotated[Path | None, typer.Option(help="Database path")] = None,
+):
+    """Show current database status."""
+    from rich.table import Table
+
+    if db_path is None:
+        db_path = get_default_db_path(repo)
+
+    table = Table(title=f"GitHub RAG Status: {repo}")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="green")
+
+    metadata = load_metadata(db_path)
+
+    table.add_row("Database path", str(db_path.absolute()))
+    table.add_row("Database exists", "Yes" if db_path.exists() else "No")
+
+    if metadata:
+        table.add_row("Last sync", metadata.get("last_update", "N/A"))
+
+    if db_path.exists():
+        from raghilda.store import DuckDBStore
+        store = DuckDBStore.connect(location=str(db_path))
+        table.add_row("Documents in store", str(store.size()))
+        db_size = db_path.stat().st_size / (1024 * 1024)
+        table.add_row("Database size", f"{db_size:.2f} MB")
+
+    console.print(table)
 
 
 if __name__ == "__main__":
-    main()
+    app()
