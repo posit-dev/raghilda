@@ -4,7 +4,9 @@ from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait, Future
 from typing import Callable, Iterable
 
 
-def lazy_map(pool: ThreadPoolExecutor, fn: Callable, items: Iterable) -> Iterable[Future]:
+def lazy_map(
+    pool: ThreadPoolExecutor, fn: Callable, items: Iterable
+) -> Iterable[Future]:
     """Like pool.map but doesn't eagerly consume the iterator.
 
     Yields futures as they complete, maintaining at most max_workers pending.
