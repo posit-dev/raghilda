@@ -32,3 +32,4 @@
 ## Commits & PRs
 - After each set of changes, emit a draft commit message; if revisions are requested, update it.
 - Don’t stage, commit, or use destructive git commands unless explicitly asked.
+- If you commit and it's part of PR, make sure the PR description is updated.
