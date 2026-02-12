@@ -233,6 +233,63 @@ def test_ingest_with_custom_prepare():
     assert store.size() == 2
 
 
+def test_ingest_lazy_evaluation():
+    """Test that ingest consumes the iterator lazily, not all at once."""
+    import threading
+    import time
+
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="ingest_lazy_db",
+    )
+
+    consumed_count = 0
+    max_concurrent_consumed = 0
+    inserted_count = 0
+    lock = threading.Lock()
+
+    def tracking_generator():
+        nonlocal consumed_count, max_concurrent_consumed
+        for i in range(20):
+            with lock:
+                consumed_count += 1
+                # Track max items consumed while inserts are still pending
+                pending = consumed_count - inserted_count
+                if pending > max_concurrent_consumed:
+                    max_concurrent_consumed = pending
+            yield {"id": f"doc_{i}", "text": f"Document content {i}"}
+
+    def slow_prepare(item: dict) -> MarkdownDocument:
+        nonlocal inserted_count
+        # Simulate slow processing
+        time.sleep(0.05)
+        doc = MarkdownDocument(origin=item["id"], content=item["text"])
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(item["text"]),
+                text=item["text"],
+                token_count=len(item["text"]),
+            )
+        ]
+        with lock:
+            inserted_count += 1
+        return doc
+
+    # Use only 2 workers to make the test more deterministic
+    store.ingest(tracking_generator(), prepare=slow_prepare, num_workers=2, progress=False)
+
+    assert store.size() == 20
+    # With lazy evaluation, max concurrent should be bounded by num_workers (plus some buffer)
+    # If it consumed eagerly, all 20 would be consumed before any inserts complete
+    assert max_concurrent_consumed <= 10, (
+        f"Expected lazy consumption but {max_concurrent_consumed} items were consumed "
+        f"concurrently, suggesting eager evaluation"
+    )
+
+
 def test_connect(tmp_path):
     db_path = tmp_path / "test.db"
 
