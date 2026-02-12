@@ -322,12 +322,104 @@ class EmbeddingOpenAI(EmbeddingProvider):
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
             data = x[i : i + self.batch_size]
-            embedding = self.client.embeddings.create(
-                input=list(data), model=self.model
-            )
+            embedding = self._embed_with_retry(data)
             result.extend([res.embedding for res in embedding.data])
 
         return result
+
+    def _embed_with_retry(
+        self, data: Sequence[str], max_retries: int = 20, max_seconds: float = 180
+    ):
+        """Call embeddings API with retry on rate limit errors."""
+        import time
+
+        start_time = time.time()
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return self.client.embeddings.create(input=list(data), model=self.model)
+            except Exception as e:
+                # Only retry on 429 rate limit errors
+                status_code = getattr(e, "status_code", None)
+                if status_code != 429:
+                    raise
+
+                last_error = e
+                elapsed = time.time() - start_time
+                if elapsed >= max_seconds:
+                    break
+
+                wait_time = self._get_retry_after(e)
+                wait_time = min(wait_time, max_seconds - elapsed)
+                wait_time = max(wait_time, 0.1)  # At least 100ms
+                time.sleep(wait_time)
+
+        if last_error:
+            raise last_error
+
+        raise RuntimeError("Unexpected state: no result and no error")
+
+    def _get_retry_after(self, error) -> float:
+        """Extract retry wait time from rate limit error headers."""
+        import re
+
+        # Try to get headers from the response
+        headers = {}
+        if hasattr(error, "response") and error.response is not None:
+            headers = dict(error.response.headers)
+
+        # Check for reset times in headers
+        reset_tokens = headers.get("x-ratelimit-reset-tokens")
+        reset_requests = headers.get("x-ratelimit-reset-requests")
+
+        wait_times = []
+        if reset_tokens:
+            wait_times.append(self._parse_duration(reset_tokens))
+        if reset_requests:
+            wait_times.append(self._parse_duration(reset_requests))
+
+        if wait_times:
+            # Use the longer wait time, divided by 4 to retry earlier
+            return max(wait_times) / 4
+
+        # Fallback: parse from error message
+        match = re.search(r"try again in (\d+)(ms|s)", str(error))
+        if match:
+            value, unit = match.groups()
+            wait_time = float(value) / 1000 if unit == "ms" else float(value)
+            return max(wait_time, 0.1)
+
+        # Default fallback
+        return 1.0
+
+    def _parse_duration(self, duration_str: str) -> float:
+        """Parse duration string like '1m0.612s' or '500ms' to seconds."""
+        import re
+
+        total = 0.0
+
+        # Hours
+        match = re.search(r"(\d+)h", duration_str)
+        if match:
+            total += int(match.group(1)) * 3600
+
+        # Minutes
+        match = re.search(r"(\d+)m(?!s)", duration_str)
+        if match:
+            total += int(match.group(1)) * 60
+
+        # Seconds (including decimal)
+        match = re.search(r"([\d.]+)s", duration_str)
+        if match:
+            total += float(match.group(1))
+
+        # Milliseconds
+        match = re.search(r"(\d+)ms", duration_str)
+        if match:
+            total += int(match.group(1)) / 1000
+
+        return total if total > 0 else 1.0
 
     def to_chroma(self) -> Any:
         """Convert to a ChromaDB OpenAIEmbeddingFunction.
@@ -464,12 +556,7 @@ class EmbeddingCohere(EmbeddingProvider):
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
             data = list(x[i : i + self.batch_size])
-            response = self.client.embed(
-                texts=data,
-                model=self.model,
-                input_type=cohere_input_type,
-                embedding_types=["float"],
-            )
+            response = self._embed_with_retry(data, cohere_input_type)
             embeddings = response.embeddings
             # Cohere SDK type stubs incorrectly type embeddings as List[List[float]]
             # but it's actually EmbedByTypeResponseEmbeddings when embedding_types is used
@@ -477,6 +564,50 @@ class EmbeddingCohere(EmbeddingProvider):
                 result.extend(embeddings.float_)  # type: ignore[union-attr]
 
         return result
+
+    def _embed_with_retry(
+        self,
+        data: list[str],
+        input_type: str,
+        max_retries: int = 20,
+        max_seconds: float = 180,
+    ):
+        """Call Cohere embeddings API with retry on rate limit errors."""
+        import time
+
+        start_time = time.time()
+        last_error = None
+        wait_time = 1.0  # Start with 1 second
+
+        for attempt in range(max_retries):
+            try:
+                return self.client.embed(
+                    texts=data,
+                    model=self.model,
+                    input_type=input_type,
+                    embedding_types=["float"],
+                )
+            except Exception as e:
+                # Only retry on 429 rate limit errors
+                status_code = getattr(e, "status_code", None)
+                if status_code != 429:
+                    raise
+
+                last_error = e
+                elapsed = time.time() - start_time
+                if elapsed >= max_seconds:
+                    break
+
+                # Exponential backoff with jitter, capped at remaining time
+                actual_wait = min(wait_time, max_seconds - elapsed)
+                actual_wait = max(actual_wait, 0.1)
+                time.sleep(actual_wait)
+                wait_time = min(wait_time * 2, 60)  # Double up to 60s max
+
+        if last_error:
+            raise last_error
+
+        raise RuntimeError("Unexpected state: no result and no error")
 
     def to_chroma(self) -> Any:
         """Convert to a ChromaDB CohereEmbeddingFunction.
