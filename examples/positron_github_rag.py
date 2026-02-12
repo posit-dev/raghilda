@@ -24,7 +24,6 @@ from typing import Annotated
 import typer
 from github import Auth, Github
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 app = typer.Typer(help="GitHub RAG CLI")
 console = Console()
@@ -94,17 +93,10 @@ def prepare_issue(issue: dict):
     from raghilda.document import MarkdownDocument
     from raghilda.chunker import MarkdownChunker
 
-    chunker = MarkdownChunker()
+    # Use smaller chunks to handle code-heavy issues (code tokenizes inefficiently)
+    chunker = MarkdownChunker(chunk_size=800)
     item_type = "PR" if issue.get("is_pull_request") else "Issue"
     labels = ", ".join(issue.get("labels", []))
-
-    metadata = {
-        "number": issue["number"],
-        "state": issue["state"],
-        "author": issue.get("author"),
-        "is_pull_request": issue.get("is_pull_request", False),
-        "labels": issue.get("labels", []),
-    }
 
     lines = [
         f"# {item_type} #{issue['number']}: {issue['title']}",
@@ -130,7 +122,7 @@ def prepare_issue(issue: dict):
             lines.append("")
 
     content = "\n".join(lines)
-    doc = MarkdownDocument(content=content, origin=issue["url"], metadata=metadata)
+    doc = MarkdownDocument(content=content, origin=issue["url"])
     doc = chunker.chunk_document(doc)
     return doc
 
@@ -177,32 +169,15 @@ def sync(
         issues_iter = github_repo.get_issues(state="all", sort="updated")
 
     update_time = datetime.now(timezone.utc)
-    count = 0
+    size_before = store.size()
 
-    def issue_generator():
-        nonlocal count
-        for issue in issues_iter:
-            count += 1
-            yield issue_to_dict(issue)
+    store.ingest(
+        (issue_to_dict(issue) for issue in issues_iter),
+        prepare=prepare_issue,
+    )
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Syncing issues...", total=None)
-
-        def tracking_generator():
-            for issue in issue_generator():
-                progress.update(task, description=f"Syncing issues... ({count} fetched)")
-                yield issue
-
-        store.ingest(tracking_generator(), prepare=prepare_issue)
-
-    if count == 0:
-        console.print("[cyan]No new issues to sync.[/cyan]")
-    else:
-        console.print(f"[green]Synced {count} issues.[/green]")
+    synced = store.size() - size_before
+    if synced > 0:
         console.print("[cyan]Building search indexes...[/cyan]")
         store.build_index()
 
