@@ -165,6 +165,9 @@ def _get_markdown_chunk(doc, start, end):
 
 
 def test_ingest():
+    from raghilda.chunker import MarkdownChunker
+    from raghilda.read import read_as_markdown
+
     links = find_links("https://r4ds.hadley.nz/base-R.html", validate=True)
 
     store = DuckDBStore.create(
@@ -175,7 +178,13 @@ def test_ingest():
         title="Ingest Test DuckDB Store",
     )
 
-    store.ingest(links)
+    # Use smaller chunks to avoid exceeding embedding token limits on code-heavy pages
+    chunker = MarkdownChunker(chunk_size=800)
+
+    def prepare(uri: str):
+        return chunker.chunk_document(read_as_markdown(uri))
+
+    store.ingest(links, prepare=prepare)
 
 
 def test_ingest_with_generator():
