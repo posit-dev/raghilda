@@ -17,6 +17,7 @@ from enum import StrEnum
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from ._deoverlap import deoverlap_chunks
+from ._utils import lazy_map
 
 
 logger = logging.getLogger(__name__)
@@ -477,13 +478,8 @@ class DuckDBStore(BaseStore):
                 raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            list(
-                tqdm(
-                    pool.map(do_ingest_work, items),
-                    total=total,
-                    disable=not progress,
-                )
-            )
+            for future in tqdm(lazy_map(pool, do_ingest_work, items), total=total, disable=not progress):
+                future.result()
 
     def _insert_chunked_document(self, chunked_doc: MarkdownDocument) -> None:
         # Document should be chunked for insertion
