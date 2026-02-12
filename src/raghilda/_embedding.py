@@ -556,12 +556,7 @@ class EmbeddingCohere(EmbeddingProvider):
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
             data = list(x[i : i + self.batch_size])
-            response = self.client.embed(
-                texts=data,
-                model=self.model,
-                input_type=cohere_input_type,
-                embedding_types=["float"],
-            )
+            response = self._embed_with_retry(data, cohere_input_type)
             embeddings = response.embeddings
             # Cohere SDK type stubs incorrectly type embeddings as List[List[float]]
             # but it's actually EmbedByTypeResponseEmbeddings when embedding_types is used
@@ -569,6 +564,50 @@ class EmbeddingCohere(EmbeddingProvider):
                 result.extend(embeddings.float_)  # type: ignore[union-attr]
 
         return result
+
+    def _embed_with_retry(
+        self,
+        data: list[str],
+        input_type: str,
+        max_retries: int = 20,
+        max_seconds: float = 180,
+    ):
+        """Call Cohere embeddings API with retry on rate limit errors."""
+        import time
+
+        start_time = time.time()
+        last_error = None
+        wait_time = 1.0  # Start with 1 second
+
+        for attempt in range(max_retries):
+            try:
+                return self.client.embed(
+                    texts=data,
+                    model=self.model,
+                    input_type=input_type,
+                    embedding_types=["float"],
+                )
+            except Exception as e:
+                # Only retry on 429 rate limit errors
+                status_code = getattr(e, "status_code", None)
+                if status_code != 429:
+                    raise
+
+                last_error = e
+                elapsed = time.time() - start_time
+                if elapsed >= max_seconds:
+                    break
+
+                # Exponential backoff with jitter, capped at remaining time
+                actual_wait = min(wait_time, max_seconds - elapsed)
+                actual_wait = max(actual_wait, 0.1)
+                time.sleep(actual_wait)
+                wait_time = min(wait_time * 2, 60)  # Double up to 60s max
+
+        if last_error:
+            raise last_error
+
+        raise RuntimeError("Unexpected state: no result and no error")
 
     def to_chroma(self) -> Any:
         """Convert to a ChromaDB CohereEmbeddingFunction.
