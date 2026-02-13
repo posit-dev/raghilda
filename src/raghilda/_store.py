@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sized
 import json
 import os
+import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
@@ -371,6 +372,7 @@ class DuckDBStore(BaseStore):
     ):
         self.con = con
         self.metadata = metadata
+        self._db_lock = threading.Lock()
 
     def insert(
         self,
@@ -492,9 +494,11 @@ class DuckDBStore(BaseStore):
         doc.drop(columns=["chunks", "metadata"], inplace=True, errors="ignore")
         chunks = pd.DataFrame([asdict(x) for x in chunked_doc.chunks])
 
+        # Embedding can run in parallel (external API call) - done outside the lock
         if self.metadata.embed is not None:
+            texts = chunks.text.tolist()
             chunks["embedding"] = self.metadata.embed.embed(
-                chunks.text.tolist(), EmbedInputType.DOCUMENT
+                texts, EmbedInputType.DOCUMENT
             )
         else:
             chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
@@ -510,28 +514,27 @@ class DuckDBStore(BaseStore):
         if "text" in chunks.columns:
             chunks.drop(columns=["text"], inplace=True)
 
-        # local cursor is used so we can use multiple threads
-        # see https://duckdb.org/docs/stable/guides/python/multiple_threads.html
-        cursor = self.con.cursor()
-        try:
-            cursor.begin()
-            doc.rename(
-                columns={"content": "text", "id": "doc_id"}, inplace=True
-            )  # content -> text
-            chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
-            chunks.drop(
-                columns=["id"], inplace=True, errors="ignore"
-            )  # id -> chunk_id (auto). the id here can be discarded
+        doc.rename(
+            columns={"content": "text", "id": "doc_id"}, inplace=True
+        )  # content -> text
+        chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
+        chunks.drop(
+            columns=["id"], inplace=True, errors="ignore"
+        )  # id -> chunk_id (auto). the id here can be discarded
 
-            _duckdb_append(cursor, "documents", doc)
-            _duckdb_append(cursor, "embeddings", chunks)
-            cursor.commit()
-        except Exception as e:
+        # DuckDB connections are not thread-safe. Use a lock to serialize all
+        # DB operations. Embedding runs outside the lock for parallelism.
+        with self._db_lock:
             try:
-                cursor.rollback()
-            except Exception:
-                pass
-            finally:
+                self.con.begin()
+                _duckdb_append(self.con, "documents", doc)
+                _duckdb_append(self.con, "embeddings", chunks)
+                self.con.commit()
+            except Exception as e:
+                try:
+                    self.con.rollback()
+                except Exception:
+                    pass
                 raise e
 
     def retrieve(
@@ -647,18 +650,17 @@ class DuckDBStore(BaseStore):
         ORDER BY metric_value
         """
 
-        cursor = self.con.cursor()
+        with self._db_lock:
+            result = self.con.execute(sql)
+            rows = result.fetchall()
 
-        cursor.execute(sql)
-        results = cursor.fetchall()
+            if result.description is None:
+                raise RuntimeError("Failed get result description.")
 
-        if cursor.description is None:
-            raise RuntimeError("Failed get cursor description.")
-
-        columns = [desc[0] for desc in cursor.description]
+            columns = [desc[0] for desc in result.description]
 
         output: list[RetrievedDuckDBMarkdownChunk] = []
-        for chunk in results:
+        for chunk in rows:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
             chunk_dict["metrics"] = [Metric(name, value)]
@@ -717,27 +719,26 @@ class DuckDBStore(BaseStore):
         LIMIT $top_k
         """
 
-        cursor = self.con.cursor()
+        with self._db_lock:
+            result = self.con.execute(
+                sql,
+                {
+                    "query": query,
+                    "top_k": top_k,
+                    "k": k,
+                    "b": b,
+                    "conjunctive": conjunctive,
+                },
+            )
+            rows = result.fetchall()
 
-        cursor.execute(
-            sql,
-            {
-                "query": query,
-                "top_k": top_k,
-                "k": k,
-                "b": b,
-                "conjunctive": conjunctive,
-            },
-        )
-        results = cursor.fetchall()
+            if result.description is None:
+                raise RuntimeError("Failed get result description.")
 
-        if cursor.description is None:
-            raise RuntimeError("Failed get cursor description.")
-
-        columns = [desc[0] for desc in cursor.description]
+            columns = [desc[0] for desc in result.description]
 
         output: list[RetrievedDuckDBMarkdownChunk] = []
-        for chunk in results:
+        for chunk in rows:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
             chunk_dict["metrics"] = [Metric(name, value)]
