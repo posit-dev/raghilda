@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Any, Optional, Union
 import uuid
 
 from .types import DocumentLike, IntoDocument
@@ -29,11 +29,16 @@ class Document:
     chunks
         List of chunks after the document has been processed by a chunker.
         None if the document hasn't been chunked yet.
+    attributes
+        Optional user-defined attributes applied at document insertion time.
+        Document-level attributes can be inherited by chunks and returned
+        during retrieval for filtering and downstream prompt/context use.
     """
 
     content: str
     id: str = field(default_factory=_generate_doc_id)
     chunks: Optional[list[Chunk]] = None
+    attributes: Optional[dict[str, Any]] = None
 
     @classmethod
     def from_any(cls, doc: Union[DocumentLike, IntoDocument]) -> "Document":
@@ -66,7 +71,13 @@ class Document:
             if doc.chunks is not None:
                 chunks = [Chunk.from_any(c) for c in doc.chunks]
             doc_id = getattr(doc, "id", None) or _generate_doc_id()
-            return cls(content=doc.content, id=doc_id, chunks=chunks)
+            raw_attributes = getattr(doc, "attributes", None)
+            return cls(
+                content=doc.content,
+                id=doc_id,
+                chunks=chunks,
+                attributes=dict(raw_attributes or {}),
+            )
         raise TypeError(f"Cannot convert {type(doc).__name__} to Document")
 
 
@@ -125,5 +136,6 @@ class MarkdownDocument(Document):
             content=base.content,
             id=base.id,
             chunks=base.chunks,
+            attributes=base.attributes,
             origin=getattr(doc, "origin", origin),
         )

@@ -131,9 +131,14 @@ results = store.retrieve("query", top_k=5, deoverlap=True)
 results = store.retrieve("query", top_k=5, deoverlap=False)
 ```
 
-### Metadata Filtering
+When chunks are merged, metric values are preserved and user attributes are
+aggregated into per-chunk lists in start-order. The merged chunk keeps
+`context` from the first overlapping chunk.
 
-Pass ChromaDB `where` filters to narrow results:
+### Attribute Filtering
+
+Use `attributes_filter` to narrow retrieval results by declared attributes
+and built-in filterable columns (for example `origin`):
 
 ```{python}
 #| eval: false
@@ -141,9 +146,14 @@ Pass ChromaDB `where` filters to narrow results:
 results = store.retrieve(
     "query",
     top_k=5,
-    where={"origin": "guide.md"}
+    attributes_filter="origin = 'guide.md'"
 )
 ```
+
+Chroma built-in filterable columns are:
+`doc_id`, `chunk_id`, `start_index`, `end_index`, `token_count`, `context`, and `origin`.
+
+For advanced Chroma-specific filters, you can still pass `where=...` directly.
 
 ## Connecting to Existing Stores
 

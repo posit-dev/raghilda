@@ -1,0 +1,408 @@
+---
+title: "Attribute Filters"
+guide-section: "Getting Started"
+---
+
+RAG depends on retrieving relevant context, but real stores are usually broad
+and mixed, so most chunks are irrelevant for a single question. Raghilda
+supports scoped retrieval using chunk attributes: you can attach user-defined attributes to chunks and
+use them to limit results at query time with a small SQL-like filter language.
+
+To make this concrete, this walkthrough builds a small museum collection
+assistant. Imagine a chat tool used by staff or visitors to ask questions about
+artifacts in a collection. Each artifact has an ID (for example `A1001`), and
+documents in the store can include catalog text, conservation notes, internal
+research, and gallery-label content. In that setting, retrieval should usually
+be scoped to the artifact being discussed.
+
+Raghilda defaults to hybrid retrieval (semantic + lexical) because each mode
+has blind spots:
+
+- lexical search can miss paraphrased or semantically related wording,
+- vector search can retrieve plausible text from the wrong artifact.
+
+Attributes are designed to solve this scope problem.
+You define a schema for chunk attributes (for example `artifact_id`, `note_type`,
+`priority`, or review flags), then filter at query time using SQL-like
+expressions or a structured AST.
+
+This same pattern is common in data and agent workflows where retrieval must be
+entity-scoped, such as customer records, product catalogs, or case timelines.
+
+The examples below are intentionally didactic and build in steps:
+
+- Section 1 (Simple): top-level attributes and one simple filter.
+- Section 2 (Intermediate): schema defaults and multi-condition policy filters.
+- Section 3 (Advanced): nested attributes and dot-path filtering.
+
+Each section is independent and uses an in-memory store so you can run it quickly.
+Section 1 uses a dictionary schema because it is compact and easy to read.
+Section 2 switches to a class-based schema to show the alternative style.
+
+Raghilda supports both at any time: dictionaries for quick/simple schemas, or
+classes (including dataclasses or plain annotated classes) when that better
+fits your integration or code organization. Both support the same feature set;
+the choice is mostly workflow and preference.
+
+If you are learning this for the first time, run Section 1 first, then add the
+ideas from Sections 2 and 3.
+
+## 1) Simple example: top-level attributes
+
+Start with the minimum setup: attach `artifact_id` and `note_type` to each chunk,
+then retrieve with and without an artifact-level filter.
+
+```{python}
+from raghilda.store import DuckDBStore
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+
+def show_results(title, chunks):
+    print(f"\n{title}")
+    if not chunks:
+        print("  (no matches)")
+        return
+    for idx, chunk in enumerate(chunks, start=1):
+        print(f"  {idx}. text={chunk.text!r}")
+        print(f"     attributes={chunk.attributes}")
+
+
+simple_store = DuckDBStore.create(
+    location=":memory:",
+    embed=None,
+    attributes={"artifact_id": str, "note_type": str},
+)
+
+chunker = MarkdownChunker()
+
+for doc in [
+    MarkdownDocument(
+        origin="artifact_a1001_catalog.md",
+        content="Catalog entry: Bronze owl statue from the Hellenistic period.",
+        attributes={"artifact_id": "A1001", "note_type": "catalog"},
+    ),
+    MarkdownDocument(
+        origin="artifact_a2042_restoration.md",
+        content="Restoration note: ceramic bowl rim repaired with reversible adhesive.",
+        attributes={"artifact_id": "A2042", "note_type": "restoration"},
+    ),
+    MarkdownDocument(
+        origin="artifact_a1001_conservation.md",
+        content="Conservation update: bronze surface stable, no active corrosion.",
+        attributes={"artifact_id": "A1001", "note_type": "conservation"},
+    ),
+]:
+    simple_store.insert(chunker.chunk_document(doc))
+
+simple_store.build_index("bm25")
+
+show_results(
+    "No filter",
+    simple_store.retrieve("bronze", top_k=3, deoverlap=False),
+)
+show_results(
+    "Filter by artifact_id (SQL-like)",
+    simple_store.retrieve(
+        "bronze",
+        top_k=3,
+        deoverlap=False,
+        attributes_filter="artifact_id = 'A1001'",
+    ),
+)
+```
+
+## 2) Slightly more complex: defaults and multi-condition filtering
+
+Now we add a slightly richer schema to mirror real ingestion.
+Some attributes are optional because not every chunk type carries the same
+attributes, and this keeps ingestion flexible across labels, catalog entries, and
+internal notes.
+
+This time we also define a class to keep track of attributes.
+Providing a class is very similar to providing a dictionary schema: it is mostly
+syntactic sugar for the same attribute definition. A class can be a better fit
+when you want schema definitions to live in Python types.
+
+What happens when an optional attribute is missing?
+
+- During ingestion, omitted optional fields are stored as (SQL) `NULL`.
+- A chunk with `NULL` in a field can still be retrieved normally when no filter
+  depends on that field.
+- If a filter requires a concrete value (for example
+  `gallery_room = 'Gallery 2'`), chunks where `gallery_room` is `NULL` do not
+  match that predicate.
+
+In the data below, the internal condition report intentionally omits
+`gallery_room` so you can see this behavior in practice.
+If you want to include missing values in a filter, use explicit null checks such
+as `gallery_room IS NULL` (or `gallery_room IS NOT NULL`) in your expression.
+
+```{python}
+from raghilda.store import DuckDBStore
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+
+class MuseumArtifactAttributes:
+    artifact_id: str
+    note_type: str | None = None
+    priority: int = 0
+    gallery_room: str | None = None
+
+
+def show_results(title, chunks):
+    print(f"\n{title}")
+    if not chunks:
+        print("  (no matches)")
+        return
+    for idx, chunk in enumerate(chunks, start=1):
+        print(f"  {idx}. {chunk.text.strip()!r}")
+        print(f"     attributes={chunk.attributes}")
+
+
+store = DuckDBStore.create(
+    location=":memory:",
+    embed=None,
+    attributes=MuseumArtifactAttributes,
+)
+chunker = MarkdownChunker()
+
+for doc in [
+    MarkdownDocument(
+        origin="a1001_gallery_label.md",
+        content="Gallery label: Bronze owl statue likely used in ceremonial contexts.",
+        attributes={
+            "artifact_id": "A1001",
+            "note_type": "label",
+            "priority": 10,
+            "gallery_room": "Gallery 2",
+        },
+    ),
+    MarkdownDocument(
+        origin="a1001_internal_condition.md",
+        content="Internal condition report: micro-pitting near base, monitor humidity.",
+        attributes={
+            "artifact_id": "A1001",
+            "note_type": "condition_report",
+            "priority": 2,
+            # gallery_room intentionally omitted (stored as NULL)
+        },
+    ),
+    MarkdownDocument(
+        origin="a2042_gallery_label.md",
+        content="Gallery label: decorated ceramic bowl with geometric motifs.",
+        attributes={
+            "artifact_id": "A2042",
+            "note_type": "label",
+            "priority": 8,
+            "gallery_room": "Gallery 5",
+        },
+    ),
+]:
+    store.insert(chunker.chunk_document(doc))
+
+store.build_index("bm25")
+
+show_results(
+    "AST filter (artifact_id + minimum priority + gallery room)",
+    store.retrieve(
+        "bronze owl",
+        top_k=3,
+        deoverlap=False,
+        attributes_filter={
+            "type": "and",
+            "filters": [
+                {"type": "eq", "key": "artifact_id", "value": "A1001"},
+                {"type": "gte", "key": "priority", "value": 5},
+                {"type": "eq", "key": "gallery_room", "value": "Gallery 2"},
+            ],
+        },
+    ),
+)
+
+show_results(
+    "Same policy with SQL-like filter",
+    store.retrieve(
+        "bronze owl",
+        top_k=3,
+        deoverlap=False,
+        attributes_filter="""
+          artifact_id = 'A1001'
+          AND priority >= 5
+          AND gallery_room = 'Gallery 2'
+        """,
+    ),
+)
+```
+
+## 3) Complex: nested attributes and dot-path filtering
+
+Finally, we step up to nested attributes and show how to filter them with dot-path
+keys (for example source system, curation team, and review flags).
+
+```{python}
+from typing import Annotated
+
+from raghilda.store import DuckDBStore
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+COMPLEX_SCHEMA = {
+    "artifact_id": str,
+    "note_type": str,
+    "priority": int,
+    "embedding5": Annotated[list[float], 5],
+    "details": {
+        "source_system": str,
+        "curation_team": str,
+        "flags": {
+            "fact_checked": bool,
+            "public_safe": bool,
+        },
+    },
+}
+
+
+def show_results(title, chunks):
+    print(f"\n{title}")
+    if not chunks:
+        print("  (no matches)")
+        return
+    for idx, chunk in enumerate(chunks, start=1):
+        print(f"  {idx}. {chunk.text.strip()!r}")
+        print(f"     attributes={chunk.attributes}")
+
+
+complex_store = DuckDBStore.create(
+    location=":memory:", embed=None, attributes=COMPLEX_SCHEMA
+)
+chunker = MarkdownChunker()
+
+for doc in [
+    MarkdownDocument(
+        origin="a1001_curator_fact_checked.md",
+        content="Curator note: Bronze owl iconography linked to Athena in regional finds.",
+        attributes={
+            "artifact_id": "A1001",
+            "note_type": "curator_note",
+            "priority": 10,
+            "embedding5": [float(i) for i in range(5)],
+            "details": {
+                "source_system": "collections_db",
+                "curation_team": "ancient_mediterranean",
+                "flags": {"fact_checked": True, "public_safe": True},
+            },
+        },
+    ),
+    MarkdownDocument(
+        origin="a1001_internal_research.md",
+        content="Internal research memo: attribution hypothesis still under review.",
+        attributes={
+            "artifact_id": "A1001",
+            "note_type": "research_memo",
+            "priority": 4,
+            "embedding5": [float(i + 1) for i in range(5)],
+            "details": {
+                "source_system": "collections_db",
+                "curation_team": "ancient_mediterranean",
+                "flags": {"fact_checked": False, "public_safe": False},
+            },
+        },
+    ),
+    MarkdownDocument(
+        origin="a2042_curator_fact_checked.md",
+        content="Curator note: ceramic bowl motifs align with late classical workshop styles.",
+        attributes={
+            "artifact_id": "A2042",
+            "note_type": "curator_note",
+            "priority": 8,
+            "embedding5": [float(i + 2) for i in range(5)],
+            "details": {
+                "source_system": "collections_db",
+                "curation_team": "classical_art",
+                "flags": {"fact_checked": True, "public_safe": True},
+            },
+        },
+    ),
+]:
+    complex_store.insert(chunker.chunk_document(doc))
+
+complex_store.build_index("bm25")
+
+show_results(
+    "Dot-path SQL-like filter",
+    complex_store.retrieve(
+        "bronze owl",
+        top_k=3,
+        deoverlap=False,
+        attributes_filter="""
+        artifact_id = 'A1001'
+        AND details.curation_team = 'ancient_mediterranean'
+        AND details.flags.fact_checked = TRUE
+        """,
+    ),
+)
+
+show_results(
+    "Equivalent AST filter with dot-path keys",
+    complex_store.retrieve(
+        "bronze owl",
+        top_k=3,
+        deoverlap=False,
+        attributes_filter={
+            "type": "and",
+            "filters": [
+                {"type": "eq", "key": "artifact_id", "value": "A1001"},
+                {
+                    "type": "eq",
+                    "key": "details.curation_team",
+                    "value": "ancient_mediterranean",
+                },
+                {"type": "eq", "key": "details.flags.fact_checked", "value": True},
+            ],
+        },
+    ),
+)
+```
+
+## Recap: Declaring Attributes
+
+Raghilda supports multiple schema declaration styles:
+
+- Mapping with scalar types (for example `{"artifact_id": str, "priority": int}`)
+- Class annotations (for example `class Attributes: artifact_id: str`)
+- Mapping entries with defaults via `(type, default)` tuples
+- Fixed-size vectors via `Annotated[list[float], N]`
+
+Attribute names should use identifier-style syntax (letters, digits, and
+underscores only), so names cannot contain dots (`.`) or dashes (`-`).
+
+Backend support differs by store:
+
+| Capability | DuckDBStore | ChromaDBStore | OpenAIStore |
+|---|---|---|---|
+| Scalar attributes (`str/int/float/bool`) | ✅ | ✅ | ✅ |
+| Class-based schema declarations | ✅ | ✅ | ✅ |
+| Optional/defaulted attributes | ✅ | ❌ | ❌ |
+| Nested object attributes | ✅ | ❌ | ❌ |
+| Vector attributes (`Annotated[list[float], N]`) | ✅ | ❌ | ❌ |
+| Per-chunk attribute overrides | ✅ | ✅ | ❌ (document-level only) |
+
+## Built-In Backend Columns
+
+In addition to declared attributes, some stores expose backend-managed columns
+that can be used in `attributes_filter`.
+
+| Column | Meaning |
+|---|---|
+| `doc_id` | Document identifier (`Document.id`) for the chunk's parent document. |
+| `chunk_id` | Chunk index within the document (0-based insertion order). |
+| `origin` | Source location from `MarkdownDocument.origin` (path, URL, or other source label). |
+| `start_index` | Chunk start character offset in the document text. |
+| `end_index` | Chunk end character offset in the document text. |
+| `context` | Chunk context string (if provided during chunking). |
+
+`DuckDBStore` and `ChromaDBStore` support these names directly.
+`OpenAIStore` does not support built-in backend columns in `attributes_filter`;
+only declared attributes are filterable.

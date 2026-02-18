@@ -3,10 +3,13 @@ Deoverlap functionality for merging overlapping retrieved chunks.
 """
 
 from __future__ import annotations
+from copy import deepcopy
 from typing import Any, Callable, TypeVar
 from .chunk import RetrievedChunk
 
 T = TypeVar("T", bound=RetrievedChunk)
+_ATTRIBUTE_VALUES_STATE = "_raghilda_deoverlap_attribute_values"
+_CHUNK_COUNT_STATE = "_raghilda_deoverlap_chunk_count"
 
 
 def default_merge(target: RetrievedChunk, source: RetrievedChunk) -> None:
@@ -17,6 +20,8 @@ def default_merge(target: RetrievedChunk, source: RetrievedChunk) -> None:
     - Extending the text to cover the union of both ranges
     - Updating end_index to the maximum of both
     - Combining metrics from both chunks
+    - Aggregating attributes into per-chunk value lists (chunk order)
+    - Keeping target context unchanged (first overlapping chunk wins)
     - Updating token_count based on the new text length
 
     Parameters
@@ -33,7 +38,55 @@ def default_merge(target: RetrievedChunk, source: RetrievedChunk) -> None:
         target.text = target.text + source.text[overlap_len:]
     target.end_index = new_end
     target.metrics.extend(source.metrics or [])
+    _merge_attributes(target, source)
     target.token_count = len(target.text)
+
+
+def _merge_attributes(target: RetrievedChunk, source: RetrievedChunk) -> None:
+    target_count = _chunk_count(target)
+    source_count = _chunk_count(source)
+    target_values = _attribute_values(target)
+    source_values = _attribute_values(source)
+
+    all_keys = set(target_values) | set(source_values)
+    if not all_keys:
+        return
+
+    merged_values: dict[str, list[Any]] = {}
+    for key in all_keys:
+        merged_values[key] = list(target_values.get(key, [None] * target_count)) + list(
+            source_values.get(key, [None] * source_count)
+        )
+
+    setattr(target, _ATTRIBUTE_VALUES_STATE, merged_values)
+    setattr(target, _CHUNK_COUNT_STATE, target_count + source_count)
+    target.attributes = merged_values
+
+
+def _chunk_count(chunk: RetrievedChunk) -> int:
+    existing = getattr(chunk, _CHUNK_COUNT_STATE, None)
+    if isinstance(existing, int) and existing > 0:
+        return existing
+
+    attribute_values = getattr(chunk, _ATTRIBUTE_VALUES_STATE, None)
+    if isinstance(attribute_values, dict) and attribute_values:
+        inferred = max(len(values) for values in attribute_values.values())
+    else:
+        inferred = 1
+
+    setattr(chunk, _CHUNK_COUNT_STATE, inferred)
+    return inferred
+
+
+def _attribute_values(chunk: RetrievedChunk) -> dict[str, list[Any]]:
+    existing = getattr(chunk, _ATTRIBUTE_VALUES_STATE, None)
+    if isinstance(existing, dict):
+        return existing
+
+    attributes = dict(chunk.attributes or {})
+    seeded = {key: [deepcopy(value)] for key, value in attributes.items()}
+    setattr(chunk, _ATTRIBUTE_VALUES_STATE, seeded)
+    return seeded
 
 
 def deoverlap_chunks(
@@ -59,8 +112,8 @@ def deoverlap_chunks(
     merge
         Function to merge two overlapping chunks. Takes (target, source) and
         modifies target in place to incorporate source. Defaults to `default_merge`
-        which extends text, updates end_index, combines metrics, and updates
-        token_count.
+        which extends text, updates end_index, combines metrics, aggregates
+        attributes into lists, and updates token_count.
 
     Returns
     -------
@@ -108,7 +161,7 @@ def deoverlap_chunks(
 # Tests for deoverlap_chunks
 def test__deoverlap_chunks_overlapping_same_document():
     """Overlapping chunks from the same document should be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -139,7 +192,7 @@ def test__deoverlap_chunks_overlapping_same_document():
 
 def test__deoverlap_chunks_different_documents():
     """Overlapping ranges from different documents should not be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -166,7 +219,7 @@ def test__deoverlap_chunks_different_documents():
 
 def test__deoverlap_chunks_non_overlapping():
     """Non-overlapping chunks from the same document should not be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -193,7 +246,7 @@ def test__deoverlap_chunks_non_overlapping():
 
 def test__deoverlap_chunks_adjacent_not_merged():
     """Chunks that are adjacent (end == start) should not be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
 
     chunks = [
         RetrievedDuckDBMarkdownChunk(
@@ -225,7 +278,7 @@ def test__deoverlap_chunks_empty():
 
 def test__deoverlap_chunks_single():
     """Single chunk should be returned unchanged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -245,7 +298,7 @@ def test__deoverlap_chunks_single():
 
 def test__deoverlap_chunks_chain():
     """Multiple chunks that chain together should all be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -284,7 +337,7 @@ def test__deoverlap_chunks_chain():
 
 def test__deoverlap_chunks_reverse_order():
     """Chunks should be sorted before processing."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -315,7 +368,7 @@ def test__deoverlap_chunks_reverse_order():
 
 def test__deoverlap_chunks_fully_contained():
     """A chunk fully contained within another should be merged."""
-    from ._store import RetrievedDuckDBMarkdownChunk
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
     from .chunk import Metric
 
     chunks = [
@@ -342,3 +395,71 @@ def test__deoverlap_chunks_fully_contained():
     assert result[0].start_index == 0
     assert result[0].end_index == 11
     assert len(result[0].metrics) == 2
+
+
+def test__deoverlap_chunks_merge_attributes_as_lists():
+    """Merged chunks should retain all attribute values in chunk order."""
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
+
+    chunks = [
+        RetrievedDuckDBMarkdownChunk(
+            text="hello world",
+            start_index=0,
+            end_index=11,
+            doc_id=1,
+            chunk_id=1,
+            metrics=[],
+            context="h1",
+            attributes={"tenant": "docs", "priority": 1},
+        ),
+        RetrievedDuckDBMarkdownChunk(
+            text="world hello",
+            start_index=6,
+            end_index=17,
+            doc_id=1,
+            chunk_id=2,
+            metrics=[],
+            context="h2",
+            attributes={"tenant": "blog", "priority": 2},
+        ),
+    ]
+
+    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    assert len(result) == 1
+    assert result[0].context == "h1"
+    assert result[0].attributes == {
+        "tenant": ["docs", "blog"],
+        "priority": [1, 2],
+    }
+
+
+def test__deoverlap_chunks_merge_vector_attributes_without_flattening():
+    """Vector attributes should aggregate as list-of-vectors, not flatten."""
+    from ._duckdb_store import RetrievedDuckDBMarkdownChunk
+
+    chunks = [
+        RetrievedDuckDBMarkdownChunk(
+            text="hello world",
+            start_index=0,
+            end_index=11,
+            doc_id=1,
+            chunk_id=1,
+            metrics=[],
+            attributes={"embedding3": [0.1, 0.2, 0.3]},
+        ),
+        RetrievedDuckDBMarkdownChunk(
+            text="world hello",
+            start_index=6,
+            end_index=17,
+            doc_id=1,
+            chunk_id=2,
+            metrics=[],
+            attributes={"embedding3": [0.4, 0.5, 0.6]},
+        ),
+    ]
+
+    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    assert len(result) == 1
+    assert result[0].attributes == {
+        "embedding3": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+    }

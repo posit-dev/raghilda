@@ -152,7 +152,7 @@ for chunk in chunks:
     print("---")
 ```
 
-The `retrieve()` method combines vector similarity search (semantic matching) with BM25 (keyword matching) for hybrid retrieval. By default, overlapping chunks from the same document are merged (`deoverlap=True`) to provide more coherent results.
+The `retrieve()` method combines vector similarity search (semantic matching) with BM25 (keyword matching) for hybrid retrieval. By default, overlapping chunks from the same document are merged (`deoverlap=True`) to provide more coherent results; metrics are concatenated and attribute values are aggregated in start-order lists on merged chunks. The merged chunk keeps `context` from the first overlapping chunk.
 
 You can also use the individual search methods:
 
@@ -249,6 +249,7 @@ for chunk in chunks:
 
 ## Next Steps
 
+- Learn schema-based retrieval scoping with [Attribute Filters](03-attribute-filters.qmd)
 - Explore [ChromaDB Store](50-chromadb-store.qmd) for an alternative storage backend
 - See the [API Reference](/reference/index.qmd) for detailed documentation
 - Check out the [examples](https://github.com/dfalbel/py-ragnar/tree/main/examples) for more use cases

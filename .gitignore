@@ -7,6 +7,7 @@ wheels/
 *.egg-info
 docs/_site
 docs/reference/*
+docs/objects.json
 
 # Virtual environments
 .venv
