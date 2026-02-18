@@ -443,7 +443,7 @@ class DuckDBStore(BaseStore):
             and processed with read_as_markdown followed by MarkdownChunker.
         num_workers
             The number of worker threads to use for parallel ingestion.
-            If None, defaults to the number of CPU cores.
+            If None, defaults to 4 to avoid API rate limiting.
         progress
             Whether to display a progress bar during ingestion. Default is True.
             The progress bar shows the total count only if items has a known length
@@ -489,7 +489,7 @@ class DuckDBStore(BaseStore):
         ```
         """
         if num_workers is None:
-            num_workers = os.cpu_count() or 1
+            num_workers = 4
 
         if prepare is None:
             chunker = MarkdownChunker()
