@@ -34,6 +34,11 @@ def get_default_db_path(repo: str) -> Path:
     return Path(repo.replace("/", "_") + ".db")
 
 
+def get_default_jsonl_path(repo: str) -> Path:
+    """Get default JSONL path for a repo."""
+    return Path(repo.replace("/", "_") + ".jsonl")
+
+
 def get_github_token() -> str:
     """Get GitHub token from environment or gh CLI."""
     token = os.environ.get("GITHUB_TOKEN")
@@ -62,6 +67,25 @@ def save_metadata(db_path: Path, metadata: dict):
     """Save sync metadata."""
     metadata_file = get_metadata_path(db_path)
     metadata_file.write_text(json.dumps(metadata, indent=2, default=str))
+
+
+def load_issues_from_jsonl(jsonl_path: Path) -> dict[int, dict]:
+    """Load issues from JSONL file, keyed by issue number."""
+    issues = {}
+    if jsonl_path.exists():
+        with open(jsonl_path) as f:
+            for line in f:
+                if line.strip():
+                    issue = json.loads(line)
+                    issues[issue["number"]] = issue
+    return issues
+
+
+def save_issues_to_jsonl(jsonl_path: Path, issues: dict[int, dict]):
+    """Save issues to JSONL file."""
+    with open(jsonl_path, "w") as f:
+        for issue in issues.values():
+            f.write(json.dumps(issue) + "\n")
 
 
 def issue_to_dict(issue) -> dict:
@@ -131,14 +155,26 @@ def prepare_issue(issue: dict):
 def sync(
     repo: Annotated[str, typer.Argument(help="GitHub repo (e.g., posit-dev/positron)")],
     db_path: Annotated[Path | None, typer.Option(help="Database path")] = None,
+    jsonl_path: Annotated[Path | None, typer.Option(help="JSONL cache path")] = None,
 ):
-    """Download and ingest issues from GitHub (incremental)."""
+    """Download and ingest issues from GitHub (incremental).
+
+    Issues are cached in a JSONL file. Only new/updated issues are fetched
+    from GitHub, then the store is rebuilt from the complete cache.
+    """
     from raghilda.store import DuckDBStore
     from raghilda.embedding import EmbeddingOpenAI
 
     if db_path is None:
         db_path = get_default_db_path(repo)
+    if jsonl_path is None:
+        jsonl_path = get_default_jsonl_path(repo)
 
+    # Load existing issues from JSONL cache
+    issues = load_issues_from_jsonl(jsonl_path)
+    console.print(f"[cyan]Loaded {len(issues)} issues from cache[/cyan]")
+
+    # Fetch new/updated issues from GitHub
     token = get_github_token()
     g = Github(auth=Auth.Token(token))
     github_repo = g.get_repo(repo)
@@ -146,40 +182,44 @@ def sync(
     metadata = load_metadata(db_path)
     last_update = metadata.get("last_update")
 
-    # Create or connect to store
-    if db_path.exists():
-        console.print(f"[cyan]Connecting to store at {db_path}...[/cyan]")
-        store = DuckDBStore.connect(location=str(db_path))
-    else:
-        console.print(f"[cyan]Creating store at {db_path}...[/cyan]")
-        store = DuckDBStore.create(
-            location=str(db_path),
-            embed=EmbeddingOpenAI(),
-            overwrite=True,
-            name="positron_github",
-            title="Positron GitHub Issues and PRs",
-        )
-
     if last_update:
-        console.print(f"[cyan]Incremental update since {last_update}[/cyan]")
+        console.print(f"[cyan]Fetching updates since {last_update}...[/cyan]")
         since = datetime.fromisoformat(last_update)
         issues_iter = github_repo.get_issues(state="all", sort="updated", since=since)
     else:
-        console.print("[cyan]Full download of all issues...[/cyan]")
+        console.print("[cyan]Fetching all issues...[/cyan]")
         issues_iter = github_repo.get_issues(state="all", sort="updated")
 
+    # Merge new issues into cache
     update_time = datetime.now(timezone.utc)
-    size_before = store.size()
+    new_count = 0
+    for issue in issues_iter:
+        issue_dict = issue_to_dict(issue)
+        issues[issue_dict["number"]] = issue_dict
+        new_count += 1
+        if new_count % 100 == 0:
+            console.print(f"[dim]Fetched {new_count} issues...[/dim]")
 
-    store.ingest(
-        (issue_to_dict(issue) for issue in issues_iter),
-        prepare=prepare_issue,
+    console.print(f"[cyan]Fetched {new_count} new/updated issues[/cyan]")
+
+    # Save updated cache
+    save_issues_to_jsonl(jsonl_path, issues)
+    console.print(f"[cyan]Saved {len(issues)} issues to cache[/cyan]")
+
+    # Rebuild store from cache
+    console.print(f"[cyan]Building store at {db_path}...[/cyan]")
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=EmbeddingOpenAI(),
+        overwrite=True,
+        name="github_issues",
+        title=f"GitHub Issues: {repo}",
     )
 
-    synced = store.size() - size_before
-    if synced > 0:
-        console.print("[cyan]Building search indexes...[/cyan]")
-        store.build_index()
+    store.ingest(issues.values(), prepare=prepare_issue)
+
+    console.print("[cyan]Building search indexes...[/cyan]")
+    store.build_index()
 
     # Save metadata
     metadata["last_update"] = update_time.isoformat()
