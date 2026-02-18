@@ -1,15 +1,21 @@
 """Tests for compatibility with chonkie types and chunkers."""
+# ruff: noqa: E402
 
 import pytest
 
 # Skip all tests in this module if chonkie is not installed
 chonkie = pytest.importorskip("chonkie")
 
-from chonkie.types import Chunk as ChonkieChunk, Document as ChonkieDocument  # noqa: E402
+from chonkie.types import (
+    Chunk as ChonkieChunk,
+    Document as ChonkieDocument,
+)  # noqa: E402
 from raghilda.chunk import Chunk  # noqa: E402
 from raghilda.document import Document, MarkdownDocument  # noqa: E402
 from raghilda.types import ChunkLike, DocumentLike  # noqa: E402
 from raghilda.store import DuckDBStore  # noqa: E402
+
+TokenChunker = getattr(chonkie, "TokenChunker")
 
 
 class TestChonkieChunkCompatibility:
@@ -86,7 +92,6 @@ class TestChonkieDocumentCompatibility:
 class TestChonkieChunkerWithStore:
     def test_store_accepts_chonkie_chunked_document(self):
         """DuckDBStore should accept documents chunked by chonkie."""
-        from chonkie import TokenChunker
 
         # Create a store without embeddings
         store = DuckDBStore.create(
@@ -119,7 +124,6 @@ class TestChonkieChunkerWithStore:
 
     def test_store_ingest_with_chonkie_prepare_function(self):
         """DuckDBStore.ingest should work with a chonkie-based prepare function."""
-        from chonkie import TokenChunker
         import tempfile
         import os
 

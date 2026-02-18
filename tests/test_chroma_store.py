@@ -1,4 +1,6 @@
 import pytest
+import socket
+from typing import Annotated
 
 pytest.importorskip("chromadb")
 
@@ -8,6 +10,23 @@ from raghilda.chunk import MarkdownChunk, RetrievedChunk
 
 
 from chromadb import EmbeddingFunction, Embeddings, Documents
+
+
+def _can_reach_openai(timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection(("api.openai.com", 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _require_openai_integration() -> None:
+    import os
+
+    if not os.getenv("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set")
+    if not _can_reach_openai():
+        pytest.skip("OpenAI API is not reachable from this environment")
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
@@ -169,6 +188,153 @@ def test_retrieve_with_deoverlap():
     assert len(results_separate) == 2
 
 
+def test_retrieve_with_deoverlap_aggregates_attributes():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_deoverlap_attributes",
+        overwrite=True,
+        attributes={"topic": str},
+    )
+    doc = _make_doc_with_overlapping_chunks()
+    doc.attributes = {"topic": "first"}
+    assert doc.chunks is not None
+    doc.chunks[0].context = "h1"
+    doc.chunks[1].context = "h2"
+    doc.chunks[1].attributes = {"topic": "second"}
+
+    store.insert(doc)
+    results = store.retrieve("hello", top_k=2, deoverlap=True)
+
+    assert len(results) == 1
+    assert results[0].context == "h1"
+    assert results[0].attributes == {"topic": ["first", "second"]}
+
+
+def test_insert_and_retrieve_with_attributes_filter():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_attributes_filter",
+        overwrite=True,
+        attributes={"tenant": str, "topic": str},
+    )
+
+    doc = _make_doc()
+    doc.attributes = {"tenant": "docs", "topic": "general"}
+    assert doc.chunks is not None
+    doc.chunks[0].attributes = {"topic": "intro"}
+    store.insert(doc)
+
+    intro = store.retrieve(
+        "test",
+        top_k=5,
+        attributes_filter="tenant = 'docs' AND topic = 'intro'",
+        deoverlap=False,
+    )
+    assert len(intro) >= 1
+    for chunk in intro:
+        assert chunk.attributes is not None
+        assert chunk.attributes.get("tenant") == "docs"
+        assert chunk.attributes.get("topic") == "intro"
+
+    intro_dict = store.retrieve(
+        "test",
+        top_k=5,
+        attributes_filter={
+            "type": "and",
+            "filters": [
+                {"type": "eq", "key": "tenant", "value": "docs"},
+                {"type": "in", "key": "topic", "value": ["intro", "other"]},
+            ],
+        },
+        deoverlap=False,
+    )
+    assert len(intro_dict) >= 1
+    for chunk in intro_dict:
+        assert chunk.attributes is not None
+        assert chunk.attributes.get("tenant") == "docs"
+        assert chunk.attributes.get("topic") == "intro"
+
+
+def test_create_with_attributes_schema_class_annotations():
+    class AttributesSpec:
+        tenant: str
+        topic: str
+
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_attributes_schema_class",
+        overwrite=True,
+        attributes=AttributesSpec,
+    )
+
+    assert store.metadata.attributes_schema == {
+        "tenant": str,
+        "topic": str,
+    }
+
+
+def test_create_rejects_vector_attributes_annotations():
+    with pytest.raises(ValueError, match="Vector attribute types are not supported"):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_vector_reject",
+            overwrite=True,
+            attributes={"embedding25": Annotated[list[float], 25]},
+        )
+
+
+def test_create_rejects_object_attributes_annotations():
+    with pytest.raises(ValueError, match="Object attribute types are not supported"):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_object_reject",
+            overwrite=True,
+            attributes={"details": {"source": str}},
+        )
+
+
+def test_create_rejects_optional_attributes_annotations():
+    with pytest.raises(
+        ValueError, match="Optional attribute values are not supported for 'topic'"
+    ):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_optional_reject",
+            overwrite=True,
+            attributes={"tenant": str, "topic": str | None},
+        )
+
+
+def test_create_rejects_defaulted_attributes_annotations():
+    with pytest.raises(
+        ValueError, match="Optional attribute values are not supported for 'priority'"
+    ):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_default_reject",
+            overwrite=True,
+            attributes={"tenant": str, "priority": (int, 0)},
+        )
+
+
+def test_create_rejects_invalid_attribute_names():
+    with pytest.raises(ValueError, match="must match"):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_name_reject",
+            overwrite=True,
+            attributes={"tenant-id": str},
+        )
+
+
 def test_ingest_with_generator():
     """Test that ingest works with a generator (iterable without __len__)."""
     from raghilda.chunker import MarkdownChunker
@@ -288,12 +454,10 @@ class TestChromaConvertible:
 
     def test_embedding_openai_to_chroma_works(self):
         """EmbeddingOpenAI.to_chroma() should return a working ChromaDB function."""
-        import os
         from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
         from raghilda.embedding import EmbeddingOpenAI
 
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set")
+        _require_openai_integration()
 
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
         chroma_func = provider.to_chroma()
@@ -346,11 +510,9 @@ class TestChromaConvertible:
 
     def test_create_store_with_raghilda_provider_insert_retrieve(self):
         """ChromaDBStore should work with raghilda EmbeddingProvider for insert and retrieve."""
-        import os
         from raghilda.embedding import EmbeddingOpenAI
 
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set")
+        _require_openai_integration()
 
         provider = EmbeddingOpenAI()
         store = ChromaDBStore.create(

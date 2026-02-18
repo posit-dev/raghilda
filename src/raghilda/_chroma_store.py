@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
+import json
 import os
 from pathlib import Path
 from collections.abc import Sized
-from typing import Any, Iterable, Optional, Sequence, Callable, TYPE_CHECKING, Union
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    Union,
+)
 from concurrent.futures import ThreadPoolExecutor
 
 from ._store import BaseStore
@@ -21,7 +30,19 @@ from ._embedding import (
     EmbedInputType,
     embedding_from_config,
 )
+from ._attributes import (
+    AttributeFilter,
+    AttributesSchemaSpec,
+    AttributeSpec,
+    AttributeType,
+    attributes_spec_from_json_dict,
+    attributes_spec_to_json_dict,
+    compile_filter_to_chroma_where,
+    merge_attribute_values,
+    normalize_attributes_spec,
+)
 from tqdm import tqdm
+from ._store_metadata import AttributesStoreMetadata, attributes_schema_from_spec
 
 if TYPE_CHECKING:
     import numpy as np
@@ -31,7 +52,28 @@ if TYPE_CHECKING:
 
 
 _METADATA_TITLE_KEY = "raghilda_title"
+_ATTRIBUTES_SCHEMA_METADATA_KEY = "raghilda_attributes_schema_json"
 _ADAPTER_NAME = "raghilda_embedding_adapter"
+
+_RESERVED_SYSTEM_COLUMNS = {
+    "doc_id",
+    "chunk_id",
+    "start_index",
+    "end_index",
+    "token_count",
+    "context",
+    "origin",
+}
+
+_FILTERABLE_BASE_COLUMNS = {
+    "doc_id",
+    "chunk_id",
+    "start_index",
+    "end_index",
+    "token_count",
+    "context",
+    "origin",
+}
 
 
 # ChromaEmbeddingAdapter is only defined when chromadb is installed
@@ -175,7 +217,7 @@ def _get_client(location: str | Path | None):
     return chromadb.PersistentClient(path=str(location))
 
 
-@dataclass
+@dataclass(repr=False)
 class ChromaDBMarkdownChunk(MarkdownChunk):
     """MarkdownChunk with ChromaDB-specific fields for storage."""
 
@@ -191,6 +233,7 @@ class ChromaDBMarkdownChunk(MarkdownChunk):
         token_count=None,
         doc_id=None,
         chunk_id=None,
+        attributes=None,
     ):
         if token_count is None:
             token_count = len(text)
@@ -201,13 +244,14 @@ class ChromaDBMarkdownChunk(MarkdownChunk):
             end_index=end_index,
             token_count=token_count,
             context=context,
+            attributes=attributes,
         )
 
         self.doc_id = doc_id
         self.chunk_id = chunk_id
 
 
-@dataclass
+@dataclass(repr=False)
 class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
     """ChromaDBMarkdownChunk with retrieval metrics."""
 
@@ -221,6 +265,7 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
         doc_id=None,
         chunk_id=None,
         metrics=None,
+        attributes=None,
     ):
         super().__init__(
             text=text,
@@ -230,6 +275,7 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
             token_count=token_count,
             doc_id=doc_id,
             chunk_id=chunk_id,
+            attributes=attributes,
         )
 
         if metrics is None:
@@ -238,9 +284,18 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
 
 
 @dataclass
-class ChromaDBStoreMetadata:
+class ChromaDBStoreMetadata(AttributesStoreMetadata):
     name: str
     title: str
+    attributes: dict[str, AttributeSpec]
+
+    @property
+    def attributes_spec(self) -> dict[str, AttributeSpec]:
+        return self.attributes
+
+    @property
+    def attributes_schema(self) -> dict[str, AttributeType]:
+        return attributes_schema_from_spec(self.attributes)
 
 
 class ChromaDBStore(BaseStore):
@@ -272,6 +327,7 @@ class ChromaDBStore(BaseStore):
         title: Optional[str] = None,
         embed: Optional[ChromaEmbedding] = None,
         collection_metadata: Optional[dict[str, Any]] = None,
+        attributes: Optional[AttributesSchemaSpec] = None,
         client: Any = None,
     ):
         """Create a new ChromaDB store.
@@ -294,6 +350,12 @@ class ChromaDBStore(BaseStore):
             If None, Chroma's default embedding function is used.
         collection_metadata
             Additional metadata to attach to the Chroma collection.
+        attributes
+            Optional schema for user-defined attribute columns.
+            Attribute names use identifier-style syntax.
+            Chroma also provides built-in filterable columns:
+            `doc_id`, `chunk_id`, `start_index`, `end_index`, `token_count`,
+            `context`, and `origin`.
         client
             Optional pre-configured Chroma client (e.g., HttpClient).
 
@@ -309,6 +371,13 @@ class ChromaDBStore(BaseStore):
         if title is None:
             title = "Raghilda ChromaDB Store"
 
+        attributes_spec = normalize_attributes_spec(
+            attributes=attributes,
+            reserved_columns=_RESERVED_SYSTEM_COLUMNS,
+            allow_vector_types=False,
+            allow_struct_types=False,
+            allow_optional_values=False,
+        )
         if client is None:
             client = _get_client(location)
 
@@ -318,7 +387,12 @@ class ChromaDBStore(BaseStore):
             except Exception:
                 pass
 
-        store_metadata = {_METADATA_TITLE_KEY: title}
+        store_metadata = {
+            _METADATA_TITLE_KEY: title,
+            _ATTRIBUTES_SCHEMA_METADATA_KEY: json.dumps(
+                attributes_spec_to_json_dict(attributes_spec)
+            ),
+        }
 
         merged_metadata = dict(collection_metadata or {})
         merged_metadata.update(store_metadata)
@@ -332,7 +406,11 @@ class ChromaDBStore(BaseStore):
         return ChromaDBStore(
             client=client,
             collection=collection,
-            metadata=ChromaDBStoreMetadata(name=name, title=title),
+            metadata=ChromaDBStoreMetadata(
+                name=name,
+                title=title,
+                attributes=attributes_spec,
+            ),
         )
 
     @staticmethod
@@ -376,14 +454,25 @@ class ChromaDBStore(BaseStore):
         )
         metadata = collection.metadata or {}
         title = metadata.get(_METADATA_TITLE_KEY, "Raghilda ChromaDB Store")
-
+        attributes_spec: dict[str, AttributeSpec] = {}
+        if metadata.get(_ATTRIBUTES_SCHEMA_METADATA_KEY) is not None:
+            attributes_spec = attributes_spec_from_json_dict(
+                json.loads(metadata[_ATTRIBUTES_SCHEMA_METADATA_KEY]),
+                allow_vector_types=False,
+                allow_struct_types=False,
+                allow_optional_values=False,
+            )
         return ChromaDBStore(
             client=client,
             collection=collection,
-            metadata=ChromaDBStoreMetadata(name=name, title=title),
+            metadata=ChromaDBStoreMetadata(
+                name=name,
+                title=title,
+                attributes=attributes_spec,
+            ),
         )
 
-    def __init__(self, client: Any, collection: Any, metadata: ChromaDBStoreMetadata):
+    def __init__(self, client: Any, collection: Any, metadata: AttributesStoreMetadata):
         self.client = client
         self.collection = collection
         self.metadata = metadata
@@ -397,10 +486,14 @@ class ChromaDBStore(BaseStore):
         texts = [chunk.text for chunk in document.chunks]
 
         ids = []
-        metadatas = []
+        chunk_attributes_records = []
         for idx, chunk in enumerate(document.chunks):
+            resolved_attributes = merge_attribute_values(
+                attributes_spec=self.metadata.attributes_spec,
+                sources=[document.attributes, chunk.attributes],
+            )
             ids.append(f"{document.id}:{idx}")
-            metadata = {
+            chunk_record = {
                 "doc_id": document.id,
                 "chunk_id": idx,
                 "start_index": chunk.start_index,
@@ -409,12 +502,15 @@ class ChromaDBStore(BaseStore):
                 "context": chunk.context,
                 "origin": document.origin,
             }
-            metadatas.append({k: v for k, v in metadata.items() if v is not None})
+            chunk_record.update(resolved_attributes)
+            chunk_attributes_records.append(
+                {k: v for k, v in chunk_record.items() if v is not None}
+            )
 
         self.collection.upsert(
             ids=ids,
             documents=texts,
-            metadatas=metadatas,
+            metadatas=chunk_attributes_records,
         )
 
     def ingest(
@@ -518,7 +614,13 @@ class ChromaDBStore(BaseStore):
                 future.result()
 
     def retrieve(
-        self, text: str, top_k: int, *, deoverlap: bool = True, **kwargs
+        self,
+        text: str,
+        top_k: int,
+        *,
+        deoverlap: bool = True,
+        attributes_filter: Optional[AttributeFilter] = None,
+        **kwargs,
     ) -> Sequence[RetrievedChromaDBMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -535,16 +637,31 @@ class ChromaDBStore(BaseStore):
             If True (default), merge overlapping chunks from the same document.
             Overlapping chunks are identified by their `start_index` and `end_index`
             positions. When merged, the resulting chunk spans the union of the
-            original ranges and combines their metrics.
+            original ranges, combines metrics, and aggregates attribute values
+            into per-chunk lists in start-order. The `context` value is kept
+            from the first chunk in each merged overlap group.
+        attributes_filter
+            Optional attribute filter as SQL-like string or dict AST.
+            Example string: `"tenant = 'docs' AND priority >= 2"`.
+            Supports declared attributes plus built-in columns:
+            `doc_id`, `chunk_id`, `start_index`, `end_index`,
+            `token_count`, `context`, and `origin`.
         **kwargs
-            Additional arguments passed to ChromaDB's `query()` method,
-            such as `where` for metadata filtering.
+            Additional arguments passed to ChromaDB's `query()` method.
 
         Returns
         -------
         Sequence[RetrievedChromaDBMarkdownChunk]
             The retrieved chunks with their relevance metrics.
         """
+        if attributes_filter is not None:
+            if "where" in kwargs:
+                raise ValueError("Use either attributes_filter or where, not both.")
+            kwargs["where"] = compile_filter_to_chroma_where(
+                attributes_filter,
+                allowed_columns=self._filterable_columns(),
+            )
+
         results = self.collection.query(
             query_texts=[text],
             n_results=top_k,
@@ -553,17 +670,23 @@ class ChromaDBStore(BaseStore):
         )
 
         documents = (results.get("documents") or [[]])[0]
-        metadatas = (results.get("metadatas") or [[]])[0]
+        chunk_attributes_rows = (results.get("metadatas") or [[]])[0]
         distances = (results.get("distances") or [[]])[0]
 
         output: list[RetrievedChromaDBMarkdownChunk] = []
-        for doc_text, metadata, distance in zip(
-            documents, metadatas, distances, strict=False
+        for doc_text, chunk_attributes, distance in zip(
+            documents, chunk_attributes_rows, distances, strict=False
         ):
-            metadata = metadata or {}
-            start_index = int(metadata.get("start_index", 0))
-            end_index = int(metadata.get("end_index", start_index + len(doc_text)))
-            token_count = int(metadata.get("token_count", len(doc_text)))
+            chunk_attributes = chunk_attributes or {}
+            user_attributes = {
+                key: chunk_attributes.get(key)
+                for key in self.metadata.attributes_schema
+            }
+            start_index = int(chunk_attributes.get("start_index", 0))
+            end_index = int(
+                chunk_attributes.get("end_index", start_index + len(doc_text))
+            )
+            token_count = int(chunk_attributes.get("token_count", len(doc_text)))
             metrics = []
             if distance is not None:
                 metrics.append(Metric(name="distance", value=distance))
@@ -571,11 +694,12 @@ class ChromaDBStore(BaseStore):
                 text=doc_text,
                 start_index=start_index,
                 end_index=end_index,
-                context=metadata.get("context"),
+                context=chunk_attributes.get("context"),
                 token_count=token_count,
-                doc_id=metadata.get("doc_id"),
-                chunk_id=metadata.get("chunk_id"),
+                doc_id=chunk_attributes.get("doc_id"),
+                chunk_id=chunk_attributes.get("chunk_id"),
                 metrics=metrics,
+                attributes=user_attributes,
             )
             output.append(chunk)
 
@@ -586,10 +710,13 @@ class ChromaDBStore(BaseStore):
 
     def size(self) -> int:
         results = self.collection.get(include=["metadatas"])
-        metadatas = results.get("metadatas") or []
+        chunk_attributes_rows = results.get("metadatas") or []
         doc_ids = {
-            metadata.get("doc_id")
-            for metadata in metadatas
-            if metadata and metadata.get("doc_id")
+            chunk_attributes.get("doc_id")
+            for chunk_attributes in chunk_attributes_rows
+            if chunk_attributes and chunk_attributes.get("doc_id")
         }
         return len(doc_ids)
+
+    def _filterable_columns(self) -> set[str]:
+        return _FILTERABLE_BASE_COLUMNS | set(self.metadata.attributes_schema)

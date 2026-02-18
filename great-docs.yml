@@ -102,7 +102,7 @@ reference:
       - chunk.Metric
 
   - title: Document
-    desc: Document types with metadata
+    desc: Document types with chunks and attributes
     contents:
       - document.Document
       - document.MarkdownDocument

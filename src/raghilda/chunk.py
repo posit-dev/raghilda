@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Optional, Union
+from dataclasses import dataclass, field, fields
+from typing import Any, Optional, Union
 from .types import ChunkLike, IntoChunk
 
 __all__ = ["Chunk", "MarkdownChunk", "Metric", "RetrievedChunk"]
@@ -26,6 +26,10 @@ class Chunk:
     context
         Optional heading context showing the document hierarchy at this
         chunk's position (e.g., the Markdown headings that apply).
+    attributes
+        Optional user-defined attributes associated with the chunk. These
+        attributes can be used for retrieval filtering/scoping and downstream
+        prompt/context construction.
     """
 
     text: str
@@ -33,6 +37,23 @@ class Chunk:
     end_index: int
     token_count: int
     context: Optional[str] = None
+    attributes: Optional[dict[str, Any]] = None
+
+    def __repr__(self) -> str:
+        from pprint import pformat
+
+        output: list[str] = [f"{type(self).__name__}("]
+        for field_info in fields(self):
+            key = field_info.name
+            value = getattr(self, key)
+            formatted = pformat(value)
+            formatted = formatted.replace("\n", "\n    ")
+            output.append(f"  {key}={formatted},")
+
+        output.append(")")
+        return "\n".join(output)
+
+    __str__ = __repr__
 
     @classmethod
     def from_any(cls, chunk: Union[ChunkLike, IntoChunk]) -> "Chunk":
@@ -61,17 +82,19 @@ class Chunk:
                 )
             return result
         elif isinstance(chunk, ChunkLike):
+            raw_attributes = getattr(chunk, "attributes", None)
             return cls(
                 text=chunk.text,
                 start_index=chunk.start_index,
                 end_index=chunk.end_index,
                 token_count=chunk.token_count,
                 context=getattr(chunk, "context", None),
+                attributes=dict(raw_attributes or {}),
             )
         raise TypeError(f"Cannot convert {type(chunk).__name__} to Chunk")
 
 
-@dataclass
+@dataclass(repr=False)
 class MarkdownChunk(Chunk):
     """A chunk extracted from a Markdown document.
 
@@ -112,7 +135,7 @@ class Metric:
     value: float
 
 
-@dataclass
+@dataclass(repr=False)
 class RetrievedChunk(Chunk):
     """A chunk returned from a retrieval operation with associated metrics.
 

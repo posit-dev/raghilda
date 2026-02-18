@@ -213,15 +213,6 @@ def _convert_to_markdown(
     html_extract_selectors = _as_str_list(html_extract_selectors)
     html_zap_selectors = _as_str_list(html_zap_selectors)
 
-    # backcompat support for previous 'main_only' arg
-    main_only = kwargs.pop("main_only", None)
-    if main_only is not None:
-        if main_only:
-            if "main" not in html_extract_selectors:
-                html_extract_selectors.insert(0, "main")
-        else:
-            html_extract_selectors = [s for s in html_extract_selectors if s != "main"]
-
     with _patched_markitdown(
         html_extract_selectors=html_extract_selectors,
         html_zap_selectors=html_zap_selectors,

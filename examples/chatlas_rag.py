@@ -38,7 +38,7 @@ def build_rag_index():
         progress=True,
     )
     # Filter out image and non-document files
-    excluded_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp')
+    excluded_extensions = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp")
     links = [link for link in links if not link.lower().endswith(excluded_extensions)]
     print(f"Found {len(links)} pages to index.")
 
@@ -95,7 +95,9 @@ def create_chat_with_rag():
         import json
 
         chunks = store.retrieve(query, top_k=num_results, deoverlap=True)
-        return json.dumps([{"text": chunk.text, "context": chunk.context} for chunk in chunks])
+        return json.dumps(
+            [{"text": chunk.text, "context": chunk.context} for chunk in chunks]
+        )
 
     # Create the chat with system prompt
     chat = ChatOpenAI(
