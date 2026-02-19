@@ -8,8 +8,8 @@
 Example: Building a RAG store from GitHub Issues and PRs
 
 Usage:
-    uv run examples/github_issues_rag.py sync posit-dev/positron   # Download & ingest
-    uv run examples/github_issues_rag.py chat posit-dev/positron   # Interactive chat
+    uv run examples/github_issues_rag.py posit-dev/positron sync   # Download & ingest
+    uv run examples/github_issues_rag.py posit-dev/positron chat   # Interactive chat
 """
 
 import json
@@ -258,12 +258,12 @@ def chat(repo: str):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage:")
-        print("  uv run examples/github_issues_rag.py sync <owner/repo>")
-        print("  uv run examples/github_issues_rag.py chat <owner/repo>")
+        print("  uv run examples/github_issues_rag.py <owner/repo> sync")
+        print("  uv run examples/github_issues_rag.py <owner/repo> chat")
         sys.exit(1)
 
-    command = sys.argv[1]
-    repo = sys.argv[2]
+    repo = sys.argv[1]
+    command = sys.argv[2]
 
     if command == "sync":
         sync(repo)
