@@ -76,7 +76,11 @@ def read_as_markdown(
     return MarkdownDocument(origin=uri, content=md)
 
 
-md = markitdown.MarkItDown()
+import requests as _requests
+
+_session = _requests.Session()
+_session.headers.update({"User-Agent": "raghilda"})
+md = markitdown.MarkItDown(requests_session=_session)
 
 
 def _maybe_insert_info_string(text, class_):
