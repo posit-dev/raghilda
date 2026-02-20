@@ -1,6 +1,9 @@
 import re
 import warnings
 from typing import Optional
+
+import requests as _requests
+
 from .document import MarkdownDocument
 
 with warnings.catch_warnings():
@@ -76,7 +79,9 @@ def read_as_markdown(
     return MarkdownDocument(origin=uri, content=md)
 
 
-md = markitdown.MarkItDown()
+_session = _requests.Session()
+_session.headers.update({"User-Agent": "raghilda"})
+md = markitdown.MarkItDown(requests_session=_session)
 
 
 def _maybe_insert_info_string(text, class_):
