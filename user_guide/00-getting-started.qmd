@@ -25,7 +25,6 @@ Let's walk through building a RAG system using the [Quarto documentation](https:
 First, create a store with an embedding provider. The store will hold your document chunks and their vector embeddings:
 
 ```{python}
-#| eval: false
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
 
@@ -34,6 +33,7 @@ store = DuckDBStore.create(
     embed=EmbeddingOpenAI(),
     name="quarto",
     title="Quarto Documentation",
+    overwrite=True,
 )
 ```
 
@@ -44,14 +44,12 @@ raghilda supports multiple embedding providers (OpenAI, Cohere) and storage back
 Next, identify the documents to include. The `find_links()` function can crawl a website to discover pages:
 
 ```{python}
-#| eval: false
 from raghilda.scrape import find_links
 
 links = find_links(
     "https://quarto.org/docs/guide/",
-    depth=1,
+    depth=1,  # follow links 1 level deep from the starting page
     children_only=True,
-    progress=True,
 )
 print(f"Found {len(links)} pages")
 ```
@@ -70,67 +68,77 @@ from pathlib import Path
 links = list(Path("docs").glob("**/*.md"))
 ```
 
-## Converting to Markdown
+## Ingesting Documents
 
-raghilda works with Markdown as its standard document format. The `read_as_markdown()` function converts various file types (HTML, PDF, DOCX, etc.) to Markdown:
+The `ingest()` method handles reading, chunking, embedding, and storing documents in one step:
 
 ```{python}
-#| eval: false
+store.ingest(links)
+print(f"Ingested {store.size()} chunks")
+```
+
+That's all you need for the preparation phase. Under the hood, `ingest()` converts each item to Markdown, splits it into overlapping chunks, computes embeddings, and writes everything to the store—all in parallel.
+
+## What Happens During Ingestion
+
+Each item passed to `ingest()` goes through a **prepare** step before being embedded and stored. The default `prepare` function does two things:
+
+**1. Convert to Markdown** — `read_as_markdown()` converts the item (a URL or file path) into a Markdown document. It handles HTML pages, PDFs, DOCX files, and more using [MarkItDown](https://github.com/microsoft/markitdown). For HTML, it extracts the `<main>` element and removes `<nav>` elements by default.
+
+```{python}
 from raghilda.read import read_as_markdown
 
 doc = read_as_markdown("https://quarto.org/docs/guide/")
 print(doc.content[:500])
 ```
 
-This conversion is handled automatically during ingestion, but understanding it helps when you need to customize the pipeline.
-
-## Chunking Documents
-
-Documents are split into smaller chunks for more precise retrieval. The `MarkdownChunker` splits text at semantic boundaries (headings, paragraphs, sentences) while maintaining context:
+**2. Chunk the document** — `MarkdownChunker` splits the Markdown into overlapping chunks at semantic boundaries (headings, paragraphs, sentences). The defaults are a chunk size of 1600 characters (~400 tokens) with 50% overlap between chunks. Each chunk retains the heading hierarchy it falls under as context.
 
 ```{python}
-#| eval: false
 from raghilda.chunker import MarkdownChunker
 
 chunker = MarkdownChunker(
     chunk_size=1600,      # Target size in characters (~400 tokens)
     target_overlap=0.5,   # 50% overlap between chunks
 )
+chunked_doc = chunker.chunk_document(doc)
+print(f"Created {len(chunked_doc.chunks)} chunks")
+print(f"\nFirst chunk context: {chunked_doc.chunks[0].context}")
+print(f"First chunk text:\n{chunked_doc.chunks[0].text[:200]}...")
 ```
 
-Overlap between chunks helps ensure relevant content isn't split across chunk boundaries. The chunker preserves heading context so each chunk knows where it came from in the document structure.
+After `prepare` runs, `ingest()` embeds the chunks using the store's embedding provider and writes them to the database.
 
-## Ingesting Documents
+## Customizing Ingestion
 
-The `ingest()` method handles reading, chunking, embedding, and storing in one step:
-
-```{python}
-#| eval: false
-store.ingest(links, progress=True)
-print(f"Ingested {store.size()} chunks")
-```
-
-For custom processing, provide a `prepare` function:
+You can replace the default `prepare` function to control how documents are read and chunked. A custom `prepare` takes an item from your input list and returns a chunked `Document`:
 
 ```{python}
 #| eval: false
 from raghilda.read import read_as_markdown
 from raghilda.chunker import MarkdownChunker
 
+chunker = MarkdownChunker(chunk_size=800, target_overlap=0.3)
+
 def prepare(uri):
     doc = read_as_markdown(uri)
-    chunker = MarkdownChunker(chunk_size=800)
     return chunker.chunk_document(doc)
 
 store.ingest(links, prepare=prepare, num_workers=4)
 ```
+
+Common reasons to customize `prepare`:
+
+- **Adjust chunk size or overlap** — Smaller chunks for more precise retrieval, larger for more context.
+- **Set hard heading boundaries** — Use `segment_by_heading_levels=[1, 2]` to prevent chunks from crossing major sections.
+- **Control HTML extraction** — Pass `html_extract_selectors` or `html_zap_selectors` to `read_as_markdown()`.
+- **Use a different chunker** — Any chunker that produces a `Document` with `.chunks` will work. See the [Chunking](02-chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
 
 ## Building Indexes
 
 After ingestion, build indexes to speed up retrieval:
 
 ```{python}
-#| eval: false
 store.build_index()
 ```
 
@@ -141,12 +149,9 @@ This creates both a vector similarity index (HNSW) for semantic search and a BM2
 Now you can search your knowledge base:
 
 ```{python}
-#| eval: false
 chunks = store.retrieve("How do I create a Quarto presentation?", top_k=5)
 
 for chunk in chunks:
-    print(f"Source: {chunk.origin}")
-    print(f"Context: {chunk.context}")
     print(f"Score: {chunk.metrics[0].value:.4f}")
     print(chunk.text[:200])
     print("---")
@@ -155,7 +160,6 @@ for chunk in chunks:
 The `retrieve()` method combines vector similarity search (semantic matching) with BM25 (keyword matching) for hybrid retrieval. By default, overlapping chunks from the same document are merged (`deoverlap=True`) to provide more coherent results; metrics are concatenated and attribute values are aggregated in start-order lists on merged chunks. The merged chunk keeps `context` from the first overlapping chunk.
 
 You can also use the individual search methods:
-
 
 ```{python}
 #| eval: false
@@ -243,12 +247,13 @@ store.build_index()
 # 5. Retrieve
 chunks = store.retrieve("How do I create a presentation?", top_k=3)
 for chunk in chunks:
-    print(f"\n## {chunk.origin}")
+    print(f"\n## {chunk.context}")
     print(chunk.text[:300])
 ```
 
 ## Next Steps
 
+- Learn about chunk sizing, overlap, and alternative chunkers in the [Chunking](02-chunking.qmd) guide
 - Learn schema-based retrieval scoping with [Attribute Filters](03-attribute-filters.qmd)
 - Explore [ChromaDB Store](50-chromadb-store.qmd) for an alternative storage backend
 - See the [API Reference](/reference/index.qmd) for detailed documentation
