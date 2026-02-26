@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional, Union
-import uuid
 
 from .types import DocumentLike, IntoDocument
 from .chunk import Chunk
@@ -8,24 +7,22 @@ from .chunk import Chunk
 __all__ = ["Document", "MarkdownDocument"]
 
 
-def _generate_doc_id() -> str:
-    return f"doc_{uuid.uuid4().hex}"
-
-
 @dataclass
 class Document:
     """A document containing text content to be chunked and indexed.
 
     Documents are the primary input for RAG stores. Each document has
-    text content and a unique identifier. After chunking, the document
+    text content and an optional origin identifier. After chunking, the document
     holds references to its chunks.
 
     Attributes
     ----------
     content
         The full text content of the document.
-    id
-        Unique identifier for the document. Auto-generated if not provided.
+    origin
+        Unique origin identifier for the document. This can be None or an empty
+        string while preparing a document object, but stores require a populated
+        origin for upsert operations.
     chunks
         List of chunks after the document has been processed by a chunker.
         None if the document hasn't been chunked yet.
@@ -36,7 +33,7 @@ class Document:
     """
 
     content: str
-    id: str = field(default_factory=_generate_doc_id)
+    origin: Optional[str] = None
     chunks: Optional[list[Chunk]] = None
     attributes: Optional[dict[str, Any]] = None
 
@@ -70,11 +67,10 @@ class Document:
             chunks = None
             if doc.chunks is not None:
                 chunks = [Chunk.from_any(c) for c in doc.chunks]
-            doc_id = getattr(doc, "id", None) or _generate_doc_id()
             raw_attributes = getattr(doc, "attributes", None)
             return cls(
                 content=doc.content,
-                id=doc_id,
+                origin=getattr(doc, "origin", None),
                 chunks=chunks,
                 attributes=dict(raw_attributes or {}),
             )
@@ -85,15 +81,9 @@ class Document:
 class MarkdownDocument(Document):
     """A Markdown document with source tracking.
 
-    MarkdownDocument extends Document with an `origin` field that tracks
-    where the document came from (e.g., a URL or file path). This is useful
+    MarkdownDocument extends Document with markdown-specific semantics for
+    content that comes from a source origin (e.g., URL or file path). This is useful
     for citation and provenance tracking in RAG applications.
-
-    Attributes
-    ----------
-    origin
-        The source location of the document (URL, file path, etc.).
-        Used for tracking provenance and generating citations.
 
     Examples
     --------
@@ -109,8 +99,6 @@ class MarkdownDocument(Document):
     print(f"Content length: {len(doc.content)} characters")
     ```
     """
-
-    origin: Optional[str] = None
 
     @classmethod
     def from_any(
@@ -134,8 +122,7 @@ class MarkdownDocument(Document):
         base = Document.from_any(doc)
         return cls(
             content=base.content,
-            id=base.id,
+            origin=base.origin if base.origin is not None else origin,
             chunks=base.chunks,
             attributes=base.attributes,
-            origin=getattr(doc, "origin", origin),
         )

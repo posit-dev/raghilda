@@ -118,7 +118,7 @@ class TestChonkieChunkerWithStore:
         )
 
         # Insert into store
-        store.insert(doc)
+        store.upsert(doc)
 
         assert store.size() == 1
 

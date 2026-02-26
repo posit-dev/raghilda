@@ -1,6 +1,11 @@
 import os
-import socket
-from typing import Annotated
+import hashlib
+import json
+from types import SimpleNamespace
+from typing import Annotated, Any, cast
+import duckdb
+import httpx
+import openai
 import pytest
 from raghilda.store import DuckDBStore, OpenAIStore
 from raghilda.scrape import find_links
@@ -12,21 +17,50 @@ from raghilda._duckdb_store import (
 )  # internal implementation
 from raghilda._openai_store import _normalize_openai_attributes
 from raghilda.embedding import EmbeddingOpenAI
+from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
 
-def _can_reach_openai(timeout: float = 2.0) -> bool:
-    try:
-        with socket.create_connection(("api.openai.com", 443), timeout=timeout):
-            return True
-    except OSError:
+class CountingEmbedding(EmbeddingProvider):
+    def __init__(self):
+        self.calls = 0
+
+    def embed(
+        self,
+        x,
+        input_type: EmbedInputType = EmbedInputType.DOCUMENT,
+    ):
+        self.calls += 1
+        return [[float(len(text))] for text in x]
+
+    def get_config(self):
+        return {"type": "CountingEmbedding"}
+
+    @classmethod
+    def from_config(cls, config):
+        return cls()
+
+
+class _SinglePage:
+    def __init__(self, data):
+        self.data = data
+
+    def has_next_page(self):
         return False
 
+    def get_next_page(self):
+        raise AssertionError("No next page expected")
 
-def _require_openai_integration() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        pytest.skip("OPENAI_API_KEY not set in environment variables")
-    if not _can_reach_openai():
-        pytest.skip("OpenAI API is not reachable from this environment")
+
+def _skip_if_unset(env_var: str) -> None:
+    if not os.getenv(env_var):
+        pytest.skip(f"{env_var} not set in environment variables")
+
+
+def test_skip_if_unset_skips_without_api_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(pytest.skip.Exception):
+        _skip_if_unset("OPENAI_API_KEY")
 
 
 class TestDuckDBStore:
@@ -35,7 +69,7 @@ class TestDuckDBStore:
         try:
             value = request.param
             if isinstance(value, EmbeddingOpenAI):
-                _require_openai_integration()
+                _skip_if_unset("OPENAI_API_KEY")
             return value
         except AttributeError:
             return None
@@ -61,7 +95,7 @@ class TestDuckDBStore:
             _get_markdown_chunk(doc, start=10, end=14),
             _get_markdown_chunk(doc, start=15, end=23),
         ]
-        store.insert(doc)
+        store.upsert(doc)
         return store
 
     def test_create_store(self, store):
@@ -74,6 +108,364 @@ class TestDuckDBStore:
     def test_insert(self, store_with_docs):
         assert store_with_docs.size() == 1
 
+    def test_insert_same_origin_skips_unchanged_by_default(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_skip_unchanged",
+        )
+        calls_after_create = embed.calls
+        doc = MarkdownDocument(origin="doc-1", content="hello world")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                token_count=len(doc.content),
+            )
+        ]
+
+        first_write = store.upsert(doc)
+        assert first_write.document.origin == "doc-1"
+        assert first_write.document.content == "hello world"
+        assert embed.calls == calls_after_create + 1
+
+        second_write = store.upsert(doc)
+        assert second_write.action == "skipped"
+        assert second_write.document.origin == "doc-1"
+        assert second_write.document.content == "hello world"
+        assert embed.calls == calls_after_create + 1
+
+        rows = store.con.execute(
+            "SELECT COUNT(*) FROM documents WHERE origin = 'doc-1'"
+        ).fetchone()
+        assert rows is not None
+        assert rows[0] == 1
+
+    def test_insert_same_origin_rewrites_when_skip_disabled(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_force_rewrite",
+        )
+        calls_after_create = embed.calls
+        doc = MarkdownDocument(origin="doc-1", content="hello world")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                token_count=len(doc.content),
+            )
+        ]
+
+        store.upsert(doc)
+        assert embed.calls == calls_after_create + 1
+
+        store.upsert(doc, skip_if_unchanged=False)
+        assert embed.calls == calls_after_create + 2
+
+    def test_insert_same_content_but_different_chunking_updates(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_same_content_new_chunks",
+        )
+        calls_after_create = embed.calls
+
+        content = "hello world"
+        doc1 = MarkdownDocument(origin="doc-1", content=content)
+        doc1.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                token_count=len(content),
+            )
+        ]
+        first = store.upsert(doc1)
+        assert first.action == "inserted"
+        assert embed.calls == calls_after_create + 1
+
+        doc2 = MarkdownDocument(origin="doc-1", content=content)
+        doc2.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[0:5],
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                token_count=len(content[6:]),
+            ),
+        ]
+        second = store.upsert(doc2)
+        assert second.action == "replaced"
+        assert embed.calls == calls_after_create + 2
+
+        chunk_count = store.con.execute(
+            "SELECT COUNT(*) FROM embeddings e JOIN documents d USING (doc_id) WHERE d.origin = 'doc-1'"
+        ).fetchone()
+        assert chunk_count is not None
+        assert chunk_count[0] == 2
+
+    def test_insert_same_layout_but_different_chunk_text_updates(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_same_layout_new_text",
+        )
+        calls_after_create = embed.calls
+
+        content = "hello world"
+        doc1 = MarkdownDocument(origin="doc-1", content=content)
+        doc1.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                token_count=len(content),
+            )
+        ]
+        first = store.upsert(doc1)
+        assert first.action == "inserted"
+        assert embed.calls == calls_after_create + 1
+
+        doc2 = MarkdownDocument(origin="doc-1", content=content)
+        doc2.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content.upper(),
+                token_count=len(content),
+            )
+        ]
+        second = store.upsert(doc2)
+        assert second.action == "replaced"
+        assert embed.calls == calls_after_create + 2
+
+    def test_insert_same_origin_with_changed_chunk_text_does_not_skip(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_same_origin_chunk_text_change",
+        )
+        calls_after_create = embed.calls
+
+        content = "Hello World"
+        first = MarkdownDocument(origin="doc-1", content=content)
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content.lower(),
+                token_count=len(content),
+            )
+        ]
+
+        inserted = store.upsert(first)
+        assert inserted.action == "inserted"
+        assert embed.calls == calls_after_create + 1
+
+        second = MarkdownDocument(origin="doc-1", content=content)
+        second.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                token_count=len(content),
+            )
+        ]
+
+        replaced = store.upsert(second)
+        assert replaced.action == "replaced"
+        assert embed.calls == calls_after_create + 2
+
+    def test_insert_same_multi_chunk_layout_skips_when_unchanged(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_same_multi_chunk_skip",
+            attributes={"tenant": str},
+        )
+        calls_after_create = embed.calls
+        content = "hello world"
+        doc = MarkdownDocument(
+            origin="doc-1",
+            content=content,
+            attributes={"tenant": "docs"},
+        )
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                token_count=len(content[6:]),
+            ),
+        ]
+
+        first = store.upsert(doc)
+        assert first.action == "inserted"
+        assert embed.calls == calls_after_create + 1
+
+        second = store.upsert(doc)
+        assert second.action == "skipped"
+        assert second.document.attributes == {"tenant": "docs"}
+        assert embed.calls == calls_after_create + 1
+
+    def test_insert_requires_origin(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            name="insert_missing_origin",
+        )
+        doc = MarkdownDocument(origin=None, content="hello world")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                token_count=len(doc.content),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError, match="document.origin must be a non-empty string"
+        ):
+            store.upsert(doc)
+
+    def test_insert_returns_replaced_document_when_updated(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            name="insert_replace_snapshot",
+            attributes={"tenant": str},
+        )
+        first = MarkdownDocument(
+            origin="doc-1",
+            content="hello world",
+            attributes={"tenant": "docs"},
+        )
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(first.content),
+                text=first.content,
+                token_count=len(first.content),
+            )
+        ]
+
+        inserted = store.upsert(first)
+        assert inserted.action == "inserted"
+        assert inserted.document.origin == "doc-1"
+        assert inserted.document.content == "hello world"
+        assert inserted.replaced_document is None
+
+        second = MarkdownDocument(
+            origin="doc-1",
+            content="goodbye world",
+            attributes={"tenant": "eng"},
+        )
+        second.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(second.content),
+                text=second.content,
+                token_count=len(second.content),
+            )
+        ]
+
+        updated = store.upsert(second)
+        assert updated.action == "replaced"
+        assert updated.document.origin == "doc-1"
+        assert updated.document.content == "goodbye world"
+        assert updated.document.attributes == {"tenant": "eng"}
+        assert updated.replaced_document is not None
+        assert updated.replaced_document.origin == "doc-1"
+        assert updated.replaced_document.content == "hello world"
+        assert updated.replaced_document.attributes == {"tenant": "docs"}
+        assert updated.replaced_document.chunks is not None
+        assert len(updated.replaced_document.chunks) == 1
+
+        restored = store.upsert(updated.replaced_document, skip_if_unchanged=False)
+        assert restored.action == "replaced"
+        current = store.con.execute(
+            "SELECT text FROM documents WHERE origin = 'doc-1'"
+        ).fetchone()
+        assert current is not None
+        assert current[0] == "hello world"
+
+    def test_insert_replaced_document_preserves_multi_chunk_text(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            name="insert_replace_multi_chunk_snapshot",
+        )
+        first = MarkdownDocument(origin="doc-1", content="hello world")
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="hello",
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=11,
+                text="world",
+                token_count=5,
+            ),
+        ]
+        store.upsert(first)
+
+        second = MarkdownDocument(origin="doc-1", content="hello mars")
+        second.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="hello",
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=10,
+                text="mars",
+                token_count=4,
+            ),
+        ]
+        updated = store.upsert(second)
+        assert updated.action == "replaced"
+        assert updated.replaced_document is not None
+        assert updated.replaced_document.chunks is not None
+        assert [chunk.text for chunk in updated.replaced_document.chunks] == [
+            "hello",
+            "world",
+        ]
+
     @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
     def test_retrieve_vss(self, store_with_docs):
         results = store_with_docs.retrieve_vss("test", top_k=3)
@@ -85,6 +477,29 @@ class TestDuckDBStore:
         results = store_with_docs.retrieve_vss("test", top_k=5)
         assert len(results) == 5
 
+    def test_retrieve_vss_returns_chunk_text_not_document_slice(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="vss-text-source",
+        )
+        doc = MarkdownDocument(origin="vss-text-source", content="alpha beta gamma")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="zeta",
+                token_count=4,
+            )
+        ]
+        store.upsert(doc)
+
+        results = store.retrieve_vss([float(len("zeta"))], top_k=1)
+        assert len(results) == 1
+        assert results[0].text == "zeta"
+
     @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
     def test_retrieve_bm25(self, store_with_docs):
         store_with_docs.build_index("bm25")
@@ -93,6 +508,23 @@ class TestDuckDBStore:
         for chunk in results:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
+
+    def test_retrieve_bm25_returns_chunk_text_not_document_slice(self, store):
+        doc = MarkdownDocument(origin="bm25-text-source", content="alpha beta gamma")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="zeta",
+                token_count=4,
+            )
+        ]
+        store.upsert(doc)
+        store.build_index("bm25")
+
+        results = store.retrieve_bm25("zeta", top_k=1)
+        assert len(results) == 1
+        assert results[0].text == "zeta"
 
     @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
     def test_retrieve(self, store_with_docs):
@@ -114,7 +546,7 @@ class TestDuckDBStore:
             _get_markdown_chunk(doc, start=6, end=16),  # "world test"
             _get_markdown_chunk(doc, start=12, end=25),  # "test document"
         ]
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         # Without deoverlap, we may get multiple overlapping chunks
@@ -167,7 +599,7 @@ class TestDuckDBStore:
                 attributes={"topic": "second"},
             ),
         ]
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         results = store.retrieve("beta", top_k=5, deoverlap=True)
@@ -175,6 +607,54 @@ class TestDuckDBStore:
         assert len(results) == 1
         assert results[0].context == "h1"
         assert results[0].attributes == {"topic": ["first", "second"]}
+
+    def test_retrieve_supports_excluding_seen_chunk_ids(self, store):
+        content = "alpha one alpha two alpha three"
+        doc = MarkdownDocument(origin="chunk-id-filter", content=content)
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=9,
+                text=content[0:9],
+                token_count=9,
+            ),
+            MarkdownChunk(
+                start_index=10,
+                end_index=19,
+                text=content[10:19],
+                token_count=9,
+            ),
+            MarkdownChunk(
+                start_index=20,
+                end_index=31,
+                text=content[20:31],
+                token_count=11,
+            ),
+        ]
+        store.upsert(doc)
+        store.build_index("bm25")
+
+        first_results = store.retrieve("alpha", top_k=2, deoverlap=False)
+        seen_chunk_ids = [
+            chunk_id for chunk in first_results for chunk_id in chunk.chunk_ids
+        ]
+        assert len(seen_chunk_ids) == 2
+
+        remaining_results = store.retrieve(
+            "alpha",
+            top_k=3,
+            deoverlap=False,
+            attributes_filter={
+                "type": "nin",
+                "key": "chunk_id",
+                "value": seen_chunk_ids,
+            },
+        )
+        remaining_chunk_ids = {
+            chunk_id for chunk in remaining_results for chunk_id in chunk.chunk_ids
+        }
+        assert remaining_chunk_ids
+        assert remaining_chunk_ids.isdisjoint(set(seen_chunk_ids))
 
     def test_create_store_with_attributes_schema(self):
         store = DuckDBStore.create(
@@ -267,7 +747,7 @@ class TestDuckDBStore:
                 token_count=len(doc.content),
             )
         ]
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         results = store.retrieve(
@@ -294,6 +774,42 @@ class TestDuckDBStore:
                 deoverlap=False,
                 attributes_filter="embedding25 = 1",
             )
+
+    def test_insert_same_vector_attributes_skips_when_unchanged(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            attributes={
+                "tenant": str,
+                "embedding3": Annotated[list[float], 3],
+            },
+        )
+        calls_after_create = embed.calls
+
+        vector = [1.0, 2.0, 3.0]
+        doc = MarkdownDocument(
+            origin="vector-unchanged",
+            content="hello vector unchanged",
+            attributes={"tenant": "docs", "embedding3": vector},
+        )
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                token_count=len(doc.content),
+            )
+        ]
+
+        first = store.upsert(doc)
+        assert first.action == "inserted"
+        assert embed.calls == calls_after_create + 1
+
+        second = store.upsert(doc)
+        assert second.action == "skipped"
+        assert embed.calls == calls_after_create + 1
 
     def test_insert_and_retrieve_with_attributes_filter(self):
         store = DuckDBStore.create(
@@ -334,7 +850,7 @@ class TestDuckDBStore:
             ),
         ]
 
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         private_results = store.retrieve(
@@ -422,7 +938,7 @@ class TestDuckDBStore:
             )
         ]
 
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         results = store.retrieve(
@@ -454,7 +970,7 @@ class TestDuckDBStore:
             )
         ]
 
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         with pytest.raises(ValueError, match="Unknown attribute column 'text'"):
@@ -499,7 +1015,7 @@ class TestDuckDBStore:
             )
         ]
 
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         results = store.retrieve(
@@ -562,7 +1078,7 @@ class TestDuckDBStore:
             )
         ]
 
-        store.insert(doc)
+        store.upsert(doc)
         store.build_index("bm25")
 
         results = store.retrieve("alpha", top_k=5, deoverlap=False)
@@ -573,6 +1089,222 @@ class TestDuckDBStore:
             "is_public": False,
             "topic": None,
         }
+
+    def test_insert_result_document_preserves_defaulted_attributes(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            attributes={
+                "tenant": str,
+                "priority": (int, 0),
+            },
+        )
+
+        doc = MarkdownDocument(
+            origin="defaults-in-result",
+            content="alpha",
+            attributes={"tenant": "docs"},
+        )
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="alpha",
+                token_count=5,
+            )
+        ]
+
+        inserted = store.upsert(doc)
+        assert inserted.action == "inserted"
+        assert inserted.document.attributes == {
+            "tenant": "docs",
+            "priority": 0,
+        }
+
+        updated = MarkdownDocument(
+            origin="defaults-in-result",
+            content="alpha beta",
+            attributes={"tenant": "docs"},
+        )
+        updated.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=10,
+                text="alpha beta",
+                token_count=10,
+            )
+        ]
+
+        replaced = store.upsert(updated, skip_if_unchanged=False)
+        assert replaced.action == "replaced"
+        assert replaced.document.attributes == {
+            "tenant": "docs",
+            "priority": 0,
+        }
+
+    def test_insert_snapshot_reads_are_serialized_under_db_lock(self, monkeypatch):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            attributes={"tenant": str, "priority": (int, 0)},
+        )
+
+        observed_lock_states: list[bool] = []
+        original_snapshot = store._load_document_snapshot
+
+        def wrapped_snapshot(*, doc_id: str, origin: str, text: str):
+            observed_lock_states.append(store._db_lock.locked())
+            return original_snapshot(doc_id=doc_id, origin=origin, text=text)
+
+        monkeypatch.setattr(store, "_load_document_snapshot", wrapped_snapshot)
+
+        first = MarkdownDocument(
+            origin="lock-snapshot-test",
+            content="alpha",
+            attributes={"tenant": "docs"},
+        )
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="alpha",
+                token_count=5,
+            )
+        ]
+        store.upsert(first, skip_if_unchanged=False)
+
+        second = MarkdownDocument(
+            origin="lock-snapshot-test",
+            content="alpha beta",
+            attributes={"tenant": "docs"},
+        )
+        second.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=10,
+                text="alpha beta",
+                token_count=10,
+            )
+        ]
+        store.upsert(second, skip_if_unchanged=False)
+
+        assert observed_lock_states
+        assert all(observed_lock_states)
+
+    def test_insert_snapshot_preserves_nullable_none_attributes(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            attributes={
+                "tenant": str,
+                "topic": (str | None, "general"),
+            },
+        )
+
+        first = MarkdownDocument(
+            origin="nullable-snapshot-test",
+            content="alpha",
+            attributes={"tenant": "docs", "topic": None},
+        )
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="alpha",
+                token_count=5,
+            )
+        ]
+
+        inserted = store.upsert(first)
+        assert inserted.action == "inserted"
+        assert inserted.document.attributes == {
+            "tenant": "docs",
+            "topic": None,
+        }
+
+        second = MarkdownDocument(
+            origin="nullable-snapshot-test",
+            content="alpha beta",
+            attributes={"tenant": "docs", "topic": "updated"},
+        )
+        second.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=10,
+                text="alpha beta",
+                token_count=10,
+            )
+        ]
+
+        replaced = store.upsert(second, skip_if_unchanged=False)
+        assert replaced.action == "replaced"
+        assert replaced.replaced_document is not None
+        assert replaced.replaced_document.attributes == {
+            "tenant": "docs",
+            "topic": None,
+        }
+
+        restored = store.upsert(replaced.replaced_document, skip_if_unchanged=False)
+        assert restored.action == "replaced"
+        assert restored.document.attributes == {
+            "tenant": "docs",
+            "topic": None,
+        }
+
+    def test_insert_replaced_snapshot_uses_existing_doc_id_for_legacy_rows(self):
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=None,
+            overwrite=True,
+            attributes={"tenant": str},
+        )
+
+        legacy_doc_id = "legacy-doc-id"
+        store.con.execute(
+            "INSERT INTO documents (doc_id, origin, text) VALUES (?, ?, ?)",
+            [legacy_doc_id, "legacy-origin", "alpha"],
+        )
+        store.con.execute(
+            """
+            INSERT INTO embeddings (
+                doc_id,
+                start_index,
+                end_index,
+                chunk_text,
+                context,
+                tenant
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [legacy_doc_id, 0, 5, "alpha", None, "old"],
+        )
+
+        updated = MarkdownDocument(
+            origin="legacy-origin",
+            content="alpha beta",
+            attributes={"tenant": "new"},
+        )
+        updated.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=10,
+                text="alpha beta",
+                token_count=10,
+            )
+        ]
+
+        replaced = store.upsert(updated, skip_if_unchanged=False)
+        assert replaced.action == "replaced"
+        assert replaced.document.chunks is not None
+        assert [chunk.text for chunk in replaced.document.chunks] == ["alpha beta"]
+        assert replaced.document.attributes == {"tenant": "new"}
+        assert replaced.replaced_document is not None
+        assert [chunk.text for chunk in replaced.replaced_document.chunks or []] == [
+            "alpha"
+        ]
+        assert replaced.replaced_document.attributes == {"tenant": "old"}
 
     def test_insert_missing_required_attribute_fails(self):
         store = DuckDBStore.create(
@@ -596,7 +1328,7 @@ class TestDuckDBStore:
         ]
 
         with pytest.raises(ValueError, match="Missing required attribute 'tenant'"):
-            store.insert(doc)
+            store.upsert(doc)
 
     def test_insert_attributes_without_declared_schema_fails(self):
         store = DuckDBStore.create(
@@ -620,7 +1352,7 @@ class TestDuckDBStore:
         ]
 
         with pytest.raises(ValueError, match="Unknown attribute key 'tenant'"):
-            store.insert(doc)
+            store.upsert(doc)
 
     def test_insert_unknown_chunk_attributes_key_fails(self):
         store = DuckDBStore.create(
@@ -646,7 +1378,7 @@ class TestDuckDBStore:
         ]
 
         with pytest.raises(ValueError, match="Unknown attribute key 'unknown'"):
-            store.insert(doc)
+            store.upsert(doc)
 
     def test_insert_rejects_float_for_int_attribute(self):
         store = DuckDBStore.create(
@@ -674,7 +1406,7 @@ class TestDuckDBStore:
             ValueError,
             match="Invalid value for attributes 'priority': expected int, got float",
         ):
-            store.insert(doc)
+            store.upsert(doc)
 
     def test_insert_rejects_int_for_float_attribute(self):
         store = DuckDBStore.create(
@@ -702,7 +1434,7 @@ class TestDuckDBStore:
             ValueError,
             match="Invalid value for attributes 'score': expected float, got int",
         ):
-            store.insert(doc)
+            store.upsert(doc)
 
     def test_connect_restores_attributes_schema(self, tmp_path):
         db_path = tmp_path / "attributes-connect.db"
@@ -724,7 +1456,7 @@ class TestDuckDBStore:
 class TestOpenAIStore:
     @pytest.fixture(autouse=True)
     def setup(self):
-        _require_openai_integration()
+        _skip_if_unset("OPENAI_API_KEY")
 
     @pytest.fixture
     def store(self):
@@ -732,15 +1464,50 @@ class TestOpenAIStore:
         try:
             yield store
         finally:
-            store.client.vector_stores.delete(vector_store_id=store.store_id)
+            try:
+                store.client.vector_stores.delete(vector_store_id=store.store_id)
+            except openai.AuthenticationError:
+                pass
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def store_with_attributes(self):
+        _skip_if_unset("OPENAI_API_KEY")
         store = OpenAIStore.create(attributes={"tenant": str, "priority": int})
+        store.upsert(
+            MarkdownDocument(
+                origin="doc-attrs",
+                content="alpha bronze owl",
+                attributes={"tenant": "docs", "priority": 2},
+            ),
+        )
+        store.upsert(
+            MarkdownDocument(
+                origin="docs-priority-1",
+                content="alpha beta",
+                attributes={"tenant": "docs", "priority": 1},
+            ),
+        )
+        store.upsert(
+            MarkdownDocument(
+                origin="ops-priority-5",
+                content="alpha gamma",
+                attributes={"tenant": "ops", "priority": 5},
+            ),
+        )
+        store.upsert(
+            MarkdownDocument(
+                origin="docs-priority-3",
+                content="alpha alpha delta",
+                attributes={"tenant": "docs", "priority": 3},
+            ),
+        )
         try:
             yield store
         finally:
-            store.client.vector_stores.delete(vector_store_id=store.store_id)
+            try:
+                store.client.vector_stores.delete(vector_store_id=store.store_id)
+            except openai.AuthenticationError:
+                pass
 
     @pytest.fixture
     def store_with_class_attributes(self):
@@ -748,18 +1515,22 @@ class TestOpenAIStore:
             tenant: str
             priority: int
 
+        _skip_if_unset("OPENAI_API_KEY")
         store = OpenAIStore.create(attributes=AttributesSpec)
         try:
             yield store
         finally:
-            store.client.vector_stores.delete(vector_store_id=store.store_id)
+            try:
+                store.client.vector_stores.delete(vector_store_id=store.store_id)
+            except openai.AuthenticationError:
+                pass
 
     @pytest.fixture
     def store_with_docs(self, store):
         doc = MarkdownDocument(
             origin="test", content="hello world this is a document world world world"
         )
-        store.insert(doc)
+        store.upsert(doc)
         return store
 
     def test_create_store(self, store):
@@ -770,12 +1541,6 @@ class TestOpenAIStore:
         assert store_with_docs.size() == 1
 
     def test_retrieve(self, store_with_docs):
-        for _ in range(3):
-            store_with_docs.insert(
-                MarkdownDocument(
-                    origin="test", content="hello world world world world world"
-                )
-            )
         results = store_with_docs.retrieve("world", top_k=3)
         assert len(results) > 0
         for chunk in results:
@@ -791,13 +1556,6 @@ class TestOpenAIStore:
         assert connected.attributes_schema == {"tenant": str, "priority": int}
 
     def test_insert_uses_document_attributes(self, store_with_attributes):
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="doc-attrs",
-                content="alpha bronze owl",
-                attributes={"tenant": "docs", "priority": 2},
-            )
-        )
         results = store_with_attributes.retrieve(
             "bronze owl",
             top_k=5,
@@ -808,31 +1566,9 @@ class TestOpenAIStore:
         assert all(float(chunk.attributes["priority"]) == 2.0 for chunk in results)
 
     def test_retrieve_supports_attributes_filter(self, store_with_attributes):
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="docs-priority-2",
-                content="alpha alpha alpha",
-                attributes={"tenant": "docs", "priority": 2},
-            )
-        )
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="docs-priority-1",
-                content="alpha beta",
-                attributes={"tenant": "docs", "priority": 1},
-            )
-        )
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="ops-priority-5",
-                content="alpha gamma",
-                attributes={"tenant": "ops", "priority": 5},
-            )
-        )
-
         results = store_with_attributes.retrieve(
             "alpha",
-            top_k=10,
+            top_k=5,
             attributes_filter="tenant = 'docs' AND priority >= 2",
         )
 
@@ -841,23 +1577,9 @@ class TestOpenAIStore:
         assert all(float(chunk.attributes["priority"]) >= 2.0 for chunk in results)
 
     def test_retrieve_supports_attributes_filter_ast(self, store_with_attributes):
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="docs-priority-3",
-                content="alpha alpha delta",
-                attributes={"tenant": "docs", "priority": 3},
-            )
-        )
-        store_with_attributes.insert(
-            MarkdownDocument(
-                origin="ops-priority-3",
-                content="alpha alpha epsilon",
-                attributes={"tenant": "ops", "priority": 3},
-            )
-        )
         results = store_with_attributes.retrieve(
             "alpha",
-            top_k=10,
+            top_k=5,
             attributes_filter={
                 "type": "and",
                 "filters": [
@@ -872,7 +1594,7 @@ class TestOpenAIStore:
             float(chunk.attributes["priority"]) in (2.0, 3.0) for chunk in results
         )
 
-    def test_rejects_chunk_attributes(self, store_with_attributes):
+    def test_rejects_chunked_documents(self, store_with_attributes):
         doc = MarkdownDocument(
             origin="chunk-attrs",
             content="hello",
@@ -889,14 +1611,31 @@ class TestOpenAIStore:
         ]
 
         with pytest.raises(
-            ValueError, match="OpenAIStore does not support per-chunk attributes"
+            ValueError, match="OpenAIStore does not support chunked documents"
         ):
-            store_with_attributes.insert(doc)
+            store_with_attributes.upsert(doc)
 
 
 def test_openai_store_create_rejects_vector_attributes_schema():
     with pytest.raises(ValueError, match="Vector attribute types are not supported"):
         OpenAIStore.create(attributes={"embedding25": Annotated[list[float], 25]})
+
+
+def test_openai_store_create_accepts_mapping_attributes_with_mocked_client(monkeypatch):
+    class FakeVectorStores:
+        def create(self, **kwargs):
+            return SimpleNamespace(id="vs_test")
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    store = OpenAIStore.create(attributes={"tenant": str, "priority": int})
+    assert store.attributes_schema == {"tenant": str, "priority": int}
+    assert set(store.attributes_spec.keys()) == {"tenant", "priority"}
 
 
 def test_openai_store_normalize_attributes_preserves_large_ints():
@@ -945,6 +1684,1149 @@ def test_openai_store_create_rejects_invalid_attribute_names():
         OpenAIStore.create(attributes={"tenant-id": str})
 
 
+def test_openai_store_create_rejects_more_than_14_user_attributes(monkeypatch):
+    class FakeVectorStores:
+        def create(self, **kwargs):
+            raise AssertionError("create should not be called for invalid schema")
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    with pytest.raises(ValueError, match="at most 14 user attributes"):
+        OpenAIStore.create(attributes={f"k{i}": str for i in range(15)})
+
+
+@pytest.mark.parametrize(
+    "attribute_name",
+    ["_raghilda_origin", "_raghilda_content_hash"],
+)
+def test_openai_store_rejects_internal_attribute_names(attribute_name):
+    with pytest.raises(ValueError, match=attribute_name):
+        OpenAIStore(
+            client=SimpleNamespace(),
+            store_id="vs_test",
+            attributes={attribute_name: str},
+        )
+
+
+def test_openai_store_insert_updates_when_attributes_change_for_same_content():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_old"
+            return SimpleNamespace(content=content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+    assert result.action == "replaced"
+    assert result.document.origin == "doc"
+    assert result.replaced_document is not None
+    assert result.replaced_document.origin == "doc"
+    assert result.replaced_document.content == content
+    assert fake_vector_store_files.deleted_ids == ["file_old"]
+    assert len(fake_vector_store_files.upload_calls) == 1
+    assert fake_vector_store_files.upload_calls[0]["attributes"]["tenant"] == "new"
+
+
+def test_openai_store_insert_unchanged_returns_stable_snapshot_id():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "new",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_old"
+            return SimpleNamespace(content=content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    first = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+    second = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert first.action == "skipped"
+    assert second.action == "skipped"
+    assert first.document.origin == "doc"
+    assert second.document.origin == "doc"
+    assert fake_vector_store_files.upload_calls == []
+    assert fake_vector_store_files.deleted_ids == []
+
+
+def test_openai_store_insert_skipped_fallback_preserves_existing_file_id():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "new",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            request = httpx.Request(
+                "GET", f"https://api.openai.com/v1/files/{file_id}/content"
+            )
+            raise openai.APIConnectionError(request=request)
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "skipped"
+    assert result.document.origin == "doc"
+    assert fake_vector_store_files.upload_calls == []
+    assert fake_vector_store_files.deleted_ids == []
+
+
+def test_openai_store_insert_handles_multiple_managed_files_for_origin():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_one",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": "hash-a",
+                            "tenant": "new",
+                        },
+                    ),
+                    SimpleNamespace(
+                        id="file_two",
+                        created_at=2,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "new",
+                        },
+                    ),
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_two"
+            return SimpleNamespace(content=content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "skipped"
+    assert result.document.origin == "doc"
+    assert fake_vector_store_files.upload_calls == []
+    assert fake_vector_store_files.deleted_ids == ["file_one"]
+
+
+def test_openai_store_insert_skipped_when_duplicate_cleanup_delete_fails():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.delete_calls = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_one",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": "hash-a",
+                            "tenant": "new",
+                        },
+                    ),
+                    SimpleNamespace(
+                        id="file_two",
+                        created_at=2,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "new",
+                        },
+                    ),
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.delete_calls.append(file_id)
+            raise RuntimeError("temporary delete failure")
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_two"
+            return SimpleNamespace(content=content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "skipped"
+    assert result.document.origin == "doc"
+    assert fake_vector_store_files.upload_calls == []
+    assert fake_vector_store_files.delete_calls == ["file_one"]
+
+
+def test_openai_store_insert_returns_uploaded_file_id_when_new_document():
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage([])
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_uploaded")
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=SimpleNamespace(content=lambda file_id: None),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content="hello world",
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "inserted"
+    assert result.document.origin == "doc"
+    assert result.replaced_document is None
+    assert len(fake_vector_store_files.upload_calls) == 1
+    assert fake_vector_store_files.deleted_ids == []
+
+
+def test_openai_store_insert_rejects_too_many_user_attributes():
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.upload_calls = []
+            self.page = _SinglePage([])
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            raise AssertionError("delete should not be called")
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=SimpleNamespace(content=lambda file_id: None),
+    )
+    attributes_schema = {f"k{i}": str for i in range(15)}
+    with pytest.raises(ValueError, match="at most 14 user attributes"):
+        OpenAIStore(
+            client=fake_client,
+            store_id="vs_test",
+            attributes=attributes_schema,
+        )
+    assert fake_vector_store_files.upload_calls == []
+
+
+def test_openai_store_insert_ignores_matching_filename_without_internal_origin():
+    content = "hello world"
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_existing",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=SimpleNamespace(content=lambda file_id: SimpleNamespace(content=b"")),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+    assert result.action == "inserted"
+    assert result.replaced_document is None
+    assert fake_vector_store_files.deleted_ids == []
+    assert len(fake_vector_store_files.upload_calls) == 1
+    assert fake_vector_store_files.upload_calls[0]["attributes"]["tenant"] == "new"
+
+
+def test_openai_store_insert_ignores_unmanaged_matching_filename():
+    content = "hello world"
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_unmanaged",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={"source": "external"},
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=SimpleNamespace(content=lambda file_id: SimpleNamespace(content=b"")),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "inserted"
+    assert result.replaced_document is None
+    assert fake_vector_store_files.deleted_ids == []
+    assert len(fake_vector_store_files.upload_calls) == 1
+
+
+def test_openai_store_insert_keeps_existing_file_when_upload_fails():
+    content = "hello world"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": content_hash,
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            raise RuntimeError("upload failed")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_old"
+            return SimpleNamespace(content=content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        store.upsert(
+            MarkdownDocument(
+                origin="doc",
+                content="new content",
+                attributes={"tenant": "new"},
+            )
+        )
+    assert fake_vector_store_files.deleted_ids == []
+
+
+def test_openai_store_insert_serializes_replacement_for_same_origin():
+    import threading
+
+    old_content = "hello world"
+    old_hash = hashlib.sha256(old_content.encode("utf-8")).hexdigest()
+    first_two_list_calls = threading.Barrier(2)
+    state_lock = threading.Lock()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.files = [
+                {
+                    "id": "file_old",
+                    "created_at": 1,
+                    "filename": "doc.md",
+                    "attributes": {
+                        "_raghilda_origin": "doc",
+                        "_raghilda_content_hash": old_hash,
+                        "tenant": "old",
+                    },
+                }
+            ]
+            self._next_id = 2
+            self._list_calls = 0
+
+        def list(self, **kwargs):
+            with state_lock:
+                self._list_calls += 1
+                snapshot = [
+                    SimpleNamespace(
+                        id=file["id"],
+                        created_at=file["created_at"],
+                        filename=file["filename"],
+                        attributes=dict(file["attributes"]),
+                    )
+                    for file in self.files
+                ]
+            if self._list_calls <= 2:
+                try:
+                    first_two_list_calls.wait(timeout=0.2)
+                except threading.BrokenBarrierError:
+                    pass
+            return _SinglePage(snapshot)
+
+        def delete(self, file_id, **kwargs):
+            with state_lock:
+                self.deleted_ids.append(file_id)
+                self.files = [file for file in self.files if file["id"] != file_id]
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            with state_lock:
+                file_id = f"file_new_{self._next_id}"
+                self._next_id += 1
+                self.files.append(
+                    {
+                        "id": file_id,
+                        "created_at": self._next_id,
+                        "filename": kwargs["file"][0],
+                        "attributes": dict(kwargs.get("attributes", {})),
+                    }
+                )
+                self.upload_calls.append(kwargs)
+            return SimpleNamespace(id=file_id)
+
+    class FakeFiles:
+        def content(self, file_id):
+            return SimpleNamespace(content=old_content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    errors: list[Exception] = []
+
+    def do_insert(content: str):
+        try:
+            store.upsert(
+                MarkdownDocument(
+                    origin="doc",
+                    content=content,
+                    attributes={"tenant": "new"},
+                ),
+                skip_if_unchanged=False,
+            )
+        except Exception as error:
+            errors.append(error)
+
+    t1 = threading.Thread(target=do_insert, args=("content thread one",))
+    t2 = threading.Thread(target=do_insert, args=("content thread two",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert errors == []
+    managed = [
+        file
+        for file in fake_vector_store_files.files
+        if file["attributes"].get("_raghilda_origin") == "doc"
+    ]
+    assert len(managed) == 1
+
+
+def test_openai_store_insert_raises_when_old_file_delete_fails():
+    old_content = "hello world"
+    new_content = "hello world updated"
+    old_hash = hashlib.sha256(old_content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": old_hash,
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            request = httpx.Request(
+                "DELETE",
+                f"https://api.openai.com/v1/vector_stores/{kwargs.get('vector_store_id')}/files/{file_id}",
+            )
+            raise openai.APIConnectionError(request=request)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_old"
+            return SimpleNamespace(content=old_content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    with pytest.raises(openai.APIConnectionError):
+        store.upsert(
+            MarkdownDocument(
+                origin="doc",
+                content=new_content,
+                attributes={"tenant": "new"},
+            )
+        )
+    assert fake_vector_store_files.deleted_ids == ["file_old", "file_new"]
+    assert len(fake_vector_store_files.upload_calls) == 1
+
+
+def test_openai_store_insert_rolls_back_uploaded_file_when_old_file_delete_fails():
+    old_content = "hello world"
+    new_content = "hello world updated"
+    old_hash = hashlib.sha256(old_content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self._next_id = 1
+            self._old_delete_failed_once = False
+            self.files = [
+                {
+                    "id": "file_old",
+                    "created_at": 1,
+                    "filename": "doc.md",
+                    "attributes": {
+                        "_raghilda_origin": "doc",
+                        "_raghilda_content_hash": old_hash,
+                        "tenant": "old",
+                    },
+                }
+            ]
+
+        def list(self, **kwargs):
+            snapshot = [
+                SimpleNamespace(
+                    id=file["id"],
+                    created_at=file["created_at"],
+                    filename=file["filename"],
+                    attributes=dict(file["attributes"]),
+                )
+                for file in self.files
+            ]
+            return _SinglePage(snapshot)
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            if file_id == "file_old" and not self._old_delete_failed_once:
+                self._old_delete_failed_once = True
+                request = httpx.Request(
+                    "DELETE",
+                    f"https://api.openai.com/v1/vector_stores/{kwargs.get('vector_store_id')}/files/{file_id}",
+                )
+                raise openai.APIConnectionError(request=request)
+
+            self.files = [file for file in self.files if file["id"] != file_id]
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            file_id = f"file_new_{self._next_id}"
+            self._next_id += 1
+            self.files.append(
+                {
+                    "id": file_id,
+                    "created_at": self._next_id,
+                    "filename": kwargs["file"][0],
+                    "attributes": dict(kwargs.get("attributes", {})),
+                }
+            )
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id=file_id)
+
+    class FakeFiles:
+        def content(self, file_id):
+            assert file_id == "file_old"
+            return SimpleNamespace(content=old_content.encode("utf-8"))
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    with pytest.raises(openai.APIConnectionError):
+        store.upsert(
+            MarkdownDocument(
+                origin="doc",
+                content=new_content,
+                attributes={"tenant": "new"},
+            )
+        )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=new_content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "replaced"
+    managed_doc_files = [
+        file
+        for file in fake_vector_store_files.files
+        if file["attributes"].get("_raghilda_origin") == "doc"
+    ]
+    assert len(managed_doc_files) == 1
+    assert managed_doc_files[0]["id"] == "file_new_2"
+    assert fake_vector_store_files.deleted_ids == ["file_old", "file_new_1", "file_old"]
+    assert len(fake_vector_store_files.upload_calls) == 2
+
+
+def test_openai_store_connect_restores_metadata_schema_with_mocked_client(
+    monkeypatch,
+):
+    schema_json = json.dumps(
+        {
+            "tenant": {"type": "str", "nullable": False, "required": True},
+            "priority": {"type": "int", "nullable": False, "required": True},
+        }
+    )
+
+    class FakeVectorStores:
+        def retrieve(self, *, vector_store_id):
+            return SimpleNamespace(
+                id=vector_store_id,
+                metadata={"raghilda_attributes_schema_json": schema_json},
+            )
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    store = OpenAIStore.connect(store_id="vs_test")
+    assert store.attributes_schema == {"tenant": str, "priority": int}
+
+
+def test_openai_store_connect_rejects_internal_attribute_names_from_metadata(
+    monkeypatch,
+):
+    schema_json = json.dumps(
+        {
+            "_raghilda_origin": {"type": "str", "nullable": False, "required": True},
+        }
+    )
+
+    class FakeVectorStores:
+        def retrieve(self, *, vector_store_id):
+            return SimpleNamespace(
+                id=vector_store_id,
+                metadata={"raghilda_attributes_schema_json": schema_json},
+            )
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    with pytest.raises(ValueError, match="_raghilda_origin"):
+        OpenAIStore.connect(store_id="vs_test")
+
+
+def test_openai_store_connect_requires_attributes_schema_metadata(monkeypatch):
+    class FakeVectorStores:
+        def retrieve(self, *, vector_store_id):
+            return SimpleNamespace(id=vector_store_id, metadata={})
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    with pytest.raises(ValueError, match="missing required key"):
+        OpenAIStore.connect(store_id="vs_test")
+
+
+def test_openai_store_connect_rejects_attributes_argument(monkeypatch):
+    class FakeVectorStores:
+        def retrieve(self, *, vector_store_id):
+            return SimpleNamespace(id=vector_store_id, metadata={})
+
+    fake_client = SimpleNamespace(vector_stores=FakeVectorStores())
+
+    def fake_openai_client(*, api_key=None, base_url=None):
+        return fake_client
+
+    monkeypatch.setattr("raghilda._openai_store.openai.Client", fake_openai_client)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'attributes'"):
+        cast(Any, OpenAIStore.connect)(
+            store_id="vs_test",
+            attributes={"tenant": str},
+        )
+
+
+def test_openai_store_insert_updates_when_snapshot_download_forbidden():
+    old_content = "hello world"
+    new_content = "hello world updated"
+    old_hash = hashlib.sha256(old_content.encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": old_hash,
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            request = httpx.Request(
+                "GET", f"https://api.openai.com/v1/files/{file_id}/content"
+            )
+            response = httpx.Response(400, request=request)
+            raise openai.BadRequestError(
+                "Not allowed to download files of purpose: assistants",
+                response=response,
+                body=None,
+            )
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=new_content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "replaced"
+    assert result.replaced_document is None
+    assert fake_vector_store_files.deleted_ids == ["file_old"]
+    assert len(fake_vector_store_files.upload_calls) == 1
+
+
+def test_openai_store_insert_updates_when_snapshot_download_connection_error():
+    new_content = "hello world updated"
+    old_hash = hashlib.sha256("hello world".encode("utf-8")).hexdigest()
+
+    class FakeVectorStoreFiles:
+        def __init__(self):
+            self.deleted_ids = []
+            self.upload_calls = []
+            self.page = _SinglePage(
+                [
+                    SimpleNamespace(
+                        id="file_old",
+                        created_at=1,
+                        filename="doc.md",
+                        attributes={
+                            "_raghilda_origin": "doc",
+                            "_raghilda_content_hash": old_hash,
+                            "tenant": "old",
+                        },
+                    )
+                ]
+            )
+
+        def list(self, **kwargs):
+            return self.page
+
+        def delete(self, file_id, **kwargs):
+            self.deleted_ids.append(file_id)
+            return SimpleNamespace(id=file_id, deleted=True)
+
+        def upload_and_poll(self, **kwargs):
+            self.upload_calls.append(kwargs)
+            return SimpleNamespace(id="file_new")
+
+    class FakeFiles:
+        def content(self, file_id):
+            request = httpx.Request(
+                "GET", f"https://api.openai.com/v1/files/{file_id}/content"
+            )
+            raise openai.APIConnectionError(request=request)
+
+    fake_vector_store_files = FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=FakeFiles(),
+    )
+    store = OpenAIStore(
+        client=fake_client,
+        store_id="vs_test",
+        attributes={"tenant": str},
+    )
+
+    result = store.upsert(
+        MarkdownDocument(
+            origin="doc",
+            content=new_content,
+            attributes={"tenant": "new"},
+        )
+    )
+
+    assert result.action == "replaced"
+    assert result.replaced_document is None
+    assert fake_vector_store_files.deleted_ids == ["file_old"]
+    assert len(fake_vector_store_files.upload_calls) == 1
+
+
 def _get_markdown_chunk(doc, start, end):
     return MarkdownChunk(
         start_index=start,
@@ -955,11 +2837,12 @@ def _get_markdown_chunk(doc, start, end):
 
 
 def test_ingest():
-    _require_openai_integration()
+    _skip_if_unset("OPENAI_API_KEY")
     from raghilda.chunker import MarkdownChunker
     from raghilda.read import read_as_markdown
 
     links = find_links("https://r4ds.hadley.nz/base-R.html", validate=True)
+    links = links[:3]
 
     store = DuckDBStore.create(
         location=":memory:",
@@ -1093,7 +2976,7 @@ def test_ingest_lazy_evaluation():
 
 
 def test_connect(tmp_path):
-    _require_openai_integration()
+    _skip_if_unset("OPENAI_API_KEY")
     db_path = tmp_path / "test.db"
 
     # Create a store with embeddings
@@ -1105,7 +2988,7 @@ def test_connect(tmp_path):
     )
     doc = MarkdownDocument(origin="test", content="hello world")
     doc.chunks = [_get_markdown_chunk(doc, start=0, end=5)]
-    store.insert(doc)
+    store.upsert(doc)
     store.build_index()
     store.con.close()
 
@@ -1124,3 +3007,49 @@ def test_connect(tmp_path):
     results = store2.retrieve("hello", top_k=1)
     assert len(results) >= 1
     assert results[0].text == "hello"
+
+
+def test_connect_fails_fast_when_embeddings_table_lacks_chunk_text(tmp_path):
+    db_path = tmp_path / "missing_chunk_text.db"
+    con = duckdb.connect(str(db_path))
+    con.execute(
+        """
+        CREATE TABLE metadata (
+            name VARCHAR,
+            title VARCHAR,
+            embed_config VARCHAR,
+            attributes_schema_json VARCHAR
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO metadata VALUES (?, ?, ?, ?)",
+        ["test", "Test", None, json.dumps({})],
+    )
+    con.execute(
+        """
+        CREATE TABLE documents (
+            doc_id VARCHAR,
+            origin VARCHAR,
+            text VARCHAR
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE embeddings (
+            doc_id VARCHAR,
+            chunk_id INTEGER,
+            start_index INTEGER,
+            end_index INTEGER,
+            context VARCHAR
+        )
+        """
+    )
+    con.close()
+
+    with pytest.raises(
+        ValueError,
+        match="table 'embeddings' missing required columns: chunk_text",
+    ):
+        DuckDBStore.connect(str(db_path))

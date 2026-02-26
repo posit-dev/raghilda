@@ -16,6 +16,8 @@ class BaseChunker:
     def chunk_document(self, doc: Document) -> Document:
         """Chunk a document and return it with chunks attached."""
         doc.chunks = list(self.chunk(doc.content))
+        for chunk in doc.chunks:
+            chunk.origin = doc.origin
         return doc
 
     def __call__(self, text: str) -> Sequence[Chunk]:

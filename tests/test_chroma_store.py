@@ -1,5 +1,8 @@
 import pytest
 import socket
+import threading
+import time
+import json
 from typing import Annotated
 
 pytest.importorskip("chromadb")
@@ -30,9 +33,20 @@ def _require_openai_integration() -> None:
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
+    def __init__(self) -> None:
+        pass
+
     @staticmethod
     def name() -> str:
         return "test_embedding_function"
+
+    @staticmethod
+    def build_from_config(config: dict) -> "DummyEmbeddingFunction":
+        DummyEmbeddingFunction.validate_config(config)
+        return DummyEmbeddingFunction()
+
+    def get_config(self) -> dict:
+        return {}
 
     def _embed(self, input: Documents) -> Embeddings:
         embeddings = []
@@ -112,7 +126,7 @@ def test_insert_and_retrieve():
         name="test_store_insert",
         overwrite=True,
     )
-    store.insert(_make_doc())
+    store.upsert(_make_doc())
     assert store.size() == 1
 
     results = store.retrieve("test", top_k=3)
@@ -120,6 +134,509 @@ def test_insert_and_retrieve():
     for chunk in results:
         assert isinstance(chunk, RetrievedChunk)
         assert chunk.text is not None
+
+
+def test_insert_same_content_but_different_chunking_updates():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_chunk_update",
+        overwrite=True,
+        attributes={"tenant": str},
+    )
+    content = "hello world"
+    doc1 = MarkdownDocument(
+        origin="same-origin",
+        content=content,
+        attributes={"tenant": "docs"},
+    )
+    doc1.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(content),
+            text=content,
+            token_count=len(content),
+        )
+    ]
+    first = store.upsert(doc1)
+    assert first.action == "inserted"
+    assert store.collection.count() == 1
+
+    doc2 = MarkdownDocument(
+        origin="same-origin",
+        content=content,
+        attributes={"tenant": "eng"},
+    )
+    doc2.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=5,
+            text=content[:5],
+            token_count=5,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=len(content),
+            text=content[6:],
+            token_count=len(content[6:]),
+        ),
+    ]
+    second = store.upsert(doc2)
+    assert second.action == "replaced"
+    assert second.replaced_document is not None
+    assert second.replaced_document.attributes == {"tenant": "docs"}
+    assert second.document.chunks is not None
+    assert len(second.document.chunks) == 2
+    assert store.collection.count() == 2
+
+
+def test_insert_unchanged_preserves_document_attributes():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_skip_attributes",
+        overwrite=True,
+        attributes={"tenant": str},
+    )
+
+    content = "hello world"
+    doc = MarkdownDocument(
+        origin="same-origin",
+        content=content,
+        attributes={"tenant": "docs"},
+    )
+    doc.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(content),
+            text=content,
+            token_count=len(content),
+        )
+    ]
+
+    store.upsert(doc)
+    second = store.upsert(doc)
+    assert second.action == "skipped"
+    assert second.document.attributes == {"tenant": "docs"}
+
+
+def test_insert_same_content_skips_when_existing_chunks_returned_in_reverse_order(
+    monkeypatch,
+):
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_skip_reordered_existing",
+        overwrite=True,
+    )
+    content = "hello world"
+    doc = MarkdownDocument(origin="same-origin", content=content)
+    doc.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=5,
+            text=content[:5],
+            token_count=5,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=11,
+            text=content[6:],
+            token_count=5,
+        ),
+    ]
+    store.upsert(doc)
+
+    original_get = store.collection.get
+
+    def reverse_origin_rows(*args, **kwargs):
+        result = original_get(*args, **kwargs)
+        if kwargs.get("where") != {"origin": "same-origin"}:
+            return result
+
+        ids = list(result.get("ids") or [])
+        documents = list(result.get("documents") or [])
+        metadatas = list(result.get("metadatas") or [])
+        order = list(reversed(range(len(ids))))
+        result["ids"] = [ids[idx] for idx in order]
+        result["documents"] = [documents[idx] for idx in order]
+        result["metadatas"] = [metadatas[idx] for idx in order]
+        return result
+
+    monkeypatch.setattr(store.collection, "get", reverse_origin_rows)
+
+    skipped = store.upsert(doc)
+    assert skipped.action == "skipped"
+    assert [chunk.text for chunk in skipped.document.chunks or []] == ["hello", "world"]
+
+
+def test_insert_result_document_includes_merged_chunk_attributes():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_insert_result_merged_attrs",
+        overwrite=True,
+        attributes={"tenant": str},
+    )
+
+    original = MarkdownDocument(
+        origin="same-origin",
+        content="hello world",
+    )
+    original.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(original.content),
+            text=original.content,
+            token_count=len(original.content),
+            attributes={"tenant": "docs"},
+        )
+    ]
+
+    inserted = store.upsert(original)
+    assert inserted.action == "inserted"
+    assert inserted.document.attributes == {"tenant": "docs"}
+
+    updated = MarkdownDocument(
+        origin="same-origin",
+        content="hello world updated",
+    )
+    updated.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(updated.content),
+            text=updated.content,
+            token_count=len(updated.content),
+            attributes={"tenant": "docs"},
+        )
+    ]
+
+    replaced = store.upsert(updated, skip_if_unchanged=False)
+    assert replaced.action == "replaced"
+    assert replaced.document.attributes == {"tenant": "docs"}
+    assert replaced.replaced_document is not None
+    assert replaced.replaced_document.attributes == {"tenant": "docs"}
+
+
+def test_insert_keeps_existing_chunks_when_upsert_fails(monkeypatch):
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_upsert_failure",
+        overwrite=True,
+    )
+
+    doc = MarkdownDocument(origin="same-origin", content="hello world")
+    doc.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(doc.content),
+            text=doc.content,
+            token_count=len(doc.content),
+        )
+    ]
+    store.upsert(doc)
+
+    def fail_upsert(**kwargs):
+        raise RuntimeError("upsert failed")
+
+    monkeypatch.setattr(store.collection, "upsert", fail_upsert)
+
+    updated = MarkdownDocument(origin="same-origin", content="goodbye world")
+    updated.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(updated.content),
+            text=updated.content,
+            token_count=len(updated.content),
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match="upsert failed"):
+        store.upsert(updated, skip_if_unchanged=False)
+
+    existing = store.collection.get(
+        where={"origin": "same-origin"},
+        include=["documents"],
+    )
+    assert existing["ids"] == ["same-origin:0"]
+    assert existing["documents"] == ["hello world"]
+
+
+def test_insert_raises_when_stale_chunk_delete_fails(monkeypatch):
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_stale_delete_failure",
+        overwrite=True,
+    )
+
+    content = "hello world"
+    original = MarkdownDocument(origin="same-origin", content=content)
+    original.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=5,
+            text=content[:5],
+            token_count=5,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=len(content),
+            text=content[6:],
+            token_count=len(content[6:]),
+        ),
+    ]
+    store.upsert(original)
+
+    delete_calls = []
+
+    def fail_delete(**kwargs):
+        delete_calls.append(kwargs)
+        raise RuntimeError("delete failed")
+
+    monkeypatch.setattr(store.collection, "delete", fail_delete)
+
+    updated = MarkdownDocument(origin="same-origin", content=content)
+    updated.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(content),
+            text=content,
+            token_count=len(content),
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        store.upsert(updated, skip_if_unchanged=False)
+    assert len(delete_calls) == 1
+    assert delete_calls[0]["ids"] == ["same-origin:1"]
+
+
+def test_upsert_replaces_when_existing_metadata_missing_content_text(monkeypatch):
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_missing_content_text",
+        overwrite=True,
+    )
+
+    original = MarkdownDocument(origin="same-origin", content="hello world")
+    original.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(original.content),
+            text=original.content,
+            token_count=len(original.content),
+        )
+    ]
+    store.upsert(original)
+
+    original_get = store.collection.get
+
+    def missing_content_text_get(*args, **kwargs):
+        result = original_get(*args, **kwargs)
+        metadatas = []
+        for metadata in result.get("metadatas") or []:
+            if metadata is None:
+                metadatas.append(None)
+                continue
+            without_content = dict(metadata)
+            without_content.pop("_raghilda_content_text", None)
+            metadatas.append(without_content)
+        result["metadatas"] = metadatas
+        return result
+
+    monkeypatch.setattr(store.collection, "get", missing_content_text_get)
+
+    updated = MarkdownDocument(origin="same-origin", content="updated content")
+    updated.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(updated.content),
+            text=updated.content,
+            token_count=len(updated.content),
+        )
+    ]
+
+    result = store.upsert(updated, skip_if_unchanged=False)
+
+    assert result.action == "replaced"
+    assert result.replaced_document is None
+    assert result.document.content == "updated content"
+
+    existing = store.collection.get(
+        where={"origin": "same-origin"},
+        include=["documents"],
+    )
+    assert existing["documents"] == ["updated content"]
+
+
+def test_upsert_accepts_existing_empty_content_text_metadata():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_empty_content_text",
+        overwrite=True,
+    )
+
+    original = MarkdownDocument(origin="same-origin", content="")
+    original.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=0,
+            text="",
+            token_count=0,
+        )
+    ]
+
+    store.upsert(original)
+    result = store.upsert(original)
+
+    assert result.action == "skipped"
+    assert result.document.content == ""
+
+
+def test_insert_same_origin_concurrent_updates_do_not_leave_stale_chunks(monkeypatch):
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_concurrent_same_origin",
+        overwrite=True,
+    )
+
+    content = "hello world"
+    doc_two_chunks = MarkdownDocument(origin="same-origin", content=content)
+    doc_two_chunks.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=5,
+            text=content[:5],
+            token_count=5,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=len(content),
+            text=content[6:],
+            token_count=len(content[6:]),
+        ),
+    ]
+    doc_one_chunk = MarkdownDocument(origin="same-origin", content=content)
+    doc_one_chunk.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=len(content),
+            text=content,
+            token_count=len(content),
+        )
+    ]
+
+    original_get = store.collection.get
+    original_upsert = store.collection.upsert
+    get_calls = 0
+    get_calls_lock = threading.Lock()
+    both_reads_finished = threading.Event()
+
+    def coordinated_get(*args, **kwargs):
+        nonlocal get_calls
+        result = original_get(*args, **kwargs)
+        with get_calls_lock:
+            get_calls += 1
+            if get_calls >= 2:
+                both_reads_finished.set()
+        both_reads_finished.wait(timeout=0.2)
+        return result
+
+    def ordered_upsert(*args, **kwargs):
+        ids = kwargs.get("ids", [])
+        if len(ids) == 1:
+            time.sleep(0.05)
+        return original_upsert(*args, **kwargs)
+
+    monkeypatch.setattr(store.collection, "get", coordinated_get)
+    monkeypatch.setattr(store.collection, "upsert", ordered_upsert)
+
+    t1 = threading.Thread(
+        target=lambda: store.upsert(doc_two_chunks, skip_if_unchanged=False)
+    )
+    t2 = threading.Thread(
+        target=lambda: store.upsert(doc_one_chunk, skip_if_unchanged=False)
+    )
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    existing = store.collection.get(
+        where={"origin": "same-origin"},
+        include=["documents"],
+    )
+    assert sorted(existing["ids"]) == ["same-origin:0"]
+    assert existing["documents"] == [content]
+
+
+def test_insert_releases_origin_locks_for_completed_origins():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_origin_lock_cleanup",
+        overwrite=True,
+    )
+
+    for idx in range(100):
+        content = f"doc {idx}"
+        doc = MarkdownDocument(origin=f"origin-{idx}", content=content)
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                token_count=len(content),
+            )
+        ]
+        store.upsert(doc, skip_if_unchanged=False)
+
+    assert store._origin_locks == {}
+
+
+def test_insert_stores_document_content_once_in_metadata():
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        name="test_store_content_metadata_once",
+        overwrite=True,
+    )
+
+    content = "hello world"
+    doc = MarkdownDocument(origin="same-origin", content=content)
+    doc.chunks = [
+        MarkdownChunk(
+            start_index=0,
+            end_index=5,
+            text=content[:5],
+            token_count=5,
+        ),
+        MarkdownChunk(
+            start_index=6,
+            end_index=len(content),
+            text=content[6:],
+            token_count=len(content[6:]),
+        ),
+    ]
+    store.upsert(doc)
+
+    existing = store.collection.get(
+        where={"origin": "same-origin"},
+        include=["metadatas"],
+    )
+    metadatas = existing.get("metadatas") or []
+    rows_with_content = [
+        metadata
+        for metadata in metadatas
+        if metadata and metadata.get("_raghilda_content_text") is not None
+    ]
+    assert len(rows_with_content) == 1
+    assert rows_with_content[0]["_raghilda_content_text"] == content
 
 
 def test_connect_with_embed(tmp_path):
@@ -131,7 +648,7 @@ def test_connect_with_embed(tmp_path):
         name="connect_test",
         overwrite=True,
     )
-    store.insert(_make_doc())
+    store.upsert(_make_doc())
     if hasattr(store.client, "persist"):
         store.client.persist()
 
@@ -143,6 +660,55 @@ def test_connect_with_embed(tmp_path):
     assert store2.size() == 1
     results = store2.retrieve("document", top_k=1)
     assert len(results) == 1
+
+
+def test_connect_restores_attributes_schema(tmp_path):
+    location = tmp_path / "chroma_store_with_attributes"
+    store = ChromaDBStore.create(
+        location=str(location),
+        embed=DummyEmbeddingFunction(),
+        name="connect_attributes_test",
+        overwrite=True,
+        attributes={"tenant": str, "priority": int},
+    )
+    doc = _make_doc()
+    doc.attributes = {"tenant": "docs", "priority": 1}
+    store.upsert(doc)
+    if hasattr(store.client, "persist"):
+        store.client.persist()
+
+    store2 = ChromaDBStore.connect(
+        location=str(location),
+        name="connect_attributes_test",
+        embed=DummyEmbeddingFunction(),
+    )
+    assert store2.metadata.attributes_schema == {"tenant": str, "priority": int}
+
+
+def test_connect_rejects_internal_attribute_names_from_metadata():
+    schema_json = json.dumps(
+        {
+            "_raghilda_content_hash": {
+                "type": "str",
+                "nullable": False,
+                "required": True,
+            },
+        }
+    )
+
+    class FakeCollection:
+        metadata = {"raghilda_attributes_schema_json": schema_json}
+
+    class FakeClient:
+        def get_collection(self, *, name, embedding_function=None):
+            return FakeCollection()
+
+    with pytest.raises(ValueError, match="_raghilda_content_hash"):
+        ChromaDBStore.connect(
+            name="connect_internal_attr_test",
+            client=FakeClient(),
+            embed=DummyEmbeddingFunction(),
+        )
 
 
 def _make_doc_with_overlapping_chunks():
@@ -174,7 +740,7 @@ def test_retrieve_with_deoverlap():
         name="test_deoverlap",
         overwrite=True,
     )
-    store.insert(_make_doc_with_overlapping_chunks())
+    store.upsert(_make_doc_with_overlapping_chunks())
 
     # With deoverlap=True (default), overlapping chunks should be merged
     results_merged = store.retrieve("hello", top_k=2, deoverlap=True)
@@ -203,7 +769,7 @@ def test_retrieve_with_deoverlap_aggregates_attributes():
     doc.chunks[1].context = "h2"
     doc.chunks[1].attributes = {"topic": "second"}
 
-    store.insert(doc)
+    store.upsert(doc)
     results = store.retrieve("hello", top_k=2, deoverlap=True)
 
     assert len(results) == 1
@@ -224,7 +790,7 @@ def test_insert_and_retrieve_with_attributes_filter():
     doc.attributes = {"tenant": "docs", "topic": "general"}
     assert doc.chunks is not None
     doc.chunks[0].attributes = {"topic": "intro"}
-    store.insert(doc)
+    store.upsert(doc)
 
     intro = store.retrieve(
         "test",
@@ -332,6 +898,21 @@ def test_create_rejects_invalid_attribute_names():
             name="test_attributes_schema_name_reject",
             overwrite=True,
             attributes={"tenant-id": str},
+        )
+
+
+@pytest.mark.parametrize(
+    "attribute_name",
+    ["_raghilda_content_hash", "_raghilda_content_text"],
+)
+def test_create_rejects_internal_attribute_names(attribute_name):
+    with pytest.raises(ValueError, match=attribute_name):
+        ChromaDBStore.create(
+            location=":memory:",
+            embed=DummyEmbeddingFunction(),
+            name="test_attributes_schema_internal_reject",
+            overwrite=True,
+            attributes={attribute_name: str},
         )
 
 
@@ -523,7 +1104,7 @@ class TestChromaConvertible:
         )
 
         # Insert a document
-        store.insert(_make_doc())
+        store.upsert(_make_doc())
         assert store.size() == 1
 
         # Retrieve and verify it works

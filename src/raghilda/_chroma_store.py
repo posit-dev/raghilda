@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+import hashlib
 import importlib
 import json
 from pathlib import Path
+import threading
 from collections.abc import Sized
 from typing import (
     Any,
@@ -16,9 +19,9 @@ from typing import (
 )
 from concurrent.futures import ThreadPoolExecutor
 
-from ._store import BaseStore
+from ._store import BaseStore, WriteResult
 from ._utils import lazy_map
-from .chunk import MarkdownChunk, RetrievedChunk, Metric
+from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .document import Document, MarkdownDocument
 from .read import read_as_markdown
@@ -53,19 +56,21 @@ if TYPE_CHECKING:
 _METADATA_TITLE_KEY = "raghilda_title"
 _ATTRIBUTES_SCHEMA_METADATA_KEY = "raghilda_attributes_schema_json"
 _ADAPTER_NAME = "raghilda_embedding_adapter"
+_CONTENT_HASH_METADATA_KEY = "_raghilda_content_hash"
+_CONTENT_TEXT_METADATA_KEY = "_raghilda_content_text"
 
 _RESERVED_SYSTEM_COLUMNS = {
-    "doc_id",
     "chunk_id",
     "start_index",
     "end_index",
     "token_count",
     "context",
     "origin",
+    _CONTENT_HASH_METADATA_KEY,
+    _CONTENT_TEXT_METADATA_KEY,
 }
 
 _FILTERABLE_BASE_COLUMNS = {
-    "doc_id",
     "chunk_id",
     "start_index",
     "end_index",
@@ -73,6 +78,15 @@ _FILTERABLE_BASE_COLUMNS = {
     "context",
     "origin",
 }
+
+
+def _ensure_no_reserved_attributes(
+    attributes_spec: dict[str, AttributeSpec],
+    reserved_keys: set[str],
+) -> None:
+    for key in attributes_spec:
+        if key in reserved_keys:
+            raise ValueError(f"Attribute column '{key}' is reserved")
 
 
 # ChromaEmbeddingAdapter is only defined when chromadb is installed
@@ -220,9 +234,6 @@ def _get_client(location: str | Path | None):
 class ChromaDBMarkdownChunk(MarkdownChunk):
     """MarkdownChunk with ChromaDB-specific fields for storage."""
 
-    doc_id: Optional[str] = None
-    chunk_id: Optional[int] = None
-
     def __init__(
         self,
         text: str,
@@ -230,8 +241,7 @@ class ChromaDBMarkdownChunk(MarkdownChunk):
         end_index: int,
         context=None,
         token_count=None,
-        doc_id=None,
-        chunk_id=None,
+        origin=None,
         attributes=None,
     ):
         if token_count is None:
@@ -243,11 +253,9 @@ class ChromaDBMarkdownChunk(MarkdownChunk):
             end_index=end_index,
             token_count=token_count,
             context=context,
+            origin=origin,
             attributes=attributes,
         )
-
-        self.doc_id = doc_id
-        self.chunk_id = chunk_id
 
 
 @dataclass(repr=False)
@@ -261,9 +269,9 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
         end_index: int,
         context=None,
         token_count=None,
-        doc_id=None,
-        chunk_id=None,
+        origin=None,
         metrics=None,
+        chunk_ids=None,
         attributes=None,
     ):
         super().__init__(
@@ -272,14 +280,16 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
             end_index=end_index,
             context=context,
             token_count=token_count,
-            doc_id=doc_id,
-            chunk_id=chunk_id,
+            origin=origin,
             attributes=attributes,
         )
 
         if metrics is None:
             metrics = []
         self.metrics = metrics
+        if chunk_ids is None:
+            chunk_ids = []
+        self.chunk_ids = chunk_ids
 
 
 @dataclass
@@ -312,7 +322,7 @@ class ChromaDBStore(BaseStore):
 
     store = ChromaDBStore.create(location="raghilda_chroma", name="docs")
 
-    store.insert(markdown_doc)
+    store.upsert(markdown_doc)
     chunks = store.retrieve("hello world", top_k=3)
     ```
     """
@@ -353,7 +363,7 @@ class ChromaDBStore(BaseStore):
             Optional schema for user-defined attribute columns.
             Attribute names use identifier-style syntax.
             Chroma also provides built-in filterable columns:
-            `doc_id`, `chunk_id`, `start_index`, `end_index`, `token_count`,
+            `chunk_id`, `start_index`, `end_index`, `token_count`,
             `context`, and `origin`.
         client
             Optional pre-configured Chroma client (e.g., HttpClient).
@@ -461,6 +471,7 @@ class ChromaDBStore(BaseStore):
                 allow_struct_types=False,
                 allow_optional_values=False,
             )
+        _ensure_no_reserved_attributes(attributes_spec, _RESERVED_SYSTEM_COLUMNS)
         return ChromaDBStore(
             client=client,
             collection=collection,
@@ -475,42 +486,149 @@ class ChromaDBStore(BaseStore):
         self.client = client
         self.collection = collection
         self.metadata = metadata
+        self._origin_locks: dict[str, threading.Lock] = {}
+        self._origin_lock_ref_counts: dict[str, int] = {}
+        self._origin_locks_guard = threading.Lock()
+        self._chunk_id_lock = threading.Lock()
+        self._next_chunk_id: Optional[int] = None
 
-    def insert(self, document: Document) -> None:
+    def upsert(
+        self,
+        document: Document,
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult:
         if not isinstance(document, MarkdownDocument):
             raise ValueError("Only MarkdownDocument is supported for ChromaDBStore")
         if document.chunks is None:
             raise ValueError("Document must be chunked before insertion")
+        if len(document.chunks) == 0:
+            raise ValueError("Document must contain at least one chunk.")
+        if not isinstance(document.origin, str) or not document.origin:
+            raise ValueError("document.origin must be a non-empty string for upsert().")
 
-        texts = [chunk.text for chunk in document.chunks]
+        with self._origin_lock(document.origin):
+            content_hash = hashlib.sha256(document.content.encode("utf-8")).hexdigest()
 
-        ids = []
-        chunk_attributes_records = []
-        for idx, chunk in enumerate(document.chunks):
-            resolved_attributes = merge_attribute_values(
-                attributes_spec=self.metadata.attributes_spec,
-                sources=[document.attributes, chunk.attributes],
+            existing = self.collection.get(
+                where={"origin": document.origin},
+                include=["metadatas", "documents"],
             )
-            ids.append(f"{document.id}:{idx}")
-            chunk_record = {
-                "doc_id": document.id,
-                "chunk_id": idx,
-                "start_index": chunk.start_index,
-                "end_index": chunk.end_index,
-                "token_count": chunk.token_count,
-                "context": chunk.context,
-                "origin": document.origin,
-            }
-            chunk_record.update(resolved_attributes)
-            chunk_attributes_records.append(
-                {k: v for k, v in chunk_record.items() if v is not None}
+            existing_ids = list(existing.get("ids") or [])
+            replaced_document = None
+            incoming_signature = self._incoming_chunk_signature(document)
+            if existing_ids and skip_if_unchanged:
+                existing_metadatas = list(existing.get("metadatas") or [])
+                existing_hash = None
+                for metadata in existing_metadatas:
+                    if metadata and metadata.get(_CONTENT_HASH_METADATA_KEY):
+                        existing_hash = metadata[_CONTENT_HASH_METADATA_KEY]
+                        break
+                existing_signature = self._existing_chunk_signature(existing)
+                if (
+                    existing_hash == content_hash
+                    and existing_signature == incoming_signature
+                ):
+                    current_document = (
+                        self._snapshot_document_from_existing_if_available(
+                            existing,
+                            origin=document.origin,
+                        )
+                    )
+                    if current_document is None:
+                        current_document = MarkdownDocument(
+                            origin=document.origin,
+                            content=document.content,
+                            chunks=document.chunks,
+                            attributes=document.attributes,
+                        )
+                    return WriteResult(
+                        action="skipped",
+                        document=current_document,
+                    )
+            if existing_ids:
+                replaced_document = self._snapshot_document_from_existing_if_available(
+                    existing,
+                    origin=document.origin,
+                )
+
+            texts = [chunk.text for chunk in document.chunks]
+
+            ids = []
+            chunk_attributes_records = []
+            merged_document_attributes: dict[str, Any] = {}
+            assigned_chunk_ids = self._allocate_chunk_ids(len(document.chunks))
+            for idx, chunk in enumerate(document.chunks):
+                resolved_attributes = merge_attribute_values(
+                    attributes_spec=self.metadata.attributes_spec,
+                    sources=[document.attributes, chunk.attributes],
+                )
+                ids.append(f"{document.origin}:{idx}")
+                chunk_record = {
+                    "chunk_id": assigned_chunk_ids[idx],
+                    "start_index": chunk.start_index,
+                    "end_index": chunk.end_index,
+                    "token_count": chunk.token_count,
+                    "context": chunk.context,
+                    "origin": document.origin,
+                    _CONTENT_HASH_METADATA_KEY: content_hash,
+                }
+                if idx == 0:
+                    chunk_record[_CONTENT_TEXT_METADATA_KEY] = document.content
+                chunk_record.update(resolved_attributes)
+                chunk_attributes_records.append(
+                    {k: v for k, v in chunk_record.items() if v is not None}
+                )
+                for key, value in resolved_attributes.items():
+                    if key not in merged_document_attributes:
+                        merged_document_attributes[key] = value
+                chunk.origin = document.origin
+
+            self.collection.upsert(
+                ids=ids,
+                documents=texts,
+                metadatas=chunk_attributes_records,
+            )
+            stale_ids = [
+                existing_id for existing_id in existing_ids if existing_id not in ids
+            ]
+            if stale_ids:
+                self.collection.delete(ids=stale_ids)
+            current_document = MarkdownDocument(
+                origin=document.origin,
+                content=document.content,
+                chunks=document.chunks,
+                attributes=merged_document_attributes or None,
+            )
+            return WriteResult(
+                action="replaced" if existing_ids else "inserted",
+                document=current_document,
+                replaced_document=replaced_document,
             )
 
-        self.collection.upsert(
-            ids=ids,
-            documents=texts,
-            metadatas=chunk_attributes_records,
-        )
+    @contextmanager
+    def _origin_lock(self, origin: str):
+        with self._origin_locks_guard:
+            lock = self._origin_locks.get(origin)
+            if lock is None:
+                lock = threading.Lock()
+                self._origin_locks[origin] = lock
+            self._origin_lock_ref_counts[origin] = (
+                self._origin_lock_ref_counts.get(origin, 0) + 1
+            )
+
+        try:
+            with lock:
+                yield
+        finally:
+            with self._origin_locks_guard:
+                remaining = self._origin_lock_ref_counts.get(origin, 1) - 1
+                if remaining <= 0:
+                    self._origin_lock_ref_counts.pop(origin, None)
+                    if self._origin_locks.get(origin) is lock:
+                        self._origin_locks.pop(origin, None)
+                else:
+                    self._origin_lock_ref_counts[origin] = remaining
 
     def ingest(
         self,
@@ -602,7 +720,7 @@ class ChromaDBStore(BaseStore):
         def do_ingest_work(item: Any) -> None:
             try:
                 doc = prepare(item)
-                self.insert(doc)
+                self.upsert(doc)
             except Exception as e:
                 raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
@@ -643,7 +761,7 @@ class ChromaDBStore(BaseStore):
             Optional attribute filter as SQL-like string or dict AST.
             Example string: `"tenant = 'docs' AND priority >= 2"`.
             Supports declared attributes plus built-in columns:
-            `doc_id`, `chunk_id`, `start_index`, `end_index`,
+            `chunk_id`, `start_index`, `end_index`,
             `token_count`, `context`, and `origin`.
         **kwargs
             Additional arguments passed to ChromaDB's `query()` method.
@@ -695,27 +813,173 @@ class ChromaDBStore(BaseStore):
                 end_index=end_index,
                 context=chunk_attributes.get("context"),
                 token_count=token_count,
-                doc_id=chunk_attributes.get("doc_id"),
-                chunk_id=chunk_attributes.get("chunk_id"),
+                origin=chunk_attributes.get("origin"),
+                chunk_ids=(
+                    []
+                    if chunk_attributes.get("chunk_id") is None
+                    else [int(chunk_attributes["chunk_id"])]
+                ),
                 metrics=metrics,
                 attributes=user_attributes,
             )
             output.append(chunk)
 
         if deoverlap:
-            output = deoverlap_chunks(output, key=lambda c: c.doc_id)
+            output = deoverlap_chunks(output, key=lambda c: c.origin)
 
         return output
 
     def size(self) -> int:
         results = self.collection.get(include=["metadatas"])
         chunk_attributes_rows = results.get("metadatas") or []
-        doc_ids = {
-            chunk_attributes.get("doc_id")
+        origins = {
+            chunk_attributes.get("origin")
             for chunk_attributes in chunk_attributes_rows
-            if chunk_attributes and chunk_attributes.get("doc_id")
+            if chunk_attributes and chunk_attributes.get("origin")
         }
-        return len(doc_ids)
+        return len(origins)
 
     def _filterable_columns(self) -> set[str]:
         return _FILTERABLE_BASE_COLUMNS | set(self.metadata.attributes_schema)
+
+    def _incoming_chunk_signature(
+        self, document: MarkdownDocument
+    ) -> list[tuple[Any, ...]]:
+        signatures: list[tuple[Any, ...]] = []
+        attribute_columns = list(self.metadata.attributes_schema)
+        for chunk in document.chunks or []:
+            resolved_attributes = merge_attribute_values(
+                attributes_spec=self.metadata.attributes_spec,
+                sources=[document.attributes, chunk.attributes],
+            )
+            signatures.append(
+                (
+                    chunk.start_index,
+                    chunk.end_index,
+                    chunk.context,
+                    chunk.token_count,
+                    chunk.text,
+                    *[resolved_attributes.get(col) for col in attribute_columns],
+                )
+            )
+        signatures.sort(key=self._chunk_signature_sort_key)
+        return signatures
+
+    def _existing_chunk_signature(
+        self, existing: dict[str, Any]
+    ) -> list[tuple[Any, ...]]:
+        chunk_texts = list(existing.get("documents") or [])
+        chunk_metadatas = list(existing.get("metadatas") or [])
+        attribute_columns = list(self.metadata.attributes_schema)
+        signatures: list[tuple[Any, ...]] = []
+        for chunk_text, metadata in zip(chunk_texts, chunk_metadatas, strict=False):
+            metadata = metadata or {}
+            start_index = int(metadata.get("start_index", 0))
+            signatures.append(
+                (
+                    start_index,
+                    int(metadata.get("end_index", start_index + len(chunk_text))),
+                    metadata.get("context"),
+                    int(metadata.get("token_count", len(chunk_text))),
+                    chunk_text,
+                    *[metadata.get(col) for col in attribute_columns],
+                )
+            )
+        signatures.sort(key=self._chunk_signature_sort_key)
+        return signatures
+
+    def _chunk_signature_sort_key(self, row: tuple[Any, ...]) -> tuple[str, ...]:
+        return tuple(f"{type(value).__name__}:{value!r}" for value in row)
+
+    def _snapshot_document_from_existing_if_available(
+        self, existing: dict[str, Any], *, origin: str
+    ) -> Optional[MarkdownDocument]:
+        try:
+            return self._snapshot_document_from_existing(existing, origin=origin)
+        except ValueError as exc:
+            if f"missing required {_CONTENT_TEXT_METADATA_KEY}" not in str(exc):
+                raise
+            return None
+
+    def _snapshot_document_from_existing(
+        self, existing: dict[str, Any], *, origin: str
+    ) -> MarkdownDocument:
+        chunk_texts = list(existing.get("documents") or [])
+        chunk_metadatas = list(existing.get("metadatas") or [])
+
+        content: str | None = None
+        for metadata in chunk_metadatas:
+            if metadata and _CONTENT_TEXT_METADATA_KEY in metadata:
+                content = metadata[_CONTENT_TEXT_METADATA_KEY]
+                break
+        if content is None:
+            raise ValueError(
+                f"Corrupted Chroma store for origin '{origin}': missing required {_CONTENT_TEXT_METADATA_KEY} in chunk metadata"
+            )
+
+        chunk_rows: list[tuple[int, int, int, Chunk]] = []
+        document_attributes: dict[str, Any] = {}
+        for idx, (chunk_text, metadata) in enumerate(
+            zip(chunk_texts, chunk_metadatas, strict=False)
+        ):
+            if metadata is None:
+                raise ValueError(
+                    f"Corrupted Chroma store for origin '{origin}': missing chunk metadata"
+                )
+            chunk_id = int(metadata.get("chunk_id", idx))
+            start_index = int(metadata.get("start_index", 0))
+            end_index = int(metadata.get("end_index", start_index + len(chunk_text)))
+            attributes = {
+                key: metadata.get(key)
+                for key in self.metadata.attributes_schema
+                if metadata.get(key) is not None
+            }
+            for key, value in attributes.items():
+                if key not in document_attributes:
+                    document_attributes[key] = value
+            chunk_rows.append(
+                (
+                    start_index,
+                    end_index,
+                    chunk_id,
+                    MarkdownChunk(
+                        text=chunk_text,
+                        start_index=start_index,
+                        end_index=end_index,
+                        token_count=int(metadata.get("token_count", len(chunk_text))),
+                        context=metadata.get("context"),
+                        origin=origin,
+                        attributes=attributes or None,
+                    ),
+                )
+            )
+
+        chunk_rows.sort(key=lambda row: (row[0], row[1], row[2]))
+        chunks = [chunk for _, _, _, chunk in chunk_rows]
+
+        return MarkdownDocument(
+            origin=origin,
+            content=content,
+            chunks=chunks,
+            attributes=document_attributes or None,
+        )
+
+    def _allocate_chunk_ids(self, count: int) -> list[int]:
+        if count <= 0:
+            return []
+        with self._chunk_id_lock:
+            if self._next_chunk_id is None:
+                results = self.collection.get(include=["metadatas"])
+                chunk_attributes_rows = results.get("metadatas") or []
+                max_chunk_id = -1
+                for chunk_attributes in chunk_attributes_rows:
+                    if not chunk_attributes:
+                        continue
+                    value = chunk_attributes.get("chunk_id")
+                    if value is None:
+                        continue
+                    max_chunk_id = max(max_chunk_id, int(value))
+                self._next_chunk_id = max_chunk_id + 1
+            start = self._next_chunk_id
+            self._next_chunk_id += count
+            return list(range(start, start + count))

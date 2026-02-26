@@ -38,6 +38,13 @@ def default_merge(target: RetrievedChunk, source: RetrievedChunk) -> None:
         target.text = target.text + source.text[overlap_len:]
     target.end_index = new_end
     target.metrics.extend(source.metrics or [])
+    target_ids = list(getattr(target, "chunk_ids", []) or [])
+    source_ids = list(getattr(source, "chunk_ids", []) or [])
+    if target_ids or source_ids:
+        for chunk_id in source_ids:
+            if chunk_id not in target_ids:
+                target_ids.append(chunk_id)
+        target.chunk_ids = target_ids
     _merge_attributes(target, source)
     target.token_count = len(target.text)
 
@@ -169,20 +176,20 @@ def test__deoverlap_chunks_overlapping_same_document():
             text="hello world",
             start_index=0,
             end_index=11,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("bm25", 0.8)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="world hello",
             start_index=6,
             end_index=17,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[Metric("bm25", 0.7)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].start_index == 0
     assert result[0].end_index == 17
@@ -200,20 +207,20 @@ def test__deoverlap_chunks_different_documents():
             text="hello",
             start_index=0,
             end_index=5,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="world",
             start_index=0,
             end_index=5,
-            doc_id=2,
-            chunk_id=2,
+            origin=2,
+            chunk_ids=[2],
             metrics=[Metric("b", 2)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 2
 
 
@@ -227,20 +234,20 @@ def test__deoverlap_chunks_non_overlapping():
             text="hello",
             start_index=0,
             end_index=5,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="world",
             start_index=10,
             end_index=15,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[Metric("b", 2)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 2
 
 
@@ -253,20 +260,20 @@ def test__deoverlap_chunks_adjacent_not_merged():
             text="hello",
             start_index=0,
             end_index=5,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="world",
             start_index=5,
             end_index=10,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 2
 
 
@@ -286,12 +293,12 @@ def test__deoverlap_chunks_single():
             text="solo",
             start_index=0,
             end_index=4,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         )
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].text == "solo"
 
@@ -306,28 +313,28 @@ def test__deoverlap_chunks_chain():
             text="01234",
             start_index=0,
             end_index=5,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="34567",
             start_index=3,
             end_index=8,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[Metric("b", 2)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="6789X",
             start_index=6,
             end_index=11,
-            doc_id=1,
-            chunk_id=3,
+            origin=1,
+            chunk_ids=[3],
             metrics=[Metric("c", 3)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].start_index == 0
     assert result[0].end_index == 11
@@ -345,20 +352,20 @@ def test__deoverlap_chunks_reverse_order():
             text="world",
             start_index=6,
             end_index=11,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[Metric("b", 2)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="hello ",
             start_index=0,
             end_index=6,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     # Adjacent chunks (end_index=6, start_index=6) should NOT be merged
     assert len(result) == 2
     # First chunk should be "hello " (sorted by start_index)
@@ -376,20 +383,20 @@ def test__deoverlap_chunks_fully_contained():
             text="hello world",
             start_index=0,
             end_index=11,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[Metric("a", 1)],
         ),
         RetrievedDuckDBMarkdownChunk(
             text="lo wo",
             start_index=3,
             end_index=8,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[Metric("b", 2)],
         ),
     ]
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].text == "hello world"
     assert result[0].start_index == 0
@@ -406,8 +413,8 @@ def test__deoverlap_chunks_merge_attributes_as_lists():
             text="hello world",
             start_index=0,
             end_index=11,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[],
             context="h1",
             attributes={"tenant": "docs", "priority": 1},
@@ -416,15 +423,15 @@ def test__deoverlap_chunks_merge_attributes_as_lists():
             text="world hello",
             start_index=6,
             end_index=17,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[],
             context="h2",
             attributes={"tenant": "blog", "priority": 2},
         ),
     ]
 
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].context == "h1"
     assert result[0].attributes == {
@@ -442,8 +449,8 @@ def test__deoverlap_chunks_merge_vector_attributes_without_flattening():
             text="hello world",
             start_index=0,
             end_index=11,
-            doc_id=1,
-            chunk_id=1,
+            origin=1,
+            chunk_ids=[1],
             metrics=[],
             attributes={"embedding3": [0.1, 0.2, 0.3]},
         ),
@@ -451,14 +458,14 @@ def test__deoverlap_chunks_merge_vector_attributes_without_flattening():
             text="world hello",
             start_index=6,
             end_index=17,
-            doc_id=1,
-            chunk_id=2,
+            origin=1,
+            chunk_ids=[2],
             metrics=[],
             attributes={"embedding3": [0.4, 0.5, 0.6]},
         ),
     ]
 
-    result = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+    result = deoverlap_chunks(chunks, key=lambda c: c.origin)
     assert len(result) == 1
     assert result[0].attributes == {
         "embedding3": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
