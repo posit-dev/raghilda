@@ -93,7 +93,7 @@ for doc in [
         attributes={"artifact_id": "A1001", "note_type": "conservation"},
     ),
 ]:
-    simple_store.insert(chunker.chunk_document(doc))
+    simple_store.upsert(chunker.chunk_document(doc))
 
 simple_store.build_index("bm25")
 
@@ -200,7 +200,7 @@ for doc in [
         },
     ),
 ]:
-    store.insert(chunker.chunk_document(doc))
+    store.upsert(chunker.chunk_document(doc))
 
 store.build_index("bm25")
 
@@ -326,7 +326,7 @@ for doc in [
         },
     ),
 ]:
-    complex_store.insert(chunker.chunk_document(doc))
+    complex_store.upsert(chunker.chunk_document(doc))
 
 complex_store.build_index("bm25")
 

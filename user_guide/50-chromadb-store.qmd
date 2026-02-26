@@ -79,7 +79,7 @@ chunker = MarkdownChunker()
 chunked_doc = chunker.chunk_document(doc)
 
 # Insert into store
-store.insert(chunked_doc)
+store.upsert(chunked_doc)
 ```
 
 ### Batch Ingestion

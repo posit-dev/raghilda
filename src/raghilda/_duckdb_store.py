@@ -1,10 +1,10 @@
-from ._store import BaseStore
+from ._store import BaseStore, WriteResult
 from collections.abc import Sized
 import json
 import os
 import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
-from .chunk import MarkdownChunk, RetrievedChunk, Metric
+from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
 from .chunker import MarkdownChunker
 from .read import read_as_markdown
 from .document import Document, MarkdownDocument
@@ -57,7 +57,6 @@ _RESERVED_SYSTEM_COLUMNS = {
 }
 
 _FILTERABLE_BASE_COLUMNS = {
-    "doc_id",
     "chunk_id",
     "origin",
     "start_index",
@@ -70,9 +69,6 @@ _FILTERABLE_BASE_COLUMNS = {
 class DuckDBMarkdownChunk(MarkdownChunk):
     """MarkdownChunk with DuckDB-specific fields for database storage"""
 
-    doc_id: Optional[str] = None
-    chunk_id: Optional[int] = None
-
     def __init__(
         self,
         text: str,
@@ -80,8 +76,7 @@ class DuckDBMarkdownChunk(MarkdownChunk):
         end_index: int,
         context=None,
         token_count=None,
-        doc_id=None,
-        chunk_id=None,
+        origin=None,
         attributes=None,
     ):
         # Compute token_count if not provided
@@ -95,12 +90,9 @@ class DuckDBMarkdownChunk(MarkdownChunk):
             end_index=end_index,
             token_count=token_count,
             context=context,
+            origin=origin,
             attributes=attributes,
         )
-
-        # Set DuckDB-specific fields
-        self.doc_id = doc_id
-        self.chunk_id = chunk_id
 
 
 @dataclass(repr=False)
@@ -114,9 +106,9 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
         end_index: int,
         context=None,
         token_count=None,
-        doc_id=None,
-        chunk_id=None,
+        origin=None,
         metrics=None,
+        chunk_ids=None,
         attributes=None,
     ):
         # Initialize DuckDBMarkdownChunk
@@ -126,8 +118,7 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
             end_index=end_index,
             context=context,
             token_count=token_count,
-            doc_id=doc_id,
-            chunk_id=chunk_id,
+            origin=origin,
             attributes=attributes,
         )
 
@@ -135,6 +126,9 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
         if metrics is None:
             metrics = []
         self.metrics = metrics
+        if chunk_ids is None:
+            chunk_ids = []
+        self.chunk_ids = chunk_ids
 
 
 @dataclass
@@ -205,7 +199,6 @@ class DuckDBStore(BaseStore):
             Path to the DuckDB database file.
         read_only
             Whether to open the database in read-only mode.
-
         Returns
         -------
         DuckDBStore
@@ -276,7 +269,7 @@ class DuckDBStore(BaseStore):
             Example: `{"tenant": str, "priority": int}`.
             Attribute names use identifier-style syntax.
             Built-in backend columns that cannot be declared as attributes are:
-            `doc_id`, `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
+            `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
 
         Returns
         -------
@@ -348,6 +341,7 @@ class DuckDBStore(BaseStore):
             start_index INTEGER,
             end_index INTEGER,
             PRIMARY KEY (doc_id, start_index, end_index),
+            chunk_text VARCHAR,
             context VARCHAR{tail_columns_sql}
         );
 
@@ -355,7 +349,7 @@ class DuckDBStore(BaseStore):
             SELECT
             d.origin as origin,
             e.*,
-            d.text[ e.start_index : e.end_index ] as text
+            e.chunk_text as text
             FROM
             documents d
             JOIN
@@ -401,17 +395,126 @@ class DuckDBStore(BaseStore):
     ):
         self.con = con
         self.metadata = metadata
+        _validate_required_schema(
+            con=self.con,
+            attributes_schema=self.metadata.attributes_schema,
+            require_embedding=self.metadata.embed is not None,
+        )
         self._db_lock = threading.Lock()
 
-    def insert(
+    def upsert(
         self,
         document: Document,
-    ) -> None:
-        if isinstance(document, MarkdownDocument):
-            self._insert_chunked_document(document)
-        else:
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult:
+        if not isinstance(document, MarkdownDocument):
             raise NotImplementedError(
-                f"Insert not implemented for type {type(document)}"
+                f"Upsert not implemented for type {type(document)}"
+            )
+        if not isinstance(document.origin, str) or not document.origin:
+            raise ValueError("document.origin must be a non-empty string for upsert().")
+        if document.chunks is None:
+            raise ValueError("Document must be chunked before insertion.")
+        if len(document.chunks) == 0:
+            raise ValueError("Document must contain at least one chunk.")
+        for chunk in document.chunks:
+            chunk.origin = document.origin
+
+        # DuckDB connections are not thread-safe for reads or writes.
+        # Hold the lock here to avoid unnecessary embedding work when the
+        # existing stored content/chunk layout is identical.
+        with self._db_lock:
+            existing_rows = self._get_existing_documents_by_origin(document.origin)
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    doc_id=existing["doc_id"],
+                )
+            ):
+                current_document = self._load_document_snapshot(
+                    doc_id=existing["doc_id"],
+                    origin=document.origin,
+                    text=existing["text"],
+                )
+                return WriteResult(
+                    action="skipped",
+                    document=current_document,
+                )
+
+        doc_row, chunk_rows = self._prepare_chunked_document_rows(document)
+
+        with self._db_lock:
+            existing_rows = self._get_existing_documents_by_origin(document.origin)
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    doc_id=existing["doc_id"],
+                )
+            ):
+                current_document = self._load_document_snapshot(
+                    doc_id=existing["doc_id"],
+                    origin=document.origin,
+                    text=existing["text"],
+                )
+                return WriteResult(
+                    action="skipped",
+                    document=current_document,
+                )
+
+            action = "inserted"
+            replaced_document: MarkdownDocument | None = None
+            if existing is not None:
+                action = "replaced"
+                doc_id = existing["doc_id"]
+                replaced_document = self._load_document_snapshot(
+                    doc_id=doc_id,
+                    origin=document.origin,
+                    text=existing["text"],
+                )
+                doc_row["doc_id"] = doc_id
+                chunk_rows["doc_id"] = [doc_id] * len(chunk_rows)
+
+            try:
+                self.con.begin()
+                if action == "replaced":
+                    self.con.execute(
+                        "DELETE FROM embeddings WHERE doc_id = ?",
+                        [doc_row["doc_id"][0]],
+                    )
+                    self.con.execute(
+                        "UPDATE documents SET text = ? WHERE doc_id = ?",
+                        [doc_row["text"][0], doc_row["doc_id"][0]],
+                    )
+                else:
+                    _duckdb_append(self.con, "documents", doc_row)
+                _duckdb_append(self.con, "embeddings", chunk_rows)
+                self.con.commit()
+            except Exception:
+                try:
+                    self.con.rollback()
+                except Exception:
+                    pass
+                raise
+
+            result_doc_id = str(doc_row["doc_id"][0])
+            current_document = self._load_document_snapshot(
+                doc_id=result_doc_id,
+                origin=document.origin,
+                text=document.content,
+            )
+            return WriteResult(
+                action=action,
+                document=current_document,
+                replaced_document=replaced_document,
             )
 
     def ingest(
@@ -504,7 +607,7 @@ class DuckDBStore(BaseStore):
         def do_ingest_work(item: Any) -> None:
             try:
                 doc = prepare(item)
-                self.insert(doc)
+                self.upsert(doc)
             except Exception as e:
                 raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
 
@@ -514,20 +617,23 @@ class DuckDBStore(BaseStore):
             ):
                 future.result()
 
-    def _insert_chunked_document(
+    def _prepare_chunked_document_rows(
         self,
         chunked_doc: MarkdownDocument,
-    ) -> None:
-        # Document should be chunked for insertion
-        assert chunked_doc.chunks is not None
-
-        doc = pd.DataFrame([asdict(chunked_doc)])
-        # User attributes are stored in declared embeddings columns.
-        doc.drop(columns=["chunks", "attributes"], inplace=True, errors="ignore")
-        chunks = pd.DataFrame(asdict(chunk) for chunk in chunked_doc.chunks)
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        doc = pd.DataFrame(
+            [
+                {
+                    "doc_id": chunked_doc.origin,
+                    "origin": chunked_doc.origin,
+                    "text": chunked_doc.content,
+                }
+            ]
+        )
+        chunks = pd.DataFrame(asdict(chunk) for chunk in chunked_doc.chunks or [])
 
         resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
-        for chunk in chunked_doc.chunks:
+        for chunk in chunked_doc.chunks or []:
             chunk_attributes = getattr(chunk, "attributes", None)
             resolved_chunk_attributes.append(
                 merge_attribute_values(
@@ -546,39 +652,178 @@ class DuckDBStore(BaseStore):
         # Remove token_count since it's not stored in the database
         if "token_count" in chunks.columns:
             chunks.drop(columns=["token_count"], inplace=True)
-        # Remove text since it's not stored in embeddings table (it's computed from documents table)
         if "text" in chunks.columns:
-            chunks.drop(columns=["text"], inplace=True)
+            chunks.rename(columns={"text": "chunk_text"}, inplace=True)
         # User attributes are represented as dedicated columns in embeddings.
         if "attributes" in chunks.columns:
             chunks.drop(columns=["attributes"], inplace=True)
-        # Some chunk implementations expose an `id` field; drop that temporary
-        # source field before assigning declared user attributes.
-        if "id" in chunks.columns:
-            chunks.drop(columns=["id"], inplace=True)
+        # Drop non-embedding source fields before writing to embeddings.
+        chunks.drop(
+            columns=["id", "origin", "chunk_ids"], inplace=True, errors="ignore"
+        )
 
         for column in self.metadata.attributes_schema:
             chunks[column] = [row[column] for row in resolved_chunk_attributes]
 
-        doc.rename(
-            columns={"content": "text", "id": "doc_id"}, inplace=True
-        )  # content -> text
         chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
 
-        # DuckDB connections are not thread-safe. Use a lock to serialize all
-        # DB operations. Embedding runs outside the lock for parallelism.
-        with self._db_lock:
-            try:
-                self.con.begin()
-                _duckdb_append(self.con, "documents", doc)
-                _duckdb_append(self.con, "embeddings", chunks)
-                self.con.commit()
-            except Exception as e:
-                try:
-                    self.con.rollback()
-                except Exception:
-                    pass
-                raise e
+        return doc, chunks
+
+    def _get_existing_documents_by_origin(self, origin: str) -> list[dict[str, str]]:
+        rows = self.con.execute(
+            "SELECT doc_id, text FROM documents WHERE origin = ? ORDER BY doc_id",
+            [origin],
+        ).fetchall()
+        return [
+            {
+                "doc_id": row[0],
+                "text": row[1],
+            }
+            for row in rows
+        ]
+
+    def _chunk_layout_matches_existing(
+        self, *, chunked_doc: MarkdownDocument, doc_id: str
+    ) -> bool:
+        incoming = self._chunk_layout_records(chunked_doc)
+        existing = self._chunk_layout_records_from_store(doc_id)
+        return incoming == existing
+
+    def _chunk_layout_records(
+        self, chunked_doc: MarkdownDocument
+    ) -> list[tuple[Any, ...]]:
+        records: list[tuple[Any, ...]] = []
+        attributes_columns = list(self.metadata.attributes_schema)
+        for chunk in chunked_doc.chunks or []:
+            resolved = merge_attribute_values(
+                attributes_spec=self.metadata.attributes_spec,
+                sources=[chunked_doc.attributes, chunk.attributes],
+            )
+            row: list[Any] = [
+                chunk.start_index,
+                chunk.end_index,
+                chunk.text,
+                chunk.context,
+            ]
+            row.extend(
+                self._coerce_chunk_layout_attribute_value(col, resolved[col])
+                for col in attributes_columns
+            )
+            records.append(tuple(row))
+        records.sort(key=lambda item: (item[0], item[1]))
+        return records
+
+    def _chunk_layout_records_from_store(self, doc_id: str) -> list[tuple[Any, ...]]:
+        attributes_columns = list(self.metadata.attributes_schema)
+        attribute_select = ", ".join(
+            _quote_identifier(col) for col in attributes_columns
+        )
+        if attribute_select:
+            attribute_select = ", " + attribute_select
+        result = self.con.execute(
+            f"""
+            SELECT
+                e.start_index,
+                e.end_index,
+                e.chunk_text,
+                e.context
+                {attribute_select}
+            FROM embeddings e
+            WHERE e.doc_id = ?
+            ORDER BY e.start_index, e.end_index
+            """,
+            [doc_id],
+        )
+        rows = result.fetchall()
+        records: list[tuple[Any, ...]] = []
+        for row in rows:
+            start_index = int(row[0])
+            end_index = int(row[1])
+            chunk_text = row[2]
+            if chunk_text is None:
+                raise ValueError(
+                    f"Corrupted DuckDB store: missing chunk_text for doc_id '{doc_id}'."
+                )
+            context = row[3]
+            attribute_values = [
+                self._coerce_chunk_layout_attribute_value(col, row[4 + idx])
+                for idx, col in enumerate(attributes_columns)
+            ]
+            records.append(
+                (start_index, end_index, chunk_text, context, *attribute_values)
+            )
+        return records
+
+    def _coerce_chunk_layout_attribute_value(self, column: str, value: Any) -> Any:
+        return coerce_attribute_value_for_output(
+            column,
+            value,
+            self.metadata.attributes_schema[column],
+        )
+
+    def _load_document_snapshot(
+        self, *, doc_id: str, origin: str, text: str
+    ) -> MarkdownDocument:
+        attribute_columns = list(self.metadata.attributes_schema)
+        attribute_select = ", ".join(
+            _quote_identifier(col) for col in attribute_columns
+        )
+        if attribute_select:
+            attribute_select = ", " + attribute_select
+        result = self.con.execute(
+            f"""
+            SELECT
+                start_index,
+                end_index,
+                chunk_text,
+                context
+                {attribute_select}
+            FROM embeddings
+            WHERE doc_id = ?
+            ORDER BY start_index, end_index
+            """,
+            [doc_id],
+        )
+        rows = result.fetchall()
+        if result.description is None:
+            raise RuntimeError("Failed to load replaced document snapshot.")
+        columns = [desc[0] for desc in result.description]
+
+        chunks: list[Chunk] = []
+        document_attributes: dict[str, Any] = {}
+        for row in rows:
+            row_dict = dict(zip(columns, row))
+            attributes = {
+                key: row_dict[key] for key in attribute_columns if key in row_dict
+            }
+            for key, value in attributes.items():
+                if key not in document_attributes or document_attributes[key] is None:
+                    document_attributes[key] = value
+            start_index = int(row_dict["start_index"])
+            end_index = int(row_dict["end_index"])
+            chunk_text = row_dict["chunk_text"]
+            if chunk_text is None:
+                raise ValueError(
+                    f"Corrupted DuckDB store: missing chunk_text for doc_id '{doc_id}'."
+                )
+            chunks.append(
+                MarkdownChunk(
+                    start_index=start_index,
+                    end_index=end_index,
+                    text=chunk_text,
+                    token_count=len(chunk_text),
+                    context=row_dict.get("context"),
+                    origin=origin,
+                    attributes=attributes or None,
+                )
+            )
+
+        return MarkdownDocument(
+            origin=origin,
+            content=text,
+            chunks=chunks,
+            attributes=document_attributes or None,
+        )
 
     def retrieve(
         self,
@@ -611,7 +856,7 @@ class DuckDBStore(BaseStore):
             Can be a SQL-like string or a dict AST.
             Example string: `"tenant = 'docs' AND priority >= 2"`.
             Supports declared attributes plus built-in columns:
-            `doc_id`, `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
+            `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
 
         Returns
         -------
@@ -634,12 +879,13 @@ class DuckDBStore(BaseStore):
             )
         )
 
-        # combine chunks by `doc_id` and `chunk_id` and then merge metrics
+        # combine chunks by origin and backend chunk id, then merge metrics
         combined_chunks: dict[
             tuple[str | None, int | None], RetrievedDuckDBMarkdownChunk
         ] = {}
         for chunk in retrieved_chunks:
-            key = (chunk.doc_id, chunk.chunk_id)
+            first_chunk_id = chunk.chunk_ids[0] if chunk.chunk_ids else None
+            key = (chunk.origin, first_chunk_id)
             if key not in combined_chunks:
                 combined_chunks[key] = chunk
             else:
@@ -648,7 +894,7 @@ class DuckDBStore(BaseStore):
         chunks = list(combined_chunks.values())
 
         if deoverlap:
-            chunks = deoverlap_chunks(chunks, key=lambda c: c.doc_id)
+            chunks = deoverlap_chunks(chunks, key=lambda c: c.origin)
 
         return chunks
 
@@ -680,7 +926,7 @@ class DuckDBStore(BaseStore):
         attributes_filter
             Optional attribute filter as SQL-like string or dict AST.
             Supports declared attributes plus built-in columns:
-            `doc_id`, `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
+            `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
 
         Returns
         -------
@@ -727,13 +973,13 @@ class DuckDBStore(BaseStore):
 
         sql = f"""
         SELECT
-            e.doc_id,
             e.chunk_id,
+            doc.origin AS origin,
             e.start_index,
             e.end_index,
             e.context,
             {attribute_select}
-            doc.text[ e.start_index: e.end_index ] AS text,
+            e.chunk_text AS text,
             '{method}' AS metric_name,
             {metric_value_sql} AS metric_value
         FROM {source_sql}
@@ -756,6 +1002,7 @@ class DuckDBStore(BaseStore):
         for chunk in rows:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
+            chunk_id = chunk_dict.pop("chunk_id", None)
             attribute_values: dict[str, AttributeValue] = {}
             for key, attribute_type in self.metadata.attributes_schema.items():
                 if key in chunk_dict:
@@ -764,6 +1011,7 @@ class DuckDBStore(BaseStore):
                         chunk_dict.pop(key),
                         attribute_type,
                     )
+            chunk_dict["chunk_ids"] = [] if chunk_id is None else [int(chunk_id)]
             chunk_dict["metrics"] = [Metric(name, value)]
             chunk_dict["attributes"] = attribute_values
             output.append(RetrievedDuckDBMarkdownChunk(**chunk_dict))
@@ -803,7 +1051,7 @@ class DuckDBStore(BaseStore):
         attributes_filter
             Optional attribute filter as SQL-like string or dict AST.
             Supports declared attributes plus built-in columns:
-            `doc_id`, `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
+            `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
 
         Returns
         -------
@@ -826,13 +1074,13 @@ class DuckDBStore(BaseStore):
         sql = f"""
         WITH ranked AS (
             SELECT
-                e.doc_id, 
                 e.chunk_id, 
+                doc.origin AS origin,
                 e.start_index, 
                 e.end_index, 
                 e.context, 
                 {attribute_select}
-                doc.text[ e.start_index: e.end_index ] AS text,
+                e.chunk_text AS text,
                 'bm25' AS metric_name,
                 fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
             FROM embeddings e
@@ -868,6 +1116,7 @@ class DuckDBStore(BaseStore):
         for chunk in rows:
             chunk_dict = dict(zip(columns, chunk))
             name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
+            chunk_id = chunk_dict.pop("chunk_id", None)
             attribute_values: dict[str, AttributeValue] = {}
             for key, attribute_type in self.metadata.attributes_schema.items():
                 if key in chunk_dict:
@@ -876,6 +1125,7 @@ class DuckDBStore(BaseStore):
                         chunk_dict.pop(key),
                         attribute_type,
                     )
+            chunk_dict["chunk_ids"] = [] if chunk_id is None else [int(chunk_id)]
             chunk_dict["metrics"] = [Metric(name, value)]
             chunk_dict["attributes"] = attribute_values
             output.append(RetrievedDuckDBMarkdownChunk(**chunk_dict))
@@ -1026,6 +1276,69 @@ def _check_is_raghilda_con(con: duckdb.DuckDBPyConnection):
 
     if "metadata" not in tables:
         raise ValueError("Not a valid Raghilda database connection")
+
+
+def _validate_required_schema(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    attributes_schema: Mapping[str, AttributeType],
+    require_embedding: bool,
+) -> None:
+    _assert_table_has_columns(
+        con,
+        table="metadata",
+        required_columns={"name", "title", "embed_config", "attributes_schema_json"},
+    )
+    _assert_table_has_columns(
+        con,
+        table="documents",
+        required_columns={"doc_id", "origin", "text"},
+    )
+    required_embeddings_columns = {
+        "doc_id",
+        "chunk_id",
+        "start_index",
+        "end_index",
+        "chunk_text",
+        "context",
+        *attributes_schema.keys(),
+    }
+    if require_embedding:
+        required_embeddings_columns.add("embedding")
+    _assert_table_has_columns(
+        con,
+        table="embeddings",
+        required_columns=required_embeddings_columns,
+    )
+
+
+def _assert_table_has_columns(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    table: str,
+    required_columns: set[str],
+) -> None:
+    columns = _table_columns(con, table=table)
+    missing_columns = sorted(required_columns - columns)
+    if missing_columns:
+        missing = ", ".join(missing_columns)
+        raise ValueError(
+            f"Invalid DuckDB store schema: table '{table}' missing required columns: {missing}"
+        )
+
+
+def _table_columns(con: duckdb.DuckDBPyConnection, *, table: str) -> set[str]:
+    try:
+        rows = con.execute(f"PRAGMA table_info('{table}')").fetchall()
+    except duckdb.Error as exc:
+        raise ValueError(
+            f"Invalid DuckDB store schema: missing required table '{table}'"
+        ) from exc
+    if not rows:
+        raise ValueError(
+            f"Invalid DuckDB store schema: missing required table '{table}'"
+        )
+    return {str(row[1]) for row in rows}
 
 
 def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
