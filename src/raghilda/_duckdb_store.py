@@ -13,7 +13,6 @@ import duckdb
 from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
-import pandas as pd
 from enum import StrEnum
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
@@ -481,21 +480,22 @@ class DuckDBStore(BaseStore):
                     text=existing["text"],
                 )
                 doc_row["doc_id"] = doc_id
-                chunk_rows["doc_id"] = [doc_id] * len(chunk_rows)
+                for chunk_row in chunk_rows:
+                    chunk_row["doc_id"] = doc_id
 
             try:
                 self.con.begin()
                 if action == "replaced":
                     self.con.execute(
                         "DELETE FROM embeddings WHERE doc_id = ?",
-                        [doc_row["doc_id"][0]],
+                        [doc_row["doc_id"]],
                     )
                     self.con.execute(
                         "UPDATE documents SET text = ? WHERE doc_id = ?",
-                        [doc_row["text"][0], doc_row["doc_id"][0]],
+                        [doc_row["text"], doc_row["doc_id"]],
                     )
                 else:
-                    _duckdb_append(self.con, "documents", doc_row)
+                    _duckdb_append(self.con, "documents", [doc_row])
                 _duckdb_append(self.con, "embeddings", chunk_rows)
                 self.con.commit()
             except Exception:
@@ -505,7 +505,7 @@ class DuckDBStore(BaseStore):
                     pass
                 raise
 
-            result_doc_id = str(doc_row["doc_id"][0])
+            result_doc_id = str(doc_row["doc_id"])
             current_document = self._load_document_snapshot(
                 doc_id=result_doc_id,
                 origin=document.origin,
@@ -620,17 +620,15 @@ class DuckDBStore(BaseStore):
     def _prepare_chunked_document_rows(
         self,
         chunked_doc: MarkdownDocument,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        doc = pd.DataFrame(
-            [
-                {
-                    "doc_id": chunked_doc.origin,
-                    "origin": chunked_doc.origin,
-                    "text": chunked_doc.content,
-                }
-            ]
-        )
-        chunks = pd.DataFrame(asdict(chunk) for chunk in chunked_doc.chunks or [])
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        assert chunked_doc.chunks is not None
+
+        doc = {
+            "doc_id": chunked_doc.origin,
+            "origin": chunked_doc.origin,
+            "text": chunked_doc.content,
+        }
+        chunks = [asdict(chunk) for chunk in chunked_doc.chunks]
 
         resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
         for chunk in chunked_doc.chunks or []:
@@ -642,32 +640,35 @@ class DuckDBStore(BaseStore):
                 )
             )
 
+        embedded_chunks = None
         if self.metadata.embed is not None:
-            chunks["embedding"] = self.metadata.embed.embed(
-                chunks.text.tolist(), EmbedInputType.DOCUMENT
+            embedded_chunks = self.metadata.embed.embed(
+                [chunk["text"] for chunk in chunks], EmbedInputType.DOCUMENT
             )
-        else:
-            chunks.drop(columns=["embedding"], inplace=True, errors="ignore")
 
-        # Remove token_count since it's not stored in the database
-        if "token_count" in chunks.columns:
-            chunks.drop(columns=["token_count"], inplace=True)
-        if "text" in chunks.columns:
-            chunks.rename(columns={"text": "chunk_text"}, inplace=True)
-        # User attributes are represented as dedicated columns in embeddings.
-        if "attributes" in chunks.columns:
-            chunks.drop(columns=["attributes"], inplace=True)
-        # Drop non-embedding source fields before writing to embeddings.
-        chunks.drop(
-            columns=["id", "origin", "chunk_ids"], inplace=True, errors="ignore"
-        )
+        chunk_rows: list[dict[str, Any]] = []
+        for index, chunk_data in enumerate(chunks):
+            row = dict(chunk_data)
 
-        for column in self.metadata.attributes_schema:
-            chunks[column] = [row[column] for row in resolved_chunk_attributes]
+            row.pop("token_count", None)
+            row.pop("attributes", None)
+            row["chunk_text"] = row.pop("text", None)
+            row.pop("id", None)
+            row.pop("origin", None)
+            row.pop("chunk_ids", None)
 
-        chunks["doc_id"] = [doc["doc_id"][0]] * len(chunks)
+            if embedded_chunks is not None:
+                row["embedding"] = embedded_chunks[index]
+            else:
+                row.pop("embedding", None)
 
-        return doc, chunks
+            for column in self.metadata.attributes_schema:
+                row[column] = resolved_chunk_attributes[index][column]
+
+            row["doc_id"] = doc["doc_id"]
+            chunk_rows.append(row)
+
+        return doc, chunk_rows
 
     def _get_existing_documents_by_origin(self, origin: str) -> list[dict[str, str]]:
         rows = self.con.execute(
@@ -1341,18 +1342,20 @@ def _table_columns(con: duckdb.DuckDBPyConnection, *, table: str) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
-def _duckdb_append(con: duckdb.DuckDBPyConnection, table: str, data):
-    try:
-        con.register(f"tmp_data_{table}", data)
-        column_list = ", ".join(_quote_identifier(col) for col in data.columns)
-        con.execute(
-            f"INSERT INTO {table} ({column_list}) SELECT * FROM tmp_data_{table}"
-        )
-    finally:
-        try:
-            con.unregister(f"tmp_data_{table}")
-        except Exception:
-            pass
+def _duckdb_append(
+    con: duckdb.DuckDBPyConnection, table: str, rows: Sequence[Mapping[str, Any]]
+) -> None:
+    if not rows:
+        return
+
+    columns = list(rows[0])
+    values = [tuple(row[column] for column in columns) for row in rows]
+    column_list = ", ".join(_quote_identifier(column) for column in columns)
+    placeholders = ", ".join("?" for _ in columns)
+    con.executemany(
+        f"INSERT INTO {_quote_identifier(table)} ({column_list}) VALUES ({placeholders})",
+        values,
+    )
 
 
 def _quote_identifier(identifier: str) -> str:
