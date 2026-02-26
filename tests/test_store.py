@@ -1,6 +1,10 @@
 import os
 import hashlib
 import json
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
 import duckdb
@@ -3053,3 +3057,53 @@ def test_connect_fails_fast_when_embeddings_table_lacks_chunk_text(tmp_path):
         match="table 'embeddings' missing required columns: chunk_text",
     ):
         DuckDBStore.connect(str(db_path))
+
+
+def test_duckdb_store_does_not_require_pandas():
+    repo_root = Path(__file__).resolve().parents[1]
+    src_path = repo_root / "src"
+    script = textwrap.dedent(
+        """
+        import builtins
+
+        original_import = builtins.__import__
+
+        def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "pandas" or name.startswith("pandas."):
+                raise ModuleNotFoundError("No module named 'pandas'")
+            return original_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = blocked_import
+
+        from raghilda.chunk import MarkdownChunk
+        from raghilda.document import MarkdownDocument
+        from raghilda.store import DuckDBStore
+
+        store = DuckDBStore.create(location=":memory:", embed=None, overwrite=True)
+        doc = MarkdownDocument(origin="test", content="hello world")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text="hello",
+                token_count=5,
+            )
+        ]
+        store.upsert(doc)
+        assert store.size() == 1
+        """
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else str(src_path)
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
