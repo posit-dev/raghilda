@@ -415,8 +415,8 @@ class DuckDBStore(BaseStore):
         if len(document.chunks) == 0:
             raise ValueError("Document must contain at least one chunk.")
         for chunk in document.chunks:
-            chunk.origin = document.origin
-            _validate_chunk_text_matches_document_content(
+            _validate_chunk_against_document(
+                document_origin=document.origin,
                 content=document.content,
                 chunk=chunk,
             )
@@ -1388,6 +1388,19 @@ def _slice_chunk_text(content: str, *, start_index: int, end_index: int) -> str:
     return content[start_index:end_index]
 
 
+def _validate_chunk_against_document(
+    *, document_origin: str, content: str, chunk: Chunk
+) -> None:
+    _validate_chunk_origin_matches_document_origin(
+        document_origin=document_origin,
+        chunk=chunk,
+    )
+    _validate_chunk_text_matches_document_content(
+        content=content,
+        chunk=chunk,
+    )
+
+
 def _validate_chunk_text_matches_document_content(
     *, content: str, chunk: Chunk
 ) -> None:
@@ -1401,4 +1414,16 @@ def _validate_chunk_text_matches_document_content(
             "Chunk text must match document.content[start_index:end_index]. "
             f"Got chunk.text={chunk.text!r}, expected {expected_text!r} "
             f"for start_index={chunk.start_index}, end_index={chunk.end_index}."
+        )
+
+
+def _validate_chunk_origin_matches_document_origin(
+    *, document_origin: str, chunk: Chunk
+) -> None:
+    if chunk.origin is None:
+        return
+    if chunk.origin != document_origin:
+        raise ValueError(
+            "Chunk origin must be None or match document.origin. "
+            f"Got chunk.origin={chunk.origin!r}, document.origin={document_origin!r}."
         )
