@@ -7,7 +7,6 @@ import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
-import duckdb
 import httpx
 import openai
 import pytest
@@ -18,6 +17,7 @@ from raghilda.chunk import MarkdownChunk, RetrievedChunk
 from raghilda._attributes import AttributeFloatVectorType
 from raghilda._duckdb_store import (
     RetrievedDuckDBMarkdownChunk,
+    VSSMethod,
 )  # internal implementation
 from raghilda._openai_store import _normalize_openai_attributes
 from raghilda.embedding import EmbeddingOpenAI
@@ -222,7 +222,7 @@ class TestDuckDBStore:
         assert chunk_count is not None
         assert chunk_count[0] == 2
 
-    def test_insert_same_layout_but_different_chunk_text_updates(self):
+    def test_insert_same_layout_but_different_chunk_text_fails_fast(self):
         embed = CountingEmbedding()
         store = DuckDBStore.create(
             location=":memory:",
@@ -255,11 +255,14 @@ class TestDuckDBStore:
                 token_count=len(content),
             )
         ]
-        second = store.upsert(doc2)
-        assert second.action == "replaced"
-        assert embed.calls == calls_after_create + 2
+        with pytest.raises(
+            ValueError,
+            match=r"Chunk text must match document\.content\[start_index:end_index\]",
+        ):
+            store.upsert(doc2)
+        assert embed.calls == calls_after_create + 1
 
-    def test_insert_same_origin_with_changed_chunk_text_does_not_skip(self):
+    def test_insert_with_mismatched_chunk_text_fails_fast(self):
         embed = CountingEmbedding()
         store = DuckDBStore.create(
             location=":memory:",
@@ -279,24 +282,12 @@ class TestDuckDBStore:
                 token_count=len(content),
             )
         ]
-
-        inserted = store.upsert(first)
-        assert inserted.action == "inserted"
-        assert embed.calls == calls_after_create + 1
-
-        second = MarkdownDocument(origin="doc-1", content=content)
-        second.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content,
-                token_count=len(content),
-            )
-        ]
-
-        replaced = store.upsert(second)
-        assert replaced.action == "replaced"
-        assert embed.calls == calls_after_create + 2
+        with pytest.raises(
+            ValueError,
+            match=r"Chunk text must match document\.content\[start_index:end_index\]",
+        ):
+            store.upsert(first)
+        assert embed.calls == calls_after_create
 
     def test_insert_same_multi_chunk_layout_skips_when_unchanged(self):
         embed = CountingEmbedding()
@@ -518,7 +509,8 @@ class TestDuckDBStore:
         results = store_with_docs.retrieve_vss("test", top_k=5)
         assert len(results) == 5
 
-    def test_retrieve_vss_returns_chunk_text_not_document_slice(self):
+    def test_retrieve_vss_returns_document_slice_for_non_zero_start(self):
+        # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
         embed = CountingEmbedding()
         store = DuckDBStore.create(
             location=":memory:",
@@ -526,20 +518,33 @@ class TestDuckDBStore:
             overwrite=True,
             name="vss-text-source",
         )
-        doc = MarkdownDocument(origin="vss-text-source", content="alpha beta gamma")
+        doc = MarkdownDocument(origin="vss-text-source", content="alphabetagamma")
         doc.chunks = [
             MarkdownChunk(
                 start_index=0,
                 end_index=5,
-                text="zeta",
+                text="alpha",
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=5,
+                end_index=9,
+                text="beta",
                 token_count=4,
-            )
+            ),
         ]
         store.upsert(doc)
 
-        results = store.retrieve_vss([float(len("zeta"))], top_k=1)
-        assert len(results) == 1
-        assert results[0].text == "zeta"
+        results = store.retrieve_vss(
+            [float(len("beta"))],
+            top_k=2,
+            method=VSSMethod.EUCLIDEAN_DISTANCE,
+        )
+        second_chunk = next(
+            (chunk for chunk in results if chunk.start_index == 5), None
+        )
+        assert second_chunk is not None
+        assert second_chunk.text == "beta"
 
     @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
     def test_retrieve_bm25(self, store_with_docs):
@@ -550,22 +555,32 @@ class TestDuckDBStore:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
 
-    def test_retrieve_bm25_returns_chunk_text_not_document_slice(self, store):
-        doc = MarkdownDocument(origin="bm25-text-source", content="alpha beta gamma")
+    def test_retrieve_bm25_returns_document_slice_for_non_zero_start(self, store):
+        # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
+        doc = MarkdownDocument(origin="bm25-text-source", content="alphabetagamma")
         doc.chunks = [
             MarkdownChunk(
                 start_index=0,
                 end_index=5,
-                text="zeta",
+                text="alpha",
+                token_count=5,
+            ),
+            MarkdownChunk(
+                start_index=5,
+                end_index=9,
+                text="beta",
                 token_count=4,
-            )
+            ),
         ]
         store.upsert(doc)
         store.build_index("bm25")
 
-        results = store.retrieve_bm25("zeta", top_k=1)
-        assert len(results) == 1
-        assert results[0].text == "zeta"
+        results = store.retrieve_bm25("beta", top_k=2)
+        second_chunk = next(
+            (chunk for chunk in results if chunk.start_index == 5), None
+        )
+        assert second_chunk is not None
+        assert second_chunk.text == "beta"
 
     @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
     def test_retrieve(self, store_with_docs):
@@ -1314,12 +1329,11 @@ class TestDuckDBStore:
                 doc_id,
                 start_index,
                 end_index,
-                chunk_text,
                 context,
                 tenant
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?)
             """,
-            [legacy_doc_id, 0, 5, "alpha", None, "old"],
+            [legacy_doc_id, 0, 5, None, "old"],
         )
 
         updated = MarkdownDocument(
@@ -3048,52 +3062,6 @@ def test_connect(tmp_path):
     results = store2.retrieve("hello", top_k=1)
     assert len(results) >= 1
     assert results[0].text == "hello"
-
-
-def test_connect_fails_fast_when_embeddings_table_lacks_chunk_text(tmp_path):
-    db_path = tmp_path / "missing_chunk_text.db"
-    con = duckdb.connect(str(db_path))
-    con.execute(
-        """
-        CREATE TABLE metadata (
-            name VARCHAR,
-            title VARCHAR,
-            embed_config VARCHAR,
-            attributes_schema_json VARCHAR
-        )
-        """
-    )
-    con.execute(
-        "INSERT INTO metadata VALUES (?, ?, ?, ?)",
-        ["test", "Test", None, json.dumps({})],
-    )
-    con.execute(
-        """
-        CREATE TABLE documents (
-            doc_id VARCHAR,
-            origin VARCHAR,
-            text VARCHAR
-        )
-        """
-    )
-    con.execute(
-        """
-        CREATE TABLE embeddings (
-            doc_id VARCHAR,
-            chunk_id INTEGER,
-            start_index INTEGER,
-            end_index INTEGER,
-            context VARCHAR
-        )
-        """
-    )
-    con.close()
-
-    with pytest.raises(
-        ValueError,
-        match="table 'embeddings' missing required columns: chunk_text",
-    ):
-        DuckDBStore.connect(str(db_path))
 
 
 def test_duckdb_store_does_not_require_pandas():
