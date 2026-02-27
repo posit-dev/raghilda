@@ -276,6 +276,34 @@ class TestDuckDBStore:
             store.upsert(first)
         assert embed.calls == calls_after_create
 
+    def test_insert_with_mismatched_chunk_origin_fails_fast(self):
+        embed = CountingEmbedding()
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=embed,
+            overwrite=True,
+            name="insert_same_origin_chunk_origin_change",
+        )
+        calls_after_create = embed.calls
+
+        content = "Hello World"
+        first = MarkdownDocument(origin="doc-1", content=content)
+        first.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                token_count=len(content),
+                origin="doc-2",
+            )
+        ]
+        with pytest.raises(
+            ValueError,
+            match=r"Chunk origin must be None or match document\.origin",
+        ):
+            store.upsert(first)
+        assert embed.calls == calls_after_create
+
     def test_insert_same_multi_chunk_layout_skips_when_unchanged(self):
         embed = CountingEmbedding()
         store = DuckDBStore.create(
