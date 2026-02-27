@@ -34,6 +34,6 @@ def skip_if_no_openai() -> None:
 
 def skip_if_no_cohere() -> None:
     _skip_if_unavailable(
-        env_vars=("CO_API_KEY", "COHERE_API_KEY", "CHROMA_COHERE_API_KEY"),
+        env_vars=("CO_API_KEY", "COHERE_API_KEY"),
         host="api.cohere.com",
     )
