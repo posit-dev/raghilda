@@ -490,6 +490,9 @@ class ChromaDBStore(BaseStore):
         self._origin_lock_ref_counts: dict[str, int] = {}
         self._origin_locks_guard = threading.Lock()
         self._chunk_id_lock = threading.Lock()
+        # Temporary workaround for ChromaDB's non-thread-safe telemetry batching.
+        # See https://github.com/chroma-core/chroma/issues/6512
+        self._collection_lock = threading.Lock()
         self._next_chunk_id: Optional[int] = None
 
     def upsert(
@@ -507,7 +510,7 @@ class ChromaDBStore(BaseStore):
         if not isinstance(document.origin, str) or not document.origin:
             raise ValueError("document.origin must be a non-empty string for upsert().")
 
-        with self._origin_lock(document.origin):
+        with self._origin_lock(document.origin), self._collection_lock:
             content_hash = hashlib.sha256(document.content.encode("utf-8")).hexdigest()
 
             existing = self.collection.get(
@@ -779,12 +782,13 @@ class ChromaDBStore(BaseStore):
                 allowed_columns=self._filterable_columns(),
             )
 
-        results = self.collection.query(
-            query_texts=[text],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-            **kwargs,
-        )
+        with self._collection_lock:
+            results = self.collection.query(
+                query_texts=[text],
+                n_results=top_k,
+                include=["documents", "metadatas", "distances"],
+                **kwargs,
+            )
 
         documents = (results.get("documents") or [[]])[0]
         chunk_attributes_rows = (results.get("metadatas") or [[]])[0]
@@ -830,7 +834,8 @@ class ChromaDBStore(BaseStore):
         return output
 
     def size(self) -> int:
-        results = self.collection.get(include=["metadatas"])
+        with self._collection_lock:
+            results = self.collection.get(include=["metadatas"])
         chunk_attributes_rows = results.get("metadatas") or []
         origins = {
             chunk_attributes.get("origin")
