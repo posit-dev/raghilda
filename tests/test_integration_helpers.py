@@ -1,5 +1,5 @@
 import pytest
-from tests import helpers as test_helpers
+import helpers as test_helpers
 
 
 def test_skip_if_no_openai_skips_when_env_var_missing(

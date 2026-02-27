@@ -11,7 +11,7 @@ import duckdb
 import httpx
 import openai
 import pytest
-from tests import helpers as test_helpers
+import helpers as test_helpers
 from raghilda.store import DuckDBStore, OpenAIStore
 from raghilda.scrape import find_links
 from raghilda.document import MarkdownDocument

@@ -1,5 +1,5 @@
 import pytest
-from tests import helpers as test_helpers
+import helpers as test_helpers
 from raghilda.embedding import EmbeddingOpenAI
 
 
