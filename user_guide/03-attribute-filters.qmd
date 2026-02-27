@@ -396,7 +396,6 @@ that can be used in `attributes_filter`.
 
 | Column | Meaning |
 |---|---|
-| `doc_id` | Document identifier (`Document.id`) for the chunk's parent document. |
 | `chunk_id` | Chunk index within the document (0-based insertion order). |
 | `origin` | Source location from `MarkdownDocument.origin` (path, URL, or other source label). |
 | `start_index` | Chunk start character offset in the document text. |

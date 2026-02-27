@@ -151,7 +151,7 @@ results = store.retrieve(
 ```
 
 Chroma built-in filterable columns are:
-`doc_id`, `chunk_id`, `start_index`, `end_index`, `token_count`, `context`, and `origin`.
+`chunk_id`, `start_index`, `end_index`, `token_count`, `context`, and `origin`.
 
 For advanced Chroma-specific filters, you can still pass `where=...` directly.
 
@@ -229,7 +229,7 @@ results = store.retrieve("How do I install the package?", top_k=3)
 
 for i, chunk in enumerate(results, 1):
     print(f"\n--- Result {i} ---")
-    print(f"From: {chunk.doc_id}")
+    print(f"From: {chunk.origin}")
     print(f"Text: {chunk.text[:200]}...")
 ```
 
