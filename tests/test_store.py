@@ -338,6 +338,43 @@ class TestDuckDBStore:
         assert second.document.attributes == {"tenant": "docs"}
         assert embed.calls == calls_after_create + 1
 
+    def test_insert_fails_when_embed_count_exceeds_chunk_count(self):
+        class ExtraEmbeddingRows(EmbeddingProvider):
+            def embed(
+                self,
+                x,
+                input_type: EmbedInputType = EmbedInputType.DOCUMENT,
+            ):
+                return [[1.0] for _ in range(len(x) + 1)]
+
+            def get_config(self):
+                return {"type": "ExtraEmbeddingRows"}
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
+
+        store = DuckDBStore.create(
+            location=":memory:",
+            embed=ExtraEmbeddingRows(),
+            overwrite=True,
+            name="insert_embed_count_mismatch",
+        )
+        doc = MarkdownDocument(origin="doc-1", content="hello world")
+        doc.chunks = [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                token_count=len(doc.content),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError, match="must return exactly one embedding per chunk"
+        ):
+            store.upsert(doc)
+
     def test_insert_requires_origin(self):
         store = DuckDBStore.create(
             location=":memory:",

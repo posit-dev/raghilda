@@ -645,6 +645,11 @@ class DuckDBStore(BaseStore):
             embedded_chunks = self.metadata.embed.embed(
                 [chunk["text"] for chunk in chunks], EmbedInputType.DOCUMENT
             )
+            if len(embedded_chunks) != len(chunks):
+                raise ValueError(
+                    "Embedding provider must return exactly one embedding per chunk "
+                    f"(got {len(embedded_chunks)} embeddings for {len(chunks)} chunks)"
+                )
 
         chunk_rows: list[dict[str, Any]] = []
         for index, chunk_data in enumerate(chunks):
