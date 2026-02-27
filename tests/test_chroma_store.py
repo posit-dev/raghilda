@@ -1,9 +1,9 @@
 import pytest
-import socket
 import threading
 import time
 import json
 from typing import Annotated
+from tests import helpers as test_helpers
 
 pytest.importorskip("chromadb")
 
@@ -13,23 +13,6 @@ from raghilda.chunk import MarkdownChunk, RetrievedChunk
 
 
 from chromadb import EmbeddingFunction, Embeddings, Documents
-
-
-def _can_reach_openai(timeout: float = 2.0) -> bool:
-    try:
-        with socket.create_connection(("api.openai.com", 443), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def _require_openai_integration() -> None:
-    import os
-
-    if not os.getenv("OPENAI_API_KEY"):
-        pytest.skip("OPENAI_API_KEY not set")
-    if not _can_reach_openai():
-        pytest.skip("OpenAI API is not reachable from this environment")
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
@@ -1038,7 +1021,7 @@ class TestChromaConvertible:
         from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
         from raghilda.embedding import EmbeddingOpenAI
 
-        _require_openai_integration()
+        test_helpers.skip_if_no_openai()
 
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
         chroma_func = provider.to_chroma()
@@ -1052,16 +1035,10 @@ class TestChromaConvertible:
 
     def test_embedding_cohere_to_chroma_works(self):
         """EmbeddingCohere.to_chroma() should return a working ChromaDB function."""
-        import os
         from chromadb.utils.embedding_functions import CohereEmbeddingFunction
         from raghilda.embedding import EmbeddingCohere
 
-        if not (
-            os.getenv("CO_API_KEY")
-            or os.getenv("COHERE_API_KEY")
-            or os.getenv("CHROMA_COHERE_API_KEY")
-        ):
-            pytest.skip("No Cohere API key set")
+        test_helpers.skip_if_no_cohere()
 
         provider = EmbeddingCohere(model="embed-english-v3.0")
         chroma_func = provider.to_chroma()
@@ -1093,7 +1070,7 @@ class TestChromaConvertible:
         """ChromaDBStore should work with raghilda EmbeddingProvider for insert and retrieve."""
         from raghilda.embedding import EmbeddingOpenAI
 
-        _require_openai_integration()
+        test_helpers.skip_if_no_openai()
 
         provider = EmbeddingOpenAI()
         store = ChromaDBStore.create(
@@ -1225,12 +1202,10 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_build_from_config(self):
         """Adapter.build_from_config should restore provider."""
-        import os
         from raghilda._chroma_store import ChromaEmbeddingAdapter
         from raghilda.embedding import EmbeddingOpenAI
 
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set")
+        test_helpers.skip_if_no_openai()
 
         # Create adapter with real provider
         original_provider = EmbeddingOpenAI(model="text-embedding-3-small")

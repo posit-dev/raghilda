@@ -1,13 +1,12 @@
 import pytest
-import os
+from tests import helpers as test_helpers
 from raghilda.embedding import EmbeddingCohere, EmbedInputType
 
 
 class TestEmbeddingCohere:
     @pytest.fixture(autouse=True)
     def setup(self):
-        if "CO_API_KEY" not in os.environ:
-            pytest.skip("CO_API_KEY not set in environment variables")
+        test_helpers.skip_if_no_cohere()
 
     def test_embedding_cohere_init(self):
         provider = EmbeddingCohere()
