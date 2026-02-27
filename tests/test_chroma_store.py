@@ -3,7 +3,7 @@ import threading
 import time
 import json
 from typing import Annotated
-import helpers as test_helpers
+from tests import helpers as test_helpers
 
 pytest.importorskip("chromadb")
 

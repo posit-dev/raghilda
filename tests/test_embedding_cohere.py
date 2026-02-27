@@ -1,5 +1,5 @@
 import pytest
-import helpers as test_helpers
+from tests import helpers as test_helpers
 from raghilda.embedding import EmbeddingCohere, EmbedInputType
 
 
