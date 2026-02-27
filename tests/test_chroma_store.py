@@ -1038,7 +1038,7 @@ class TestChromaConvertible:
         from chromadb.utils.embedding_functions import CohereEmbeddingFunction
         from raghilda.embedding import EmbeddingCohere
 
-        test_helpers.skip_if_no_cohere()
+        test_helpers.skip_if_no_cohere_chroma()
 
         provider = EmbeddingCohere(model="embed-english-v3.0")
         chroma_func = provider.to_chroma()

@@ -37,3 +37,10 @@ def skip_if_no_cohere() -> None:
         env_vars=("CO_API_KEY", "COHERE_API_KEY"),
         host="api.cohere.com",
     )
+
+
+def skip_if_no_cohere_chroma() -> None:
+    _skip_if_unavailable(
+        env_vars=("CO_API_KEY", "COHERE_API_KEY", "CHROMA_COHERE_API_KEY"),
+        host="api.cohere.com",
+    )
