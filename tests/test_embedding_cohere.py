@@ -1,13 +1,35 @@
 import pytest
-import os
+from tests import helpers as test_helpers
 from raghilda.embedding import EmbeddingCohere, EmbedInputType
+
+
+def test_embedding_cohere_does_not_use_chroma_cohere_api_key_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cohere
+
+    monkeypatch.delenv("CO_API_KEY", raising=False)
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    monkeypatch.setenv("CHROMA_COHERE_API_KEY", "test-chroma-key")
+
+    observed_api_key: list[str | None] = []
+
+    class FakeClient:
+        def __init__(self, *, api_key):
+            observed_api_key.append(api_key)
+
+    monkeypatch.setattr(cohere, "Client", FakeClient)
+
+    provider = EmbeddingCohere()
+
+    assert provider.api_key is None
+    assert observed_api_key == [None]
 
 
 class TestEmbeddingCohere:
     @pytest.fixture(autouse=True)
     def setup(self):
-        if "CO_API_KEY" not in os.environ:
-            pytest.skip("CO_API_KEY not set in environment variables")
+        test_helpers.skip_if_no_cohere()
 
     def test_embedding_cohere_init(self):
         provider = EmbeddingCohere()

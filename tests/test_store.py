@@ -10,6 +10,7 @@ from typing import Annotated, Any, cast
 import httpx
 import openai
 import pytest
+from tests import helpers as test_helpers
 from raghilda.store import DuckDBStore, OpenAIStore
 from raghilda.scrape import find_links
 from raghilda.document import MarkdownDocument
@@ -55,28 +56,14 @@ class _SinglePage:
         raise AssertionError("No next page expected")
 
 
-def _skip_if_unset(env_var: str) -> None:
-    if not os.getenv(env_var):
-        pytest.skip(f"{env_var} not set in environment variables")
-
-
-def test_skip_if_unset_skips_without_api_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-    with pytest.raises(pytest.skip.Exception):
-        _skip_if_unset("OPENAI_API_KEY")
-
-
 class TestDuckDBStore:
     @pytest.fixture
     def embed(self, request):
-        try:
-            value = request.param
-            if isinstance(value, EmbeddingOpenAI):
-                _skip_if_unset("OPENAI_API_KEY")
-            return value
-        except AttributeError:
-            return None
+        value = getattr(request, "param", None)
+        if value == "openai":
+            test_helpers.skip_if_no_openai()
+            return EmbeddingOpenAI()
+        return value
 
     @pytest.fixture
     def store(self, embed):
@@ -108,7 +95,7 @@ class TestDuckDBStore:
         assert store.metadata.title == "Test DuckDB Store"
         assert store.metadata.embed is None
 
-    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
+    @pytest.mark.parametrize("embed", [None, "openai"], indirect=True)
     def test_insert(self, store_with_docs):
         assert store_with_docs.size() == 1
 
@@ -498,7 +485,7 @@ class TestDuckDBStore:
             "world",
         ]
 
-    @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
+    @pytest.mark.parametrize("embed", ["openai"], indirect=True)
     def test_retrieve_vss(self, store_with_docs):
         results = store_with_docs.retrieve_vss("test", top_k=3)
         assert len(results) == 3
@@ -546,7 +533,7 @@ class TestDuckDBStore:
         assert second_chunk is not None
         assert second_chunk.text == "beta"
 
-    @pytest.mark.parametrize("embed", [None, EmbeddingOpenAI()], indirect=True)
+    @pytest.mark.parametrize("embed", [None, "openai"], indirect=True)
     def test_retrieve_bm25(self, store_with_docs):
         store_with_docs.build_index("bm25")
         results = store_with_docs.retrieve_bm25("document", top_k=3)
@@ -582,7 +569,7 @@ class TestDuckDBStore:
         assert second_chunk is not None
         assert second_chunk.text == "beta"
 
-    @pytest.mark.parametrize("embed", [EmbeddingOpenAI()], indirect=True)
+    @pytest.mark.parametrize("embed", ["openai"], indirect=True)
     def test_retrieve(self, store_with_docs):
         store_with_docs.build_index()
         results = store_with_docs.retrieve("document", top_k=3, deoverlap=False)
@@ -1461,9 +1448,9 @@ class TestDuckDBStore:
 
 
 class TestOpenAIStore:
-    @pytest.fixture(autouse=True)
+    @pytest.fixture(scope="class", autouse=True)
     def setup(self):
-        _skip_if_unset("OPENAI_API_KEY")
+        test_helpers.skip_if_no_openai()
 
     @pytest.fixture
     def store(self):
@@ -1478,7 +1465,6 @@ class TestOpenAIStore:
 
     @pytest.fixture(scope="class")
     def store_with_attributes(self):
-        _skip_if_unset("OPENAI_API_KEY")
         store = OpenAIStore.create(attributes={"tenant": str, "priority": int})
         store.upsert(
             MarkdownDocument(
@@ -1522,7 +1508,6 @@ class TestOpenAIStore:
             tenant: str
             priority: int
 
-        _skip_if_unset("OPENAI_API_KEY")
         store = OpenAIStore.create(attributes=AttributesSpec)
         try:
             yield store
@@ -2844,7 +2829,7 @@ def _get_markdown_chunk(doc, start, end):
 
 
 def test_ingest():
-    _skip_if_unset("OPENAI_API_KEY")
+    test_helpers.skip_if_no_openai()
     from raghilda.chunker import MarkdownChunker
     from raghilda.read import read_as_markdown
 
@@ -2983,7 +2968,7 @@ def test_ingest_lazy_evaluation():
 
 
 def test_connect(tmp_path):
-    _skip_if_unset("OPENAI_API_KEY")
+    test_helpers.skip_if_no_openai()
     db_path = tmp_path / "test.db"
 
     # Create a store with embeddings

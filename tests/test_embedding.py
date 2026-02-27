@@ -1,24 +1,12 @@
 import pytest
-import os
-import socket
+from tests import helpers as test_helpers
 from raghilda.embedding import EmbeddingOpenAI
-
-
-def _can_reach_openai(timeout: float = 2.0) -> bool:
-    try:
-        with socket.create_connection(("api.openai.com", 443), timeout=timeout):
-            return True
-    except OSError:
-        return False
 
 
 class TestEmbeddingOpenAI:
     @pytest.fixture(autouse=True)
     def setup(self):
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY not set in environment variables")
-        if not _can_reach_openai():
-            pytest.skip("OpenAI API is not reachable from this environment")
+        test_helpers.skip_if_no_openai()
 
     def test_embedding_openai_init(self):
         provider = EmbeddingOpenAI()
