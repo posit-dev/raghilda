@@ -340,7 +340,6 @@ class DuckDBStore(BaseStore):
             start_index INTEGER,
             end_index INTEGER,
             PRIMARY KEY (doc_id, start_index, end_index),
-            chunk_text VARCHAR,
             context VARCHAR{tail_columns_sql}
         );
 
@@ -348,7 +347,7 @@ class DuckDBStore(BaseStore):
             SELECT
             d.origin as origin,
             e.*,
-            e.chunk_text as text
+            d.text[e.start_index + 1:e.end_index] as text
             FROM
             documents d
             JOIN
@@ -419,6 +418,10 @@ class DuckDBStore(BaseStore):
             raise ValueError("Document must contain at least one chunk.")
         for chunk in document.chunks:
             chunk.origin = document.origin
+            _validate_chunk_text_matches_document_content(
+                content=document.content,
+                chunk=chunk,
+            )
 
         # DuckDB connections are not thread-safe for reads or writes.
         # Hold the lock here to avoid unnecessary embedding work when the
@@ -641,9 +644,17 @@ class DuckDBStore(BaseStore):
             )
 
         embedded_chunks = None
+        chunk_texts = [
+            _slice_chunk_text(
+                chunked_doc.content,
+                start_index=chunk.start_index,
+                end_index=chunk.end_index,
+            )
+            for chunk in chunked_doc.chunks
+        ]
         if self.metadata.embed is not None:
             embedded_chunks = self.metadata.embed.embed(
-                [chunk["text"] for chunk in chunks], EmbedInputType.DOCUMENT
+                chunk_texts, EmbedInputType.DOCUMENT
             )
             if len(embedded_chunks) != len(chunks):
                 raise ValueError(
@@ -657,7 +668,7 @@ class DuckDBStore(BaseStore):
 
             row.pop("token_count", None)
             row.pop("attributes", None)
-            row["chunk_text"] = row.pop("text", None)
+            row.pop("text", None)
             row.pop("id", None)
             row.pop("origin", None)
             row.pop("chunk_ids", None)
@@ -708,7 +719,6 @@ class DuckDBStore(BaseStore):
             row: list[Any] = [
                 chunk.start_index,
                 chunk.end_index,
-                chunk.text,
                 chunk.context,
             ]
             row.extend(
@@ -731,7 +741,6 @@ class DuckDBStore(BaseStore):
             SELECT
                 e.start_index,
                 e.end_index,
-                e.chunk_text,
                 e.context
                 {attribute_select}
             FROM embeddings e
@@ -745,19 +754,12 @@ class DuckDBStore(BaseStore):
         for row in rows:
             start_index = int(row[0])
             end_index = int(row[1])
-            chunk_text = row[2]
-            if chunk_text is None:
-                raise ValueError(
-                    f"Corrupted DuckDB store: missing chunk_text for doc_id '{doc_id}'."
-                )
-            context = row[3]
+            context = row[2]
             attribute_values = [
-                self._coerce_chunk_layout_attribute_value(col, row[4 + idx])
+                self._coerce_chunk_layout_attribute_value(col, row[3 + idx])
                 for idx, col in enumerate(attributes_columns)
             ]
-            records.append(
-                (start_index, end_index, chunk_text, context, *attribute_values)
-            )
+            records.append((start_index, end_index, context, *attribute_values))
         return records
 
     def _coerce_chunk_layout_attribute_value(self, column: str, value: Any) -> Any:
@@ -781,7 +783,6 @@ class DuckDBStore(BaseStore):
             SELECT
                 start_index,
                 end_index,
-                chunk_text,
                 context
                 {attribute_select}
             FROM embeddings
@@ -807,11 +808,11 @@ class DuckDBStore(BaseStore):
                     document_attributes[key] = value
             start_index = int(row_dict["start_index"])
             end_index = int(row_dict["end_index"])
-            chunk_text = row_dict["chunk_text"]
-            if chunk_text is None:
-                raise ValueError(
-                    f"Corrupted DuckDB store: missing chunk_text for doc_id '{doc_id}'."
-                )
+            chunk_text = _slice_chunk_text(
+                text,
+                start_index=start_index,
+                end_index=end_index,
+            )
             chunks.append(
                 MarkdownChunk(
                     start_index=start_index,
@@ -985,7 +986,7 @@ class DuckDBStore(BaseStore):
             e.end_index,
             e.context,
             {attribute_select}
-            e.chunk_text AS text,
+            doc.text[e.start_index + 1:e.end_index] AS text,
             '{method}' AS metric_name,
             {metric_value_sql} AS metric_value
         FROM {source_sql}
@@ -1086,7 +1087,7 @@ class DuckDBStore(BaseStore):
                 e.end_index, 
                 e.context, 
                 {attribute_select}
-                e.chunk_text AS text,
+                doc.text[e.start_index + 1:e.end_index] AS text,
                 'bm25' AS metric_name,
                 fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
             FROM embeddings e
@@ -1305,7 +1306,6 @@ def _validate_required_schema(
         "chunk_id",
         "start_index",
         "end_index",
-        "chunk_text",
         "context",
         *attributes_schema.keys(),
     }
@@ -1397,3 +1397,29 @@ def _coerce_index_type(value: IndexType | str) -> IndexType:
         raise ValueError(
             f"Unknown index type '{value}'. Allowed values: {allowed}"
         ) from exc
+
+
+def _slice_chunk_text(content: str, *, start_index: int, end_index: int) -> str:
+    if start_index < 0 or end_index < start_index or end_index > len(content):
+        raise ValueError(
+            "Chunk indices must satisfy 0 <= start_index <= end_index <= len(content). "
+            f"Got start_index={start_index}, end_index={end_index}, "
+            f"len(content)={len(content)}."
+        )
+    return content[start_index:end_index]
+
+
+def _validate_chunk_text_matches_document_content(
+    *, content: str, chunk: Chunk
+) -> None:
+    expected_text = _slice_chunk_text(
+        content,
+        start_index=chunk.start_index,
+        end_index=chunk.end_index,
+    )
+    if chunk.text != expected_text:
+        raise ValueError(
+            "Chunk text must match document.content[start_index:end_index]. "
+            f"Got chunk.text={chunk.text!r}, expected {expected_text!r} "
+            f"for start_index={chunk.start_index}, end_index={chunk.end_index}."
+        )
