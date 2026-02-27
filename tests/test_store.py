@@ -217,7 +217,7 @@ class TestDuckDBStore:
         assert embed.calls == calls_after_create + 2
 
         chunk_count = store.con.execute(
-            "SELECT COUNT(*) FROM embeddings e JOIN documents d USING (doc_id) WHERE d.origin = 'doc-1'"
+            "SELECT COUNT(*) FROM embeddings e JOIN documents d USING (origin) WHERE d.origin = 'doc-1'"
         ).fetchone()
         assert chunk_count is not None
         assert chunk_count[0] == 2
@@ -617,7 +617,7 @@ class TestDuckDBStore:
         # Check that deoverlapped chunks don't have overlapping ranges
         for i, chunk1 in enumerate(results_deoverlap):
             for chunk2 in results_deoverlap[i + 1 :]:
-                if chunk1.doc_id == chunk2.doc_id:
+                if chunk1.origin == chunk2.origin:
                     # Same document - ranges should not overlap
                     assert (
                         chunk1.end_index <= chunk2.start_index
@@ -1210,9 +1210,12 @@ class TestDuckDBStore:
         observed_lock_states: list[bool] = []
         original_snapshot = store._load_document_snapshot
 
-        def wrapped_snapshot(*, doc_id: str, origin: str, text: str):
+        def wrapped_snapshot(*, origin: str, text: str):
             observed_lock_states.append(store._db_lock.locked())
-            return original_snapshot(doc_id=doc_id, origin=origin, text=text)
+            return original_snapshot(
+                origin=origin,
+                text=text,
+            )
 
         monkeypatch.setattr(store, "_load_document_snapshot", wrapped_snapshot)
 
@@ -1309,57 +1312,6 @@ class TestDuckDBStore:
             "tenant": "docs",
             "topic": None,
         }
-
-    def test_insert_replaced_snapshot_uses_existing_doc_id_for_legacy_rows(self):
-        store = DuckDBStore.create(
-            location=":memory:",
-            embed=None,
-            overwrite=True,
-            attributes={"tenant": str},
-        )
-
-        legacy_doc_id = "legacy-doc-id"
-        store.con.execute(
-            "INSERT INTO documents (doc_id, origin, text) VALUES (?, ?, ?)",
-            [legacy_doc_id, "legacy-origin", "alpha"],
-        )
-        store.con.execute(
-            """
-            INSERT INTO embeddings (
-                doc_id,
-                start_index,
-                end_index,
-                context,
-                tenant
-            ) VALUES (?, ?, ?, ?, ?)
-            """,
-            [legacy_doc_id, 0, 5, None, "old"],
-        )
-
-        updated = MarkdownDocument(
-            origin="legacy-origin",
-            content="alpha beta",
-            attributes={"tenant": "new"},
-        )
-        updated.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=10,
-                text="alpha beta",
-                token_count=10,
-            )
-        ]
-
-        replaced = store.upsert(updated, skip_if_unchanged=False)
-        assert replaced.action == "replaced"
-        assert replaced.document.chunks is not None
-        assert [chunk.text for chunk in replaced.document.chunks] == ["alpha beta"]
-        assert replaced.document.attributes == {"tenant": "new"}
-        assert replaced.replaced_document is not None
-        assert [chunk.text for chunk in replaced.replaced_document.chunks or []] == [
-            "alpha"
-        ]
-        assert replaced.replaced_document.attributes == {"tenant": "old"}
 
     def test_insert_missing_required_attribute_fails(self):
         store = DuckDBStore.create(
@@ -1697,7 +1649,7 @@ def test_openai_store_normalize_attributes_preserves_large_ints():
     normalized = _normalize_openai_attributes(
         {
             "tenant_id": 9007199254740992,
-            "doc_id": 9007199254740993,
+            "external_id": 9007199254740993,
             "score": 0.75,
             "active": True,
             "label": "docs",
@@ -1705,13 +1657,13 @@ def test_openai_store_normalize_attributes_preserves_large_ints():
     )
     assert normalized == {
         "tenant_id": 9007199254740992,
-        "doc_id": 9007199254740993,
+        "external_id": 9007199254740993,
         "score": 0.75,
         "active": True,
         "label": "docs",
     }
     assert isinstance(normalized["tenant_id"], int)
-    assert isinstance(normalized["doc_id"], int)
+    assert isinstance(normalized["external_id"], int)
     assert isinstance(normalized["score"], float)
 
 
@@ -3062,6 +3014,32 @@ def test_connect(tmp_path):
     results = store2.retrieve("hello", top_k=1)
     assert len(results) >= 1
     assert results[0].text == "hello"
+
+
+def test_create_does_not_add_chunk_text_column_to_embeddings():
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="schema-no-chunk-text",
+    )
+    embeddings_columns = {
+        row[1]
+        for row in store.con.execute("PRAGMA table_info('embeddings')").fetchall()
+    }
+    assert "chunk_text" not in embeddings_columns
+    assert embeddings_columns == {
+        "origin",
+        "chunk_id",
+        "start_index",
+        "end_index",
+        "context",
+    }
+
+    documents_columns = {
+        row[1] for row in store.con.execute("PRAGMA table_info('documents')").fetchall()
+    }
+    assert documents_columns == {"origin", "text"}
 
 
 def test_duckdb_store_does_not_require_pandas():

@@ -42,7 +42,6 @@ from ._store_metadata import (
 logger = logging.getLogger(__name__)
 
 _RESERVED_SYSTEM_COLUMNS = {
-    "doc_id",
     "chunk_id",
     "context",
     "embedding",
@@ -328,18 +327,17 @@ class DuckDBStore(BaseStore):
         );
 
         CREATE OR REPLACE TABLE documents (
-            doc_id VARCHAR PRIMARY KEY DEFAULT uuid(),
-            origin VARCHAR UNIQUE,
+            origin VARCHAR PRIMARY KEY,
             text VARCHAR
         );
 
         CREATE OR REPLACE TABLE embeddings (
-            doc_id VARCHAR NOT NULL,
-            FOREIGN KEY (doc_id) REFERENCES documents (doc_id),
+            origin VARCHAR NOT NULL,
+            FOREIGN KEY (origin) REFERENCES documents (origin),
             chunk_id INTEGER DEFAULT nextval('chunk_id_seq'),
             start_index INTEGER,
             end_index INTEGER,
-            PRIMARY KEY (doc_id, start_index, end_index),
+            PRIMARY KEY (origin, start_index, end_index),
             context VARCHAR{tail_columns_sql}
         );
 
@@ -353,7 +351,7 @@ class DuckDBStore(BaseStore):
             JOIN
             embeddings e
             USING
-            (doc_id)
+            (origin)
         );
         """
         )
@@ -435,12 +433,11 @@ class DuckDBStore(BaseStore):
                 and existing["text"] == document.content
                 and self._chunk_layout_matches_existing(
                     chunked_doc=document,
-                    doc_id=existing["doc_id"],
+                    origin=existing["origin"],
                 )
             ):
                 current_document = self._load_document_snapshot(
-                    doc_id=existing["doc_id"],
-                    origin=document.origin,
+                    origin=existing["origin"],
                     text=existing["text"],
                 )
                 return WriteResult(
@@ -459,12 +456,11 @@ class DuckDBStore(BaseStore):
                 and existing["text"] == document.content
                 and self._chunk_layout_matches_existing(
                     chunked_doc=document,
-                    doc_id=existing["doc_id"],
+                    origin=existing["origin"],
                 )
             ):
                 current_document = self._load_document_snapshot(
-                    doc_id=existing["doc_id"],
-                    origin=document.origin,
+                    origin=existing["origin"],
                     text=existing["text"],
                 )
                 return WriteResult(
@@ -476,26 +472,21 @@ class DuckDBStore(BaseStore):
             replaced_document: MarkdownDocument | None = None
             if existing is not None:
                 action = "replaced"
-                doc_id = existing["doc_id"]
                 replaced_document = self._load_document_snapshot(
-                    doc_id=doc_id,
-                    origin=document.origin,
+                    origin=existing["origin"],
                     text=existing["text"],
                 )
-                doc_row["doc_id"] = doc_id
-                for chunk_row in chunk_rows:
-                    chunk_row["doc_id"] = doc_id
 
             try:
                 self.con.begin()
                 if action == "replaced":
                     self.con.execute(
-                        "DELETE FROM embeddings WHERE doc_id = ?",
-                        [doc_row["doc_id"]],
+                        "DELETE FROM embeddings WHERE origin = ?",
+                        [doc_row["origin"]],
                     )
                     self.con.execute(
-                        "UPDATE documents SET text = ? WHERE doc_id = ?",
-                        [doc_row["text"], doc_row["doc_id"]],
+                        "UPDATE documents SET text = ? WHERE origin = ?",
+                        [doc_row["text"], doc_row["origin"]],
                     )
                 else:
                     _duckdb_append(self.con, "documents", [doc_row])
@@ -508,10 +499,8 @@ class DuckDBStore(BaseStore):
                     pass
                 raise
 
-            result_doc_id = str(doc_row["doc_id"])
             current_document = self._load_document_snapshot(
-                doc_id=result_doc_id,
-                origin=document.origin,
+                origin=str(doc_row["origin"]),
                 text=document.content,
             )
             return WriteResult(
@@ -627,7 +616,6 @@ class DuckDBStore(BaseStore):
         assert chunked_doc.chunks is not None
 
         doc = {
-            "doc_id": chunked_doc.origin,
             "origin": chunked_doc.origin,
             "text": chunked_doc.content,
         }
@@ -644,14 +632,7 @@ class DuckDBStore(BaseStore):
             )
 
         embedded_chunks = None
-        chunk_texts = [
-            _slice_chunk_text(
-                chunked_doc.content,
-                start_index=chunk.start_index,
-                end_index=chunk.end_index,
-            )
-            for chunk in chunked_doc.chunks
-        ]
+        chunk_texts = [chunk.text for chunk in chunked_doc.chunks]
         if self.metadata.embed is not None:
             embedded_chunks = self.metadata.embed.embed(
                 chunk_texts, EmbedInputType.DOCUMENT
@@ -681,29 +662,29 @@ class DuckDBStore(BaseStore):
             for column in self.metadata.attributes_schema:
                 row[column] = resolved_chunk_attributes[index][column]
 
-            row["doc_id"] = doc["doc_id"]
+            row["origin"] = doc["origin"]
             chunk_rows.append(row)
 
         return doc, chunk_rows
 
     def _get_existing_documents_by_origin(self, origin: str) -> list[dict[str, str]]:
         rows = self.con.execute(
-            "SELECT doc_id, text FROM documents WHERE origin = ? ORDER BY doc_id",
+            "SELECT origin, text FROM documents WHERE origin = ? ORDER BY origin",
             [origin],
         ).fetchall()
         return [
             {
-                "doc_id": row[0],
+                "origin": row[0],
                 "text": row[1],
             }
             for row in rows
         ]
 
     def _chunk_layout_matches_existing(
-        self, *, chunked_doc: MarkdownDocument, doc_id: str
+        self, *, chunked_doc: MarkdownDocument, origin: str
     ) -> bool:
         incoming = self._chunk_layout_records(chunked_doc)
-        existing = self._chunk_layout_records_from_store(doc_id)
+        existing = self._chunk_layout_records_from_store(origin)
         return incoming == existing
 
     def _chunk_layout_records(
@@ -729,7 +710,7 @@ class DuckDBStore(BaseStore):
         records.sort(key=lambda item: (item[0], item[1]))
         return records
 
-    def _chunk_layout_records_from_store(self, doc_id: str) -> list[tuple[Any, ...]]:
+    def _chunk_layout_records_from_store(self, origin: str) -> list[tuple[Any, ...]]:
         attributes_columns = list(self.metadata.attributes_schema)
         attribute_select = ", ".join(
             _quote_identifier(col) for col in attributes_columns
@@ -744,10 +725,10 @@ class DuckDBStore(BaseStore):
                 e.context
                 {attribute_select}
             FROM embeddings e
-            WHERE e.doc_id = ?
+            WHERE e.origin = ?
             ORDER BY e.start_index, e.end_index
             """,
-            [doc_id],
+            [origin],
         )
         rows = result.fetchall()
         records: list[tuple[Any, ...]] = []
@@ -769,9 +750,7 @@ class DuckDBStore(BaseStore):
             self.metadata.attributes_schema[column],
         )
 
-    def _load_document_snapshot(
-        self, *, doc_id: str, origin: str, text: str
-    ) -> MarkdownDocument:
+    def _load_document_snapshot(self, *, origin: str, text: str) -> MarkdownDocument:
         attribute_columns = list(self.metadata.attributes_schema)
         attribute_select = ", ".join(
             _quote_identifier(col) for col in attribute_columns
@@ -786,10 +765,10 @@ class DuckDBStore(BaseStore):
                 context
                 {attribute_select}
             FROM embeddings
-            WHERE doc_id = ?
+            WHERE origin = ?
             ORDER BY start_index, end_index
             """,
-            [doc_id],
+            [origin],
         )
         rows = result.fetchall()
         if result.description is None:
@@ -990,7 +969,7 @@ class DuckDBStore(BaseStore):
             '{method}' AS metric_name,
             {metric_value_sql} AS metric_value
         FROM {source_sql}
-        JOIN documents doc USING (doc_id)
+        JOIN documents doc USING (origin)
         {where_clause}
         ORDER BY metric_value {order}
         LIMIT {top_k}
@@ -1091,7 +1070,7 @@ class DuckDBStore(BaseStore):
                 'bm25' AS metric_name,
                 fts_main_chunks.match_bm25(chunk_id, $query, k := $k, b := $b, conjunctive := $conjunctive) AS metric_value
             FROM embeddings e
-            JOIN documents doc USING (doc_id)
+            JOIN documents doc USING (origin)
             {where_clause}
         )
         SELECT *
@@ -1225,7 +1204,7 @@ class DuckDBStore(BaseStore):
 
     def size(self) -> int:
         result = self.con.execute(
-            "SELECT COUNT(DISTINCT doc_id) FROM documents"
+            "SELECT COUNT(DISTINCT origin) FROM documents"
         ).fetchone()
         if result is None:
             raise RuntimeError("Failed to get size of the store")
@@ -1299,10 +1278,10 @@ def _validate_required_schema(
     _assert_table_has_columns(
         con,
         table="documents",
-        required_columns={"doc_id", "origin", "text"},
+        required_columns={"origin", "text"},
     )
     required_embeddings_columns = {
-        "doc_id",
+        "origin",
         "chunk_id",
         "start_index",
         "end_index",
