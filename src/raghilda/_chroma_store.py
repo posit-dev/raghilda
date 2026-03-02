@@ -833,10 +833,24 @@ class ChromaDBStore(BaseStore):
 
         return output
 
+    def _get_all_metadatas(self) -> list[dict[str, Any]]:
+        all_metadatas: list[dict[str, Any]] = []
+        batch_size = 5000
+        offset = 0
+        while True:
+            results = self.collection.get(
+                include=["metadatas"], limit=batch_size, offset=offset
+            )
+            batch = results.get("metadatas") or []
+            all_metadatas.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        return all_metadatas
+
     def size(self) -> int:
         with self._collection_lock:
-            results = self.collection.get(include=["metadatas"])
-        chunk_attributes_rows = results.get("metadatas") or []
+            chunk_attributes_rows = self._get_all_metadatas()
         origins = {
             chunk_attributes.get("origin")
             for chunk_attributes in chunk_attributes_rows
@@ -974,8 +988,7 @@ class ChromaDBStore(BaseStore):
             return []
         with self._chunk_id_lock:
             if self._next_chunk_id is None:
-                results = self.collection.get(include=["metadatas"])
-                chunk_attributes_rows = results.get("metadatas") or []
+                chunk_attributes_rows = self._get_all_metadatas()
                 max_chunk_id = -1
                 for chunk_attributes in chunk_attributes_rows:
                     if not chunk_attributes:
