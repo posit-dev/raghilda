@@ -200,6 +200,14 @@ class EmbeddingProvider(ABC):
         """
         NotImplementedError("embed method is not implemented")
 
+    def __call__(
+        self,
+        x: Sequence[str],
+        input_type: EmbedInputType = EmbedInputType.DOCUMENT,
+    ) -> Sequence[Sequence[float]]:
+        """Call `embed` using function-call syntax."""
+        return self.embed(x, input_type=input_type)
+
     @abstractmethod
     def get_config(self) -> dict[str, Any]:
         """

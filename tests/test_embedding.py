@@ -1,6 +1,37 @@
 import pytest
+from typing import Sequence
 from tests import helpers as test_helpers
 from raghilda.embedding import EmbeddingOpenAI
+from raghilda._embedding import EmbeddingProvider, EmbedInputType
+
+
+class DummyEmbeddingProvider(EmbeddingProvider):
+    def __init__(self) -> None:
+        self.last_input_type = EmbedInputType.DOCUMENT
+
+    def embed(
+        self,
+        x: Sequence[str],
+        input_type: EmbedInputType = EmbedInputType.DOCUMENT,
+    ) -> list[list[float]]:
+        self.last_input_type = input_type
+        return [[float(len(text))] for text in x]
+
+    def get_config(self) -> dict:
+        return {"type": "DummyEmbeddingProvider"}
+
+    @classmethod
+    def from_config(cls, config: dict) -> "DummyEmbeddingProvider":
+        return cls()
+
+
+def test_embedding_provider_is_callable() -> None:
+    provider = DummyEmbeddingProvider()
+
+    embeddings = provider(["hello", "a"], input_type=EmbedInputType.QUERY)
+
+    assert embeddings == [[5.0], [1.0]]
+    assert provider.last_input_type == EmbedInputType.QUERY
 
 
 class TestEmbeddingOpenAI:
