@@ -3029,6 +3029,42 @@ def test_connect(tmp_path):
     assert results[0].text == "hello"
 
 
+def test_upsert_after_hnsw_index_on_reconnect(tmp_path):
+    """Upserting after reconnecting to a DB with HNSW indexes must work.
+
+    Regression test: ``connect()`` did not load the ``vss`` extension, so
+    DuckDB raised "unknown index type 'HNSW'" on INSERT into a table that
+    already carried HNSW indexes.
+    """
+    db_path = tmp_path / "hnsw_upsert.db"
+    embed = CountingEmbedding()
+
+    # Phase 1: create store, insert a document, build HNSW index, close.
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=embed,
+        name="hnsw_test",
+        title="HNSW Upsert Test",
+    )
+    doc1 = MarkdownDocument(origin="doc1", content="alpha beta gamma")
+    doc1.chunks = [_get_markdown_chunk(doc1, start=0, end=5)]
+    store.upsert(doc1)
+    store.build_index("hnsw")
+    store.con.close()
+
+    # Phase 2: reconnect and upsert a new document.
+    store2 = DuckDBStore.connect(str(db_path))
+    # Restore a working embedding provider (CountingEmbedding can't
+    # round-trip through config serialization).
+    store2.metadata.embed = CountingEmbedding()
+
+    doc2 = MarkdownDocument(origin="doc2", content="delta epsilon")
+    doc2.chunks = [_get_markdown_chunk(doc2, start=0, end=5)]
+    store2.upsert(doc2)
+
+    assert store2.size() == 2
+
+
 def test_create_does_not_add_chunk_text_column_to_embeddings():
     store = DuckDBStore.create(
         location=":memory:",

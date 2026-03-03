@@ -204,6 +204,7 @@ class DuckDBStore(BaseStore):
         """
         con = duckdb.connect(database=location, read_only=read_only)
         _check_is_raghilda_con(con)
+        _load_extensions_for_existing_indexes(con)
 
         row = con.execute(
             "SELECT name, title, embed_config, attributes_schema_json FROM metadata"
@@ -1262,6 +1263,19 @@ def _check_is_raghilda_con(con: duckdb.DuckDBPyConnection):
 
     if "metadata" not in tables:
         raise ValueError("Not a valid Raghilda database connection")
+
+
+def _load_extensions_for_existing_indexes(con: duckdb.DuckDBPyConnection) -> None:
+    """Load DuckDB extensions required by any indexes that already exist.
+
+    When reconnecting to a database that has HNSW indexes (from the ``vss``
+    extension), the extension must be loaded before any writes to the indexed
+    table, otherwise DuckDB raises *"unknown index type 'HNSW'"*.
+    """
+    rows = con.execute("SELECT sql FROM duckdb_indexes()").fetchall()
+    has_hnsw = any("USING HNSW" in (row[0] or "") for row in rows)
+    if has_hnsw:
+        con.execute("INSTALL vss; LOAD vss;")
 
 
 def _validate_required_schema(
