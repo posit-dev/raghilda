@@ -1013,18 +1013,19 @@ def test_ingest_lazy_evaluation():
     )
 
 
-class TestChromaConvertible:
-    """Tests for the ChromaConvertible protocol and to_chroma() conversion."""
+class TestChromaEmbeddingConversion:
+    """Tests for Chroma conversion via standalone conversion functions."""
 
-    def test_embedding_openai_to_chroma_works(self):
-        """EmbeddingOpenAI.to_chroma() should return a working ChromaDB function."""
+    def test_embedding_openai_converter_works(self):
+        """EmbeddingOpenAI conversion should return a working ChromaDB function."""
         from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+        from raghilda._chroma_embedding import to_chroma_embedding_function
         from raghilda.embedding import EmbeddingOpenAI
 
         test_helpers.skip_if_no_openai()
 
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
-        chroma_func = provider.to_chroma()
+        chroma_func = to_chroma_embedding_function(provider)
 
         assert isinstance(chroma_func, OpenAIEmbeddingFunction)
 
@@ -1033,15 +1034,16 @@ class TestChromaConvertible:
         assert len(embeddings) == 2
         assert all(len(emb) > 0 for emb in embeddings)
 
-    def test_embedding_cohere_to_chroma_works(self):
-        """EmbeddingCohere.to_chroma() should return a working ChromaDB function."""
+    def test_embedding_cohere_converter_works(self):
+        """EmbeddingCohere conversion should return a working ChromaDB function."""
         from chromadb.utils.embedding_functions import CohereEmbeddingFunction
+        from raghilda._chroma_embedding import to_chroma_embedding_function
         from raghilda.embedding import EmbeddingCohere
 
         test_helpers.skip_if_no_cohere_chroma()
 
         provider = EmbeddingCohere(model="embed-english-v3.0")
-        chroma_func = provider.to_chroma()
+        chroma_func = to_chroma_embedding_function(provider)
 
         assert isinstance(chroma_func, CohereEmbeddingFunction)
 
@@ -1050,21 +1052,17 @@ class TestChromaConvertible:
         assert len(embeddings) == 2
         assert all(len(emb) > 0 for emb in embeddings)
 
-    def test_to_chroma_embedding_function_passthrough(self):
-        """ChromaDB embedding functions should pass through unchanged."""
-        from raghilda._chroma_store import _to_chroma_embedding_function
+    def test_openai_provider_has_no_to_chroma_method(self):
+        """EmbeddingOpenAI should not carry Chroma-specific conversion methods."""
+        from raghilda.embedding import EmbeddingOpenAI
 
-        dummy_ef = DummyEmbeddingFunction()
-        result = _to_chroma_embedding_function(dummy_ef)
+        assert not hasattr(EmbeddingOpenAI, "to_chroma")
 
-        assert result is dummy_ef
+    def test_cohere_provider_has_no_to_chroma_method(self):
+        """EmbeddingCohere should not carry Chroma-specific conversion methods."""
+        from raghilda.embedding import EmbeddingCohere
 
-    def test_to_chroma_embedding_function_none(self):
-        """None should return None."""
-        from raghilda._chroma_store import _to_chroma_embedding_function
-
-        result = _to_chroma_embedding_function(None)
-        assert result is None
+        assert not hasattr(EmbeddingCohere, "to_chroma")
 
     def test_create_store_with_raghilda_provider_insert_retrieve(self):
         """ChromaDBStore should work with raghilda EmbeddingProvider for insert and retrieve."""
@@ -1095,7 +1093,7 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_wraps_provider(self):
         """Adapter should wrap an EmbeddingProvider."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
         # Create a simple mock provider
@@ -1117,7 +1115,7 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_call_generates_embeddings(self):
         """Adapter.__call__ should generate document embeddings."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
         import numpy as np
 
@@ -1147,7 +1145,7 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_embed_query_generates_query_embeddings(self):
         """Adapter.embed_query should generate query embeddings."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
         import numpy as np
 
@@ -1177,7 +1175,7 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_get_config(self):
         """Adapter.get_config should include provider config."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
         class MockProvider(EmbeddingProvider):
@@ -1202,7 +1200,7 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_build_from_config(self):
         """Adapter.build_from_config should restore provider."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
         from raghilda.embedding import EmbeddingOpenAI
 
         test_helpers.skip_if_no_openai()
@@ -1220,19 +1218,17 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_name(self):
         """Adapter.name() should return the registered name."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter, _ADAPTER_NAME
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter, _ADAPTER_NAME
 
         assert ChromaEmbeddingAdapter.name() == _ADAPTER_NAME
 
-    def test_adapter_used_for_non_convertible_provider(self):
-        """Adapter should be used for providers without to_chroma()."""
-        from raghilda._chroma_store import (
-            _to_chroma_embedding_function,
-            ChromaEmbeddingAdapter,
-        )
+    def test_adapter_used_for_unregistered_provider(self):
+        """Adapter should be used for providers without a converter registration."""
+        from raghilda._chroma_embedding import ChromaEmbeddingAdapter
+        from raghilda._chroma_embedding import to_chroma_embedding_function
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
-        # Provider without to_chroma() method
+        # Provider without a Chroma converter registration
         class CustomProvider(EmbeddingProvider):
             def embed(self, x, input_type=EmbedInputType.DOCUMENT):
                 return [[1.0, 2.0, 3.0] for _ in x]
@@ -1245,7 +1241,40 @@ class TestChromaEmbeddingAdapter:
                 return cls()
 
         provider = CustomProvider()
-        result = _to_chroma_embedding_function(provider)
+        result = to_chroma_embedding_function(provider)
 
         assert isinstance(result, ChromaEmbeddingAdapter)
         assert result._provider is provider
+
+    def test_wrapper_registration_allows_custom_converter(self):
+        """register_embedding_converter should register custom provider conversions."""
+        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+        from raghilda._chroma_embedding import to_chroma_embedding_function
+        from raghilda.store import ChromaDBStore
+        from raghilda._embedding import EmbeddingProvider, EmbedInputType
+
+        class CustomProvider(EmbeddingProvider):
+            def __init__(self, model: str) -> None:
+                self.model = model
+
+            def embed(self, x, input_type=EmbedInputType.DOCUMENT):
+                return [[1.0, 2.0, 3.0] for _ in x]
+
+            def get_config(self):
+                return {"type": "CustomProvider", "model": self.model}
+
+            @classmethod
+            def from_config(cls, config):
+                return cls(model=config["model"])
+
+        @ChromaDBStore.register_embedding_converter(CustomProvider)
+        def convert_custom(provider: CustomProvider) -> OpenAIEmbeddingFunction:
+            return OpenAIEmbeddingFunction(
+                api_key="test-key", model_name=provider.model
+            )
+
+        result = to_chroma_embedding_function(
+            CustomProvider(model="text-embedding-3-small")
+        )
+
+        assert isinstance(result, OpenAIEmbeddingFunction)
