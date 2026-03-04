@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence, assert_type
 if TYPE_CHECKING:
     from chromadb.api.types import Documents, EmbeddingFunction
 
-    from raghilda._chroma_embedding import to_chroma_embedding_function
     from raghilda.embedding import EmbedInputType, EmbeddingProvider
     from raghilda.store import ChromaDBStore
 
@@ -25,13 +24,15 @@ if TYPE_CHECKING:
     @ChromaDBStore.register_embedding_converter(_TypecheckProvider)
     def _typed_converter(
         provider: _TypecheckProvider,
-    ) -> EmbeddingFunction[Documents]:
-        return to_chroma_embedding_function(provider)
+    ) -> EmbeddingFunction[Documents]: ...
 
-    _provider = _TypecheckProvider()
+    _register = ChromaDBStore.register_embedding_converter(_TypecheckProvider)
     assert_type(
-        to_chroma_embedding_function(_provider),
-        EmbeddingFunction[Documents],
+        _register,
+        Callable[
+            [Callable[[_TypecheckProvider], EmbeddingFunction[Documents]]],
+            Callable[[_TypecheckProvider], EmbeddingFunction[Documents]],
+        ],
     )
     assert_type(
         _typed_converter,
