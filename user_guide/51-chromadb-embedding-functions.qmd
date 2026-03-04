@@ -53,7 +53,8 @@ store = ChromaDBStore.create(
 - Cross-language compatibility — TypeScript clients can access the same collection
 - Proper query/document embedding distinction for providers like Cohere
 
-**How it works:** raghilda uses a converter registry to map providers to equivalent
+**How it works:** raghilda uses a converter registry (extended via
+`ChromaDBStore.register_provider_converter(...)`) to map providers to equivalent
 ChromaDB embedding functions (e.g., `OpenAIEmbeddingFunction`).
 
 ### 2. ChromaDB Embedding Functions Directly

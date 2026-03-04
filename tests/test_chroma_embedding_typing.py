@@ -21,12 +21,12 @@ if TYPE_CHECKING:
         def from_config(cls, config: dict[str, Any]) -> "_TypecheckProvider":
             return cls()
 
-    @ChromaDBStore.register_embedding_converter(_TypecheckProvider)
+    @ChromaDBStore.register_provider_converter(_TypecheckProvider)
     def _typed_converter(
         provider: _TypecheckProvider,
     ) -> EmbeddingFunction[Documents]: ...
 
-    _register = ChromaDBStore.register_embedding_converter(_TypecheckProvider)
+    _register = ChromaDBStore.register_provider_converter(_TypecheckProvider)
     assert_type(
         _register,
         Callable[

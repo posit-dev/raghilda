@@ -10,7 +10,6 @@ from typing import (
     Sequence,
     TypeAlias,
     TypeVar,
-    cast,
 )
 
 from ._embedding import (
@@ -31,83 +30,160 @@ else:
     ChromaEmbeddingFunction = Any
     ChromaEmbedding = Any
 
-
-_ADAPTER_NAME = "raghilda_embedding_adapter"
-_EmbeddingFunctionBase: type[Any]
-
-
 try:
-    from chromadb import EmbeddingFunction as _ChromaEmbeddingFunctionBase
+    import chromadb
+except ImportError:
+    chromadb = None
+
+if chromadb is not None:
+    from chromadb import EmbeddingFunction
     from chromadb.utils.embedding_functions import register_embedding_function
 
-    _EmbeddingFunctionBase = _ChromaEmbeddingFunctionBase
-    _CHROMA_AVAILABLE = True
-except ImportError:
-    _CHROMA_AVAILABLE = False
-    register_embedding_function = None
+    class _ChromaEmbeddingAdapter(EmbeddingFunction):
+        """Adapter to use any raghilda EmbeddingProvider with ChromaDB.
 
-    class _FallbackEmbeddingFunctionBase:
-        pass
+        This adapter wraps a raghilda `EmbeddingProvider` to make it compatible with
+        ChromaDB's `EmbeddingFunction` protocol, including serialization support.
+        Use this for custom embedding providers that don't have a native ChromaDB equivalent.
 
-    _EmbeddingFunctionBase = _FallbackEmbeddingFunctionBase
+        The adapter is automatically used when passing an `EmbeddingProvider` to
+        `ChromaDBStore.create()` or `connect()` if no converter registration is found.
 
+        Note: This adapter stores the provider config for serialization, but cross-language
+        compatibility (e.g., TypeScript) is not supported since the provider is Python-only.
 
-class ChromaEmbeddingAdapter(_EmbeddingFunctionBase):
-    """Adapter to use any raghilda EmbeddingProvider with ChromaDB."""
+        Parameters
+        ----------
+        provider
+            A raghilda EmbeddingProvider instance.
 
-    def __init__(self, provider: EmbeddingProvider) -> None:
-        if not _CHROMA_AVAILABLE:
+        Examples
+        --------
+        ```{python}
+        #| eval: false
+        from raghilda.embedding import EmbeddingOpenAI
+        from raghilda.store import ChromaDBStore
+
+        provider = EmbeddingOpenAI(model="text-embedding-3-small")
+        store = ChromaDBStore.create(location="my_store", name="docs", embed=provider)
+        ```
+        """
+
+        def __init__(self, provider: EmbeddingProvider) -> None:
+            self._provider = provider
+
+        def __call__(self, input: Sequence[str]) -> list[np.ndarray]:
+            """Generate embeddings for documents.
+
+            This method is called by ChromaDB when adding/upserting documents.
+            """
+            import numpy as np
+
+            embeddings = self._provider.embed(list(input), EmbedInputType.DOCUMENT)
+            return [np.array(emb, dtype=np.float32) for emb in embeddings]
+
+        def embed_query(self, input: Sequence[str]) -> list[np.ndarray]:
+            """Generate embeddings for queries.
+
+            This method is called by ChromaDB when querying the collection.
+            """
+            import numpy as np
+
+            embeddings = self._provider.embed(list(input), EmbedInputType.QUERY)
+            return [np.array(emb, dtype=np.float32) for emb in embeddings]
+
+        @staticmethod
+        def name() -> str:
+            """Return the adapter registration name used by ChromaDB."""
+            return "raghilda_embedding_adapter"
+
+        def get_config(self) -> dict[str, Any]:
+            """Return configuration for serialization.
+
+            The config includes the wrapped provider's config so it can be restored.
+            """
+            return {"provider_config": self._provider.get_config()}
+
+        @staticmethod
+        def build_from_config(config: dict[str, Any]) -> "_ChromaEmbeddingAdapter":
+            """Restore the adapter from a configuration dict.
+
+            This reconstructs both the adapter and the wrapped provider.
+            """
+            provider_config = config.get("provider_config", {})
+            provider = embedding_from_config(provider_config)
+            return _ChromaEmbeddingAdapter(provider)
+
+    register_embedding_function(_ChromaEmbeddingAdapter)
+    ChromaEmbeddingAdapter = _ChromaEmbeddingAdapter
+else:
+    class _MissingChromaEmbeddingAdapter:
+        def __init__(self, provider: EmbeddingProvider) -> None:
             raise ModuleNotFoundError(
                 "ChromaDB is required to use ChromaDBStore. Install with `pip install chromadb`."
             )
-        self._provider = provider
 
-    def __call__(self, input: Sequence[str]) -> list[np.ndarray]:
-        import numpy as np
-
-        embeddings = self._provider.embed(list(input), EmbedInputType.DOCUMENT)
-        return [np.array(emb, dtype=np.float32) for emb in embeddings]
-
-    def embed_query(self, input: Sequence[str]) -> list[np.ndarray]:
-        import numpy as np
-
-        embeddings = self._provider.embed(list(input), EmbedInputType.QUERY)
-        return [np.array(emb, dtype=np.float32) for emb in embeddings]
-
-    @staticmethod
-    def name() -> str:
-        return _ADAPTER_NAME
-
-    def get_config(self) -> dict[str, Any]:
-        return {"provider_config": self._provider.get_config()}
-
-    @staticmethod
-    def build_from_config(config: dict[str, Any]) -> "ChromaEmbeddingAdapter":
-        provider_config = config.get("provider_config", {})
-        provider = embedding_from_config(provider_config)
-        return ChromaEmbeddingAdapter(provider)
-
-
-if register_embedding_function is not None:
-    register_embedding_function(ChromaEmbeddingAdapter)
+    ChromaEmbeddingAdapter = _MissingChromaEmbeddingAdapter
 
 
 P = TypeVar("P", bound=EmbeddingProvider)
 
 
-@singledispatch
-def to_chroma_embedding_function(
-    provider: EmbeddingProvider,
-) -> ChromaEmbeddingFunction:
-    return cast(ChromaEmbeddingFunction, ChromaEmbeddingAdapter(provider))
+if chromadb is not None:
+
+    @singledispatch
+    def to_chroma_embedding_function(
+        provider: EmbeddingProvider,
+    ) -> ChromaEmbeddingFunction:
+        """Convert a provider to a ChromaDB embedding function.
+
+        Parameters
+        ----------
+        provider
+            A raghilda embedding provider.
+
+        Returns
+        -------
+        EmbeddingFunction[Documents]
+            A ChromaDB-compatible embedding function.
+        """
+        return _ChromaEmbeddingAdapter(provider)
+
+else:
+
+    @singledispatch
+    def to_chroma_embedding_function(
+        provider: EmbeddingProvider,
+    ) -> ChromaEmbeddingFunction:
+        """Convert a provider to a ChromaDB embedding function.
+
+        Parameters
+        ----------
+        provider
+            A raghilda embedding provider.
+
+        Returns
+        -------
+        EmbeddingFunction[Documents]
+            A ChromaDB-compatible embedding function.
+        """
+        raise ModuleNotFoundError(
+            "ChromaDB is required to use ChromaDBStore. Install with `pip install chromadb`."
+        )
 
 
-def register_embedding_converter(
+def register_provider_converter(
     provider_type: type[P],
 ) -> Callable[
     [Callable[[P], ChromaEmbeddingFunction]],
     Callable[[P], ChromaEmbeddingFunction],
 ]:
+    """Register a provider->Chroma embedding converter.
+
+    The converter is used by `ChromaDBStore.create(..., embed=...)` and
+    `ChromaDBStore.connect(..., embed=...)` when `embed` is an instance of
+    `provider_type`.
+    """
     assert issubclass(provider_type, EmbeddingProvider)
 
     def decorator(
@@ -119,7 +195,7 @@ def register_embedding_converter(
     return decorator
 
 
-@register_embedding_converter(EmbeddingOpenAI)
+@register_provider_converter(EmbeddingOpenAI)
 def _convert_openai_provider(provider: EmbeddingOpenAI) -> ChromaEmbeddingFunction:
     from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 
@@ -141,7 +217,7 @@ def _convert_openai_provider(provider: EmbeddingOpenAI) -> ChromaEmbeddingFuncti
     )
 
 
-@register_embedding_converter(EmbeddingCohere)
+@register_provider_converter(EmbeddingCohere)
 def _convert_cohere_provider(provider: EmbeddingCohere) -> ChromaEmbeddingFunction:
     from chromadb.utils.embedding_functions import CohereEmbeddingFunction
 
@@ -166,10 +242,9 @@ def _convert_cohere_provider(provider: EmbeddingCohere) -> ChromaEmbeddingFuncti
 def coerce_chroma_embedding_function(
     embed: Optional[ChromaEmbedding],
 ) -> Optional[ChromaEmbeddingFunction]:
+    """Coerce embed input to a ChromaDB embedding function when needed."""
     if embed is None:
         return None
     if isinstance(embed, EmbeddingProvider):
         return to_chroma_embedding_function(embed)
-    if _EmbeddingFunctionBase is not None and isinstance(embed, _EmbeddingFunctionBase):
-        return cast(ChromaEmbeddingFunction, embed)
-    return cast(ChromaEmbeddingFunction, embed)
+    return embed

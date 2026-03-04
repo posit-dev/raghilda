@@ -14,6 +14,7 @@ from typing import (
     Iterable,
     Optional,
     Sequence,
+    TypeVar,
 )
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,9 +27,11 @@ from .read import read_as_markdown
 from ._deoverlap import deoverlap_chunks
 from ._chroma_embedding import (
     ChromaEmbedding,
+    ChromaEmbeddingFunction,
     coerce_chroma_embedding_function,
-    register_embedding_converter,
+    register_provider_converter as _register_provider_converter,
 )
+from ._embedding import EmbeddingProvider
 from ._attributes import (
     AttributeFilter,
     AttributesSchemaSpec,
@@ -193,7 +196,21 @@ class ChromaDBStore(BaseStore):
     ```
     """
 
-    register_embedding_converter = staticmethod(register_embedding_converter)
+    _P = TypeVar("_P", bound=EmbeddingProvider)
+
+    @staticmethod
+    def register_provider_converter(
+        provider_type: type[_P],
+    ) -> Callable[
+        [Callable[[_P], ChromaEmbeddingFunction]],
+        Callable[[_P], ChromaEmbeddingFunction],
+    ]:
+        """Register conversion from provider type to Chroma embedding function.
+
+        This registration applies to `embed=` values passed to
+        `ChromaDBStore.create()` and `ChromaDBStore.connect()`.
+        """
+        return _register_provider_converter(provider_type)
 
     @staticmethod
     def create(

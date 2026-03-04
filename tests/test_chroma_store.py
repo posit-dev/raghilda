@@ -1079,7 +1079,7 @@ class TestChromaEmbeddingRegistration:
         results = store.retrieve("test", top_k=2)
         assert len(results) > 0
 
-    def test_register_embedding_converter_is_used_by_store(self):
+    def test_register_provider_converter_is_used_by_store(self):
         from raghilda.embedding import EmbeddingProvider, EmbedInputType
 
         class ConvertedProvider(EmbeddingProvider):
@@ -1098,7 +1098,7 @@ class TestChromaEmbeddingRegistration:
             def from_config(cls, config):
                 return cls(model=config["model"])
 
-        @ChromaDBStore.register_embedding_converter(ConvertedProvider)
+        @ChromaDBStore.register_provider_converter(ConvertedProvider)
         def convert_provider(provider: ConvertedProvider) -> DummyEmbeddingFunction:
             return DummyEmbeddingFunction()
 

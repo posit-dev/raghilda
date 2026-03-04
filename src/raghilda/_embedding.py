@@ -111,6 +111,8 @@ class EmbeddingProvider(ABC):
 
     1. Subclass `EmbeddingProvider` and implement `embed()`, `get_config()`, and `from_config()`
     2. Register it with `@register_embedding_provider("MyProvider")`
+    3. For `ChromaDBStore` native conversion, register a converter with
+       `ChromaDBStore.register_provider_converter(MyProvider)`
 
     Registered providers are automatically restored when connecting to a database
     that was created with that provider.

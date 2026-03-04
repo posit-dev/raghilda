@@ -208,7 +208,7 @@ from raghilda.store import ChromaDBStore
 class EmbeddingLocal(EmbeddingProvider):
     # ... other methods ...
 
-@ChromaDBStore.register_embedding_converter(EmbeddingLocal)
+@ChromaDBStore.register_provider_converter(EmbeddingLocal)
 def convert_embedding_local(provider: EmbeddingLocal):
     return SentenceTransformerEmbeddingFunction(model_name=provider.model_name)
 ```
