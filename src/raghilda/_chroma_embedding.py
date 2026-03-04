@@ -116,20 +116,6 @@ if chromadb is not None:
 
     register_embedding_function(_ChromaEmbeddingAdapter)
     ChromaEmbeddingAdapter = _ChromaEmbeddingAdapter
-else:
-    class _MissingChromaEmbeddingAdapter:
-        def __init__(self, provider: EmbeddingProvider) -> None:
-            raise ModuleNotFoundError(
-                "ChromaDB is required to use ChromaDBStore. Install with `pip install chromadb`."
-            )
-
-    ChromaEmbeddingAdapter = _MissingChromaEmbeddingAdapter
-
-
-P = TypeVar("P", bound=EmbeddingProvider)
-
-
-if chromadb is not None:
 
     @singledispatch
     def to_chroma_embedding_function(
@@ -148,9 +134,14 @@ if chromadb is not None:
             A ChromaDB-compatible embedding function.
         """
         return _ChromaEmbeddingAdapter(provider)
-
 else:
+    class _MissingChromaEmbeddingAdapter:
+        def __init__(self, provider: EmbeddingProvider) -> None:
+            raise ModuleNotFoundError(
+                "ChromaDB is required to use ChromaDBStore. Install with `pip install chromadb`."
+            )
 
+    ChromaEmbeddingAdapter = _MissingChromaEmbeddingAdapter
     @singledispatch
     def to_chroma_embedding_function(
         provider: EmbeddingProvider,
@@ -170,6 +161,9 @@ else:
         raise ModuleNotFoundError(
             "ChromaDB is required to use ChromaDBStore. Install with `pip install chromadb`."
         )
+
+
+P = TypeVar("P", bound=EmbeddingProvider)
 
 
 def register_provider_converter(
