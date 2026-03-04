@@ -32,14 +32,12 @@ else:
 
 try:
     import chromadb
+    import chromadb.utils.embedding_functions
 except ImportError:
     chromadb = None
 
 if chromadb is not None:
-    from chromadb import EmbeddingFunction
-    from chromadb.utils.embedding_functions import register_embedding_function
-
-    class _ChromaEmbeddingAdapter(EmbeddingFunction):
+    class _ChromaEmbeddingAdapter(chromadb.EmbeddingFunction):
         """Adapter to use any raghilda EmbeddingProvider with ChromaDB.
 
         This adapter wraps a raghilda `EmbeddingProvider` to make it compatible with
@@ -114,7 +112,9 @@ if chromadb is not None:
             provider = embedding_from_config(provider_config)
             return _ChromaEmbeddingAdapter(provider)
 
-    register_embedding_function(_ChromaEmbeddingAdapter)
+    chromadb.utils.embedding_functions.register_embedding_function(
+        _ChromaEmbeddingAdapter
+    )
     ChromaEmbeddingAdapter = _ChromaEmbeddingAdapter
 
     @singledispatch
