@@ -2,6 +2,7 @@ import pytest
 import threading
 import time
 import json
+import hashlib
 from typing import Annotated
 from tests import helpers as test_helpers
 
@@ -10,6 +11,11 @@ pytest.importorskip("chromadb")
 from raghilda.store import ChromaDBStore
 from raghilda.document import MarkdownDocument
 from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda.embedding import (
+    EmbeddingProvider,
+    EmbedInputType,
+    register_embedding_provider,
+)
 
 
 from chromadb import EmbeddingFunction, Embeddings, Documents
@@ -51,6 +57,46 @@ class DummyEmbeddingFunction(EmbeddingFunction):
 
     def embed_query(self, input: Documents) -> Embeddings:
         return self._embed(input)
+
+
+@register_embedding_provider("HashTestProvider")
+class HashTestProvider(EmbeddingProvider):
+    calls: list[dict] = []
+
+    def __init__(self, salt: str):
+        self.salt = salt
+
+    @classmethod
+    def clear_calls(cls) -> None:
+        cls.calls.clear()
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(salt=config["salt"])
+
+    def get_config(self) -> dict:
+        return {"type": "HashTestProvider", "salt": self.salt}
+
+    def embed(self, x, input_type=EmbedInputType.DOCUMENT):
+        type(self).calls.append(
+            {
+                "salt": self.salt,
+                "input_type": input_type,
+                "texts": list(x),
+            }
+        )
+        embeddings = []
+        for text in x:
+            digest = hashlib.sha256(
+                f"{self.salt}:{input_type.value}:{text}".encode("utf-8")
+            ).digest()
+            vector = [
+                float(int.from_bytes(digest[0:4], "big") % 1000),
+                float(int.from_bytes(digest[4:8], "big") % 1000),
+                float(int.from_bytes(digest[8:12], "big") % 1000),
+            ]
+            embeddings.append(vector)
+        return embeddings
 
 
 def _make_doc():
@@ -622,9 +668,10 @@ def test_insert_stores_document_content_once_in_metadata():
     assert rows_with_content[0]["_raghilda_content_text"] == content
 
 
-def test_connect_with_embed(tmp_path):
+def test_connect_restores_embedding_function(tmp_path):
     location = tmp_path / "chroma_store"
-    embed = DummyEmbeddingFunction()
+    embed = HashTestProvider(salt="connect-test-salt")
+
     store = ChromaDBStore.create(
         location=str(location),
         embed=embed,
@@ -632,17 +679,75 @@ def test_connect_with_embed(tmp_path):
         overwrite=True,
     )
     store.upsert(_make_doc())
-    if hasattr(store.client, "persist"):
-        store.client.persist()
+    expected = store.retrieve("document", top_k=3, deoverlap=False)
 
     store2 = ChromaDBStore.connect(
         location=str(location),
         name="connect_test",
-        embed=embed,
     )
+    actual = store2.retrieve("document", top_k=3, deoverlap=False)
+
+    assert actual == expected
     assert store2.size() == 1
-    results = store2.retrieve("document", top_k=1)
-    assert len(results) == 1
+
+
+def test_connect_restores_embedding_function_query_path_traced(tmp_path):
+    location = tmp_path / "chroma_store_trace"
+    embed = HashTestProvider(salt="connect-trace-salt")
+
+    store = ChromaDBStore.create(
+        location=str(location),
+        embed=embed,
+        name="connect_trace_test",
+        overwrite=True,
+    )
+    store.upsert(_make_doc())
+
+    HashTestProvider.clear_calls()
+
+    store2 = ChromaDBStore.connect(
+        location=str(location),
+        name="connect_trace_test",
+    )
+    store2.retrieve("document", top_k=1)
+
+    assert HashTestProvider.calls == [
+        {
+            "salt": "connect-trace-salt",
+            "input_type": EmbedInputType.QUERY,
+            "texts": ["document"],
+        }
+    ]
+
+
+def test_connect_restores_openai_embedding_function(tmp_path):
+    from raghilda.embedding import EmbeddingOpenAI
+
+    test_helpers.skip_if_no_openai()
+
+    location = tmp_path / "chroma_store_openai"
+    provider = EmbeddingOpenAI(model="text-embedding-3-small")
+
+    store = ChromaDBStore.create(
+        location=str(location),
+        embed=provider,
+        name="connect_openai_test",
+        overwrite=True,
+    )
+    store.upsert(_make_doc())
+    expected = store.retrieve("document", top_k=3, deoverlap=False)
+
+    store2 = ChromaDBStore.connect(
+        location=str(location),
+        name="connect_openai_test",
+    )
+    actual = store2.retrieve("document", top_k=3, deoverlap=False)
+
+    for chunk in expected:
+        for metric in chunk.metrics:
+            metric.value = pytest.approx(metric.value, abs=1e-3)  # type: ignore[assignment]
+
+    assert actual == expected
 
 
 def test_connect_restores_attributes_schema(tmp_path):
@@ -663,7 +768,6 @@ def test_connect_restores_attributes_schema(tmp_path):
     store2 = ChromaDBStore.connect(
         location=str(location),
         name="connect_attributes_test",
-        embed=DummyEmbeddingFunction(),
     )
     assert store2.metadata.attributes_schema == {"tenant": str, "priority": int}
 
@@ -690,7 +794,6 @@ def test_connect_rejects_internal_attribute_names_from_metadata():
         ChromaDBStore.connect(
             name="connect_internal_attr_test",
             client=FakeClient(),
-            embed=DummyEmbeddingFunction(),
         )
 
 
