@@ -1,8 +1,10 @@
 from typing import TYPE_CHECKING, Any, Callable, Sequence, assert_type
 
 if TYPE_CHECKING:
-    from chromadb.api.types import Documents, EmbeddingFunction
-
+    from chromadb.api.types import (  # pyright: ignore[reportMissingImports]
+        Documents,
+        EmbeddingFunction,
+    )
     from raghilda.embedding import EmbedInputType, EmbeddingProvider
     from raghilda.store import ChromaDBStore
 

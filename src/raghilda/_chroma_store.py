@@ -26,7 +26,7 @@ from .document import Document, MarkdownDocument
 from .read import read_as_markdown
 from ._deoverlap import deoverlap_chunks
 from ._chroma_embedding import (
-    ChromaEmbedding,
+    ChromaEmbeddingInput,
     ChromaEmbeddingFunction,
     coerce_chroma_embedding_function,
     register_provider_converter as _register_provider_converter,
@@ -219,7 +219,7 @@ class ChromaDBStore(BaseStore):
         overwrite: bool = False,
         name: Optional[str] = None,
         title: Optional[str] = None,
-        embed: Optional[ChromaEmbedding] = None,
+        embed: Optional[ChromaEmbeddingInput] = None,
         collection_metadata: Optional[dict[str, Any]] = None,
         attributes: Optional[AttributesSchemaSpec] = None,
         client: Any = None,
@@ -312,7 +312,7 @@ class ChromaDBStore(BaseStore):
         name: str,
         location: str | Path | None = None,
         *,
-        embed: Optional[ChromaEmbedding] = None,
+        embed: Optional[ChromaEmbeddingInput] = None,
         client: Any = None,
     ):
         """Connect to an existing ChromaDB store.

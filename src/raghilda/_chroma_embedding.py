@@ -22,17 +22,20 @@ from ._embedding import (
 
 if TYPE_CHECKING:
     import numpy as np
-    from chromadb.api.types import Documents, EmbeddingFunction
+    from chromadb.api.types import (  # pyright: ignore[reportMissingImports]
+        Documents,
+        EmbeddingFunction,
+    )
 
     ChromaEmbeddingFunction: TypeAlias = EmbeddingFunction[Documents]
-    ChromaEmbedding: TypeAlias = EmbeddingProvider | ChromaEmbeddingFunction
 else:
     ChromaEmbeddingFunction = Any
-    ChromaEmbedding = Any
+
+ChromaEmbeddingInput: TypeAlias = EmbeddingProvider | ChromaEmbeddingFunction
 
 try:
-    import chromadb
-    import chromadb.utils.embedding_functions
+    import chromadb  # pyright: ignore[reportMissingImports]
+    import chromadb.utils.embedding_functions  # pyright: ignore[reportMissingImports]
 except ImportError:
     chromadb = None
 
@@ -70,7 +73,7 @@ if chromadb is not None:
         def __init__(self, provider: EmbeddingProvider) -> None:
             self._provider = provider
 
-        def __call__(self, input: Sequence[str]) -> list[np.ndarray]:
+        def __call__(self, input: Sequence[str]) -> list[Any]:
             """Generate embeddings for documents.
 
             This method is called by ChromaDB when adding/upserting documents.
@@ -80,7 +83,7 @@ if chromadb is not None:
             embeddings = self._provider.embed(list(input), EmbedInputType.DOCUMENT)
             return [np.array(emb, dtype=np.float32) for emb in embeddings]
 
-        def embed_query(self, input: Sequence[str]) -> list[np.ndarray]:
+        def embed_query(self, input: Sequence[str]) -> list[Any]:
             """Generate embeddings for queries.
 
             This method is called by ChromaDB when querying the collection.
@@ -191,7 +194,9 @@ def register_provider_converter(
 
 @register_provider_converter(EmbeddingOpenAI)
 def _convert_openai_provider(provider: EmbeddingOpenAI) -> ChromaEmbeddingFunction:
-    from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+    from chromadb.utils.embedding_functions import (  # pyright: ignore[reportMissingImports]
+        OpenAIEmbeddingFunction,
+    )
 
     if os.getenv("CHROMA_OPENAI_API_KEY"):
         return OpenAIEmbeddingFunction(
@@ -213,7 +218,9 @@ def _convert_openai_provider(provider: EmbeddingOpenAI) -> ChromaEmbeddingFuncti
 
 @register_provider_converter(EmbeddingCohere)
 def _convert_cohere_provider(provider: EmbeddingCohere) -> ChromaEmbeddingFunction:
-    from chromadb.utils.embedding_functions import CohereEmbeddingFunction
+    from chromadb.utils.embedding_functions import (  # pyright: ignore[reportMissingImports]
+        CohereEmbeddingFunction,
+    )
 
     if os.getenv("CHROMA_COHERE_API_KEY"):
         return CohereEmbeddingFunction(model_name=provider.model)
@@ -234,7 +241,7 @@ def _convert_cohere_provider(provider: EmbeddingCohere) -> ChromaEmbeddingFuncti
 
 
 def coerce_chroma_embedding_function(
-    embed: Optional[ChromaEmbedding],
+    embed: Optional[ChromaEmbeddingInput],
 ) -> Optional[ChromaEmbeddingFunction]:
     """Coerce embed input to a ChromaDB embedding function when needed."""
     if embed is None:
