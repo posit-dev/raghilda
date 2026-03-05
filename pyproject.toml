@@ -47,5 +47,8 @@ lint_check = { cmd = "./.venv/bin/ruff check", help = "ruff lint" }
 lint = { cmd = "./.venv/bin/ruff check --fix", help = "ruff lint --fix" }
 check = { cmd = "./.venv/bin/ruff format --check src tests && ./.venv/bin/ruff check && ./.venv/bin/pyright --pythonpath ./.venv/bin/python && ./.venv/bin/pytest tests src", help = "format+lint+types+tests" }
 
+[tool.pyright]
+exclude = [".venv", ".pytest_cache", ".ruff_cache", "great-docs"]
+
 [tool.uv.sources]
 great-docs = { git = "https://github.com/rich-iannone/great-docs.git" }
