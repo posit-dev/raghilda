@@ -21,7 +21,6 @@ from ._embedding import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
     from chromadb.api.types import (  # pyright: ignore[reportMissingImports]
         Documents,
         EmbeddingFunction,
@@ -40,6 +39,7 @@ except ImportError:
     chromadb = None
 
 if chromadb is not None:
+
     class _ChromaEmbeddingAdapter(chromadb.EmbeddingFunction):
         """Adapter to use any raghilda EmbeddingProvider with ChromaDB.
 
@@ -138,6 +138,7 @@ if chromadb is not None:
         """
         return _ChromaEmbeddingAdapter(provider)
 else:
+
     class _MissingChromaEmbeddingAdapter:
         def __init__(self, provider: EmbeddingProvider) -> None:
             raise ModuleNotFoundError(
@@ -145,6 +146,7 @@ else:
             )
 
     ChromaEmbeddingAdapter = _MissingChromaEmbeddingAdapter
+
     @singledispatch
     def to_chroma_embedding_function(
         provider: EmbeddingProvider,
