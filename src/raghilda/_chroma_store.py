@@ -102,7 +102,7 @@ try:
         Use this for custom embedding providers that don't have a native ChromaDB equivalent.
 
         The adapter is automatically used when passing an `EmbeddingProvider` to
-        `ChromaDBStore.create()` or `connect()` if the provider doesn't implement
+        `ChromaDBStore.create()` if the provider doesn't implement
         `ChromaConvertible`.
 
         Note: This adapter stores the provider config for serialization, but cross-language
@@ -427,7 +427,6 @@ class ChromaDBStore(BaseStore):
         name: str,
         location: str | Path | None = None,
         *,
-        embed: Optional[ChromaEmbedding] = None,
         client: Any = None,
     ):
         """Connect to an existing ChromaDB store.
@@ -439,12 +438,6 @@ class ChromaDBStore(BaseStore):
         location
             Path where ChromaDB persists its data. Use ":memory:" or None
             for an in-memory store.
-        embed
-            Optional embedding function. Can be either a raghilda EmbeddingProvider
-            (e.g., EmbeddingOpenAI, EmbeddingCohere) or a ChromaDB embedding function.
-            Raghilda providers are automatically converted to their ChromaDB equivalents.
-            If None, ChromaDB will attempt to restore the embedding function from
-            the collection's stored configuration.
         client
             Optional pre-configured Chroma client (e.g., HttpClient).
 
@@ -453,14 +446,10 @@ class ChromaDBStore(BaseStore):
         ChromaDBStore
             A connected store instance.
         """
-        embedding_function = _to_chroma_embedding_function(embed)
-
         if client is None:
             client = _get_client(location)
 
-        collection = client.get_collection(
-            name=name, embedding_function=embedding_function
-        )
+        collection = client.get_collection(name=name)
         metadata = collection.metadata or {}
         title = metadata.get(_METADATA_TITLE_KEY, "Raghilda ChromaDB Store")
         attributes_spec: dict[str, AttributeSpec] = {}

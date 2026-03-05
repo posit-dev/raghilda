@@ -114,7 +114,7 @@ def embedding_from_config(config: dict[str, Any]) -> "EmbeddingProvider":
         raise ValueError(
             f"Unknown embedding provider type: '{provider_type}'. "
             f"Registered providers: {registered}. "
-            "You can pass `embed=` to connect() to provide the provider manually."
+            "Ensure the provider is registered before connecting to the store."
         )
 
     cls = _EMBEDDING_REGISTRY[provider_type]
