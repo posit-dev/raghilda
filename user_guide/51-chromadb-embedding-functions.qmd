@@ -53,8 +53,8 @@ store = ChromaDBStore.create(
 - Cross-language compatibility — TypeScript clients can access the same collection
 - Proper query/document embedding distinction for providers like Cohere
 
-**How it works:** raghilda providers implement `to_chroma()` which returns the equivalent
-ChromaDB embedding function (e.g., `OpenAIEmbeddingFunction`).
+**How it works:** `ChromaDBStore` recognizes these providers and uses the equivalent
+native ChromaDB embedding function internally (for example `OpenAIEmbeddingFunction`).
 
 ### 2. ChromaDB Embedding Functions Directly
 
@@ -84,10 +84,10 @@ store = ChromaDBStore.create(
 
 **When to use:** When you need ChromaDB-specific options not exposed by raghilda providers.
 
-### 3. Custom Embedding Providers (Adapter Fallback)
+### 3. Custom Embedding Providers
 
 For custom `EmbeddingProvider` implementations without a ChromaDB equivalent,
-raghilda automatically wraps them in an adapter:
+raghilda automatically adapts them internally:
 
 ```{python}
 #| eval: false
@@ -110,7 +110,7 @@ class MyCustomEmbedding(EmbeddingProvider):
     def from_config(cls, config):
         return cls(model=config.get("model", "custom-model"))
 
-# Use with ChromaDB - automatically wrapped in adapter
+# Use with ChromaDB - adapted automatically
 store = ChromaDBStore.create(
     location="my_store",
     embed=MyCustomEmbedding(),

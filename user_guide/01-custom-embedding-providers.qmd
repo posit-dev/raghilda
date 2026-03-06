@@ -197,24 +197,13 @@ store = DuckDBStore.create(
 
 ## ChromaDB Compatibility
 
-If you want your provider to work with `ChromaDBStore`, implement the `to_chroma()` method:
+Custom providers work with `ChromaDBStore` without any extra method. Pass the
+provider to `ChromaDBStore.create()`, and raghilda adapts it internally for
+Chroma.
 
-```{python}
-#| eval: false
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-@register_embedding_provider("EmbeddingLocal")
-class EmbeddingLocal(EmbeddingProvider):
-    # ... other methods ...
-
-    def to_chroma(self):
-        """Convert to a ChromaDB embedding function."""
-        return SentenceTransformerEmbeddingFunction(
-            model_name=self.model_name
-        )
-```
-
-This method is called automatically when using your provider with `ChromaDBStore`. If not implemented, ChromaDB will use your provider's `embed()` method directly via an adapter.
+If your provider does not map to a native Chroma embedding function, raghilda
+uses the provider's regular `embed()` implementation. That path is Python-only,
+so cross-language Chroma clients cannot restore it.
 
 ## Best Practices
 

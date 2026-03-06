@@ -18,7 +18,7 @@ from raghilda.embedding import (
 )
 
 
-from chromadb import EmbeddingFunction, Embeddings, Documents
+from chromadb import EmbeddingFunction, Embeddings, Documents  # pyright: ignore[reportMissingImports]
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
@@ -146,6 +146,26 @@ def test_create_store():
     assert isinstance(store, ChromaDBStore)
     assert store.metadata.name == "test_store"
     assert store.metadata.title == "Test ChromaDB Store"
+
+
+def test_create_store_uses_chroma_default_embedding_when_embed_is_none():
+    captured_kwargs = None
+
+    class FakeClient:
+        def create_collection(self, **kwargs):
+            nonlocal captured_kwargs
+            captured_kwargs = kwargs
+            return self
+
+    store = ChromaDBStore.create(
+        client=FakeClient(),
+        name="test_store_default_embedding",
+        overwrite=True,
+    )
+
+    assert isinstance(store, ChromaDBStore)
+    assert captured_kwargs is not None
+    assert "embedding_function" not in captured_kwargs
 
 
 def test_insert_and_retrieve():
@@ -1116,18 +1136,19 @@ def test_ingest_lazy_evaluation():
     )
 
 
-class TestChromaConvertible:
-    """Tests for the ChromaConvertible protocol and to_chroma() conversion."""
+class TestChromaEmbeddingConversion:
+    """Tests for internal conversion to ChromaDB embedding functions."""
 
-    def test_embedding_openai_to_chroma_works(self):
-        """EmbeddingOpenAI.to_chroma() should return a working ChromaDB function."""
-        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+    def test_embedding_openai_is_converted_internally(self):
+        """EmbeddingOpenAI should convert to a working native ChromaDB function."""
+        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction  # pyright: ignore[reportMissingImports]
+        from raghilda._chroma_store import _to_chroma_embedding_function
         from raghilda.embedding import EmbeddingOpenAI
 
         test_helpers.skip_if_no_openai()
 
         provider = EmbeddingOpenAI(model="text-embedding-3-small")
-        chroma_func = provider.to_chroma()
+        chroma_func = _to_chroma_embedding_function(provider)
 
         assert isinstance(chroma_func, OpenAIEmbeddingFunction)
 
@@ -1136,15 +1157,16 @@ class TestChromaConvertible:
         assert len(embeddings) == 2
         assert all(len(emb) > 0 for emb in embeddings)
 
-    def test_embedding_cohere_to_chroma_works(self):
-        """EmbeddingCohere.to_chroma() should return a working ChromaDB function."""
-        from chromadb.utils.embedding_functions import CohereEmbeddingFunction
+    def test_embedding_cohere_is_converted_internally(self):
+        """EmbeddingCohere should convert to a working native ChromaDB function."""
+        from chromadb.utils.embedding_functions import CohereEmbeddingFunction  # pyright: ignore[reportMissingImports]
+        from raghilda._chroma_store import _to_chroma_embedding_function
         from raghilda.embedding import EmbeddingCohere
 
         test_helpers.skip_if_no_cohere_chroma()
 
         provider = EmbeddingCohere(model="embed-english-v3.0")
-        chroma_func = provider.to_chroma()
+        chroma_func = _to_chroma_embedding_function(provider)
 
         assert isinstance(chroma_func, CohereEmbeddingFunction)
 
@@ -1348,6 +1370,37 @@ class TestChromaEmbeddingAdapter:
                 return cls()
 
         provider = CustomProvider()
+        result = _to_chroma_embedding_function(provider)
+
+        assert isinstance(result, ChromaEmbeddingAdapter)
+        assert result._provider is provider
+
+    def test_adapter_used_for_embedding_openai_subclass(self):
+        """Subclasses should not be coerced to a native Chroma implementation."""
+        from raghilda._chroma_store import (
+            _to_chroma_embedding_function,
+            ChromaEmbeddingAdapter,
+        )
+        from raghilda.embedding import EmbeddingOpenAI
+
+        class CustomOpenAIProvider(EmbeddingOpenAI):
+            def __init__(self):
+                self.model = "custom-openai"
+                self.base_url = "https://example.com/v1"
+                self.api_key = "test-key"
+                self.batch_size = 1
+
+            def embed(self, x, input_type=EmbedInputType.DOCUMENT):
+                return [[1.0, 2.0, 3.0] for _ in x]
+
+            def get_config(self):
+                return {"type": "CustomOpenAIProvider"}
+
+            @classmethod
+            def from_config(cls, config):
+                return cls()
+
+        provider = CustomOpenAIProvider()
         result = _to_chroma_embedding_function(provider)
 
         assert isinstance(result, ChromaEmbeddingAdapter)
