@@ -106,31 +106,31 @@ def _make_doc():
             start_index=0,
             end_index=4,
             text=doc.content[0:4],
-            token_count=len(doc.content[0:4]),
+            char_count=len(doc.content[0:4]),
         ),
         MarkdownChunk(
             start_index=5,
             end_index=7,
             text=doc.content[5:7],
-            token_count=len(doc.content[5:7]),
+            char_count=len(doc.content[5:7]),
         ),
         MarkdownChunk(
             start_index=8,
             end_index=9,
             text=doc.content[8:9],
-            token_count=len(doc.content[8:9]),
+            char_count=len(doc.content[8:9]),
         ),
         MarkdownChunk(
             start_index=10,
             end_index=14,
             text=doc.content[10:14],
-            token_count=len(doc.content[10:14]),
+            char_count=len(doc.content[10:14]),
         ),
         MarkdownChunk(
             start_index=15,
             end_index=23,
             text=doc.content[15:23],
-            token_count=len(doc.content[15:23]),
+            char_count=len(doc.content[15:23]),
         ),
     ]
     return doc
@@ -204,7 +204,7 @@ def test_insert_same_content_but_different_chunking_updates():
             start_index=0,
             end_index=len(content),
             text=content,
-            token_count=len(content),
+            char_count=len(content),
         )
     ]
     first = store.upsert(doc1)
@@ -221,13 +221,13 @@ def test_insert_same_content_but_different_chunking_updates():
             start_index=0,
             end_index=5,
             text=content[:5],
-            token_count=5,
+            char_count=5,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=len(content),
             text=content[6:],
-            token_count=len(content[6:]),
+            char_count=len(content[6:]),
         ),
     ]
     second = store.upsert(doc2)
@@ -259,7 +259,7 @@ def test_insert_unchanged_preserves_document_attributes():
             start_index=0,
             end_index=len(content),
             text=content,
-            token_count=len(content),
+            char_count=len(content),
         )
     ]
 
@@ -285,13 +285,13 @@ def test_insert_same_content_skips_when_existing_chunks_returned_in_reverse_orde
             start_index=0,
             end_index=5,
             text=content[:5],
-            token_count=5,
+            char_count=5,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=11,
             text=content[6:],
-            token_count=5,
+            char_count=5,
         ),
     ]
     store.upsert(doc)
@@ -337,7 +337,7 @@ def test_insert_result_document_includes_merged_chunk_attributes():
             start_index=0,
             end_index=len(original.content),
             text=original.content,
-            token_count=len(original.content),
+            char_count=len(original.content),
             attributes={"tenant": "docs"},
         )
     ]
@@ -355,7 +355,7 @@ def test_insert_result_document_includes_merged_chunk_attributes():
             start_index=0,
             end_index=len(updated.content),
             text=updated.content,
-            token_count=len(updated.content),
+            char_count=len(updated.content),
             attributes={"tenant": "docs"},
         )
     ]
@@ -381,7 +381,7 @@ def test_insert_keeps_existing_chunks_when_upsert_fails(monkeypatch):
             start_index=0,
             end_index=len(doc.content),
             text=doc.content,
-            token_count=len(doc.content),
+            char_count=len(doc.content),
         )
     ]
     store.upsert(doc)
@@ -397,7 +397,7 @@ def test_insert_keeps_existing_chunks_when_upsert_fails(monkeypatch):
             start_index=0,
             end_index=len(updated.content),
             text=updated.content,
-            token_count=len(updated.content),
+            char_count=len(updated.content),
         )
     ]
 
@@ -427,13 +427,13 @@ def test_insert_raises_when_stale_chunk_delete_fails(monkeypatch):
             start_index=0,
             end_index=5,
             text=content[:5],
-            token_count=5,
+            char_count=5,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=len(content),
             text=content[6:],
-            token_count=len(content[6:]),
+            char_count=len(content[6:]),
         ),
     ]
     store.upsert(original)
@@ -452,7 +452,7 @@ def test_insert_raises_when_stale_chunk_delete_fails(monkeypatch):
             start_index=0,
             end_index=len(content),
             text=content,
-            token_count=len(content),
+            char_count=len(content),
         )
     ]
 
@@ -476,7 +476,7 @@ def test_upsert_replaces_when_existing_metadata_missing_content_text(monkeypatch
             start_index=0,
             end_index=len(original.content),
             text=original.content,
-            token_count=len(original.content),
+            char_count=len(original.content),
         )
     ]
     store.upsert(original)
@@ -504,7 +504,7 @@ def test_upsert_replaces_when_existing_metadata_missing_content_text(monkeypatch
             start_index=0,
             end_index=len(updated.content),
             text=updated.content,
-            token_count=len(updated.content),
+            char_count=len(updated.content),
         )
     ]
 
@@ -535,7 +535,7 @@ def test_upsert_accepts_existing_empty_content_text_metadata():
             start_index=0,
             end_index=0,
             text="",
-            token_count=0,
+            char_count=0,
         )
     ]
 
@@ -561,13 +561,13 @@ def test_insert_same_origin_concurrent_updates_do_not_leave_stale_chunks(monkeyp
             start_index=0,
             end_index=5,
             text=content[:5],
-            token_count=5,
+            char_count=5,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=len(content),
             text=content[6:],
-            token_count=len(content[6:]),
+            char_count=len(content[6:]),
         ),
     ]
     doc_one_chunk = MarkdownDocument(origin="same-origin", content=content)
@@ -576,7 +576,7 @@ def test_insert_same_origin_concurrent_updates_do_not_leave_stale_chunks(monkeyp
             start_index=0,
             end_index=len(content),
             text=content,
-            token_count=len(content),
+            char_count=len(content),
         )
     ]
 
@@ -640,7 +640,7 @@ def test_insert_releases_origin_locks_for_completed_origins():
                 start_index=0,
                 end_index=len(content),
                 text=content,
-                token_count=len(content),
+                char_count=len(content),
             )
         ]
         store.upsert(doc, skip_if_unchanged=False)
@@ -663,13 +663,13 @@ def test_insert_stores_document_content_once_in_metadata():
             start_index=0,
             end_index=5,
             text=content[:5],
-            token_count=5,
+            char_count=5,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=len(content),
             text=content[6:],
-            token_count=len(content[6:]),
+            char_count=len(content[6:]),
         ),
     ]
     store.upsert(doc)
@@ -826,13 +826,13 @@ def _make_doc_with_overlapping_chunks():
             start_index=0,
             end_index=11,
             text=content[0:11],  # "hello world"
-            token_count=11,
+            char_count=11,
         ),
         MarkdownChunk(
             start_index=6,
             end_index=17,
             text=content[6:17],  # "world hello"
-            token_count=11,
+            char_count=11,
         ),
     ]
     return doc
@@ -1063,7 +1063,7 @@ def test_ingest_with_custom_prepare():
                 start_index=0,
                 end_index=len(item["text"]),
                 text=item["text"],
-                token_count=len(item["text"]),
+                char_count=len(item["text"]),
             )
         ]
         return doc
@@ -1115,7 +1115,7 @@ def test_ingest_lazy_evaluation():
                 start_index=0,
                 end_index=len(item["text"]),
                 text=item["text"],
-                token_count=len(item["text"]),
+                char_count=len(item["text"]),
             )
         ]
         with lock:

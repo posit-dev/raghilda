@@ -36,10 +36,9 @@ class MarkdownChunker(BaseChunker):
     Parameters
     ----------
     chunk_size
-        Target size for each chunk in characters (approximately 4 characters
-        per token). The chunker attempts to create chunks near this size,
-        though actual sizes may vary based on semantic boundaries.
-        Default is 1600 characters (~400 tokens).
+        Target size for each chunk in characters. The chunker attempts to
+        create chunks near this size, though actual sizes may vary based on
+        semantic boundaries. Default is 1600 characters.
     target_overlap
         Fraction of overlap between successive chunks, from 0 to 1.
         Default is 0.5 (50% overlap). Even with 0, some overlap may occur
@@ -314,7 +313,7 @@ class MarkdownChunker(BaseChunker):
                         break
 
             chunk_text = text[s:e]
-            token_count = len(chunk_text)
+            char_count = len(chunk_text)
 
             ctx_lines = self._heading_context(headings, s)
             ctx = "\n".join(ctx_lines) if len(ctx_lines) > 0 else None
@@ -325,7 +324,7 @@ class MarkdownChunker(BaseChunker):
                     start_index=s,
                     end_index=e,
                     context=ctx,
-                    token_count=token_count,
+                    char_count=char_count,
                 )
             )
 

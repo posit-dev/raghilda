@@ -92,13 +92,13 @@ doc = read_as_markdown("https://quarto.org/docs/guide/")
 print(doc.content[:500])
 ```
 
-**2. Chunk the document** — `MarkdownChunker` splits the Markdown into overlapping chunks at semantic boundaries (headings, paragraphs, sentences). The defaults are a chunk size of 1600 characters (~400 tokens) with 50% overlap between chunks. Each chunk retains the heading hierarchy it falls under as context.
+**2. Chunk the document** — `MarkdownChunker` splits the Markdown into overlapping chunks at semantic boundaries (headings, paragraphs, sentences). The defaults are a chunk size of 1600 characters with 50% overlap between chunks. Each chunk retains the heading hierarchy it falls under as context.
 
 ```{python}
 from raghilda.chunker import MarkdownChunker
 
 chunker = MarkdownChunker(
-    chunk_size=1600,      # Target size in characters (~400 tokens)
+    chunk_size=1600,      # Target size in characters
     target_overlap=0.5,   # 50% overlap between chunks
 )
 chunked_doc = chunker.chunk_document(doc)

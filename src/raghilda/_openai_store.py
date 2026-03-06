@@ -49,7 +49,7 @@ def _ensure_openai_user_attribute_limit(user_attribute_count: int) -> None:
 
 @dataclass(repr=False)
 class OpenAIMarkdownChunk(MarkdownChunk):
-    """MarkdownChunk for OpenAI store - uses character count as token count"""
+    """MarkdownChunk for OpenAI store."""
 
     def __init__(
         self,
@@ -57,24 +57,21 @@ class OpenAIMarkdownChunk(MarkdownChunk):
         start_index: int = 0,
         end_index: Optional[int] = None,
         context=None,
-        token_count=None,
+        char_count=None,
         origin=None,
         attributes=None,
     ):
-        # Compute token_count if not provided (use character count)
-        if token_count is None:
-            token_count = len(text)
+        if char_count is None:
+            char_count = len(text)
 
-        # Compute end_index if not provided
         if end_index is None:
             end_index = len(text)
 
-        # Initialize parent class
         super().__init__(
             text=text,
             start_index=start_index,
             end_index=end_index,
-            token_count=token_count,
+            char_count=char_count,
             context=context,
             origin=origin,
             attributes=attributes,
@@ -91,19 +88,18 @@ class RetrievedOpenAIMarkdownChunk(OpenAIMarkdownChunk, RetrievedChunk):
         start_index: int = 0,
         end_index: Optional[int] = None,
         context=None,
-        token_count=None,
+        char_count=None,
         origin=None,
         metrics=None,
         chunk_ids=None,
         attributes=None,
     ):
-        # Initialize OpenAIMarkdownChunk
         super().__init__(
             text=text,
             start_index=start_index,
             end_index=end_index,
             context=context,
-            token_count=token_count,
+            char_count=char_count,
             origin=origin,
             attributes=attributes,
         )

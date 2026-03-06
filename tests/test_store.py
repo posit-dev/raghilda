@@ -114,7 +114,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
 
@@ -150,7 +150,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
 
@@ -177,7 +177,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(content),
                 text=content,
-                token_count=len(content),
+                char_count=len(content),
             )
         ]
         first = store.upsert(doc1)
@@ -190,13 +190,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text=content[0:5],
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=len(content),
                 text=content[6:],
-                token_count=len(content[6:]),
+                char_count=len(content[6:]),
             ),
         ]
         second = store.upsert(doc2)
@@ -226,7 +226,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(content),
                 text=content,
-                token_count=len(content),
+                char_count=len(content),
             )
         ]
         first = store.upsert(doc1)
@@ -239,7 +239,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(content),
                 text=content.upper(),
-                token_count=len(content),
+                char_count=len(content),
             )
         ]
         with pytest.raises(
@@ -266,7 +266,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(content),
                 text=content.lower(),
-                token_count=len(content),
+                char_count=len(content),
             )
         ]
         with pytest.raises(
@@ -293,7 +293,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(content),
                 text=content,
-                token_count=len(content),
+                char_count=len(content),
                 origin="doc-2",
             )
         ]
@@ -325,13 +325,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text=content[:5],
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=len(content),
                 text=content[6:],
-                token_count=len(content[6:]),
+                char_count=len(content[6:]),
             ),
         ]
 
@@ -372,7 +372,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
 
@@ -394,7 +394,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
 
@@ -421,7 +421,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(first.content),
                 text=first.content,
-                token_count=len(first.content),
+                char_count=len(first.content),
             )
         ]
 
@@ -441,7 +441,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(second.content),
                 text=second.content,
-                token_count=len(second.content),
+                char_count=len(second.content),
             )
         ]
 
@@ -478,13 +478,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=11,
                 text="world",
-                token_count=5,
+                char_count=5,
             ),
         ]
         store.upsert(first)
@@ -495,13 +495,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=10,
                 text="mars",
-                token_count=4,
+                char_count=4,
             ),
         ]
         updated = store.upsert(second)
@@ -539,13 +539,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=5,
                 end_index=9,
                 text="beta",
-                token_count=4,
+                char_count=4,
             ),
         ]
         store.upsert(doc)
@@ -578,13 +578,13 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             ),
             MarkdownChunk(
                 start_index=5,
                 end_index=9,
                 text="beta",
-                token_count=4,
+                char_count=4,
             ),
         ]
         store.upsert(doc)
@@ -658,14 +658,14 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=10,
                 text="alpha beta",
-                token_count=10,
+                char_count=10,
                 context="h1",
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=16,
                 text="beta gamma",
-                token_count=10,
+                char_count=10,
                 context="h2",
                 attributes={"topic": "second"},
             ),
@@ -687,19 +687,19 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=9,
                 text=content[0:9],
-                token_count=9,
+                char_count=9,
             ),
             MarkdownChunk(
                 start_index=10,
                 end_index=19,
                 text=content[10:19],
-                token_count=9,
+                char_count=9,
             ),
             MarkdownChunk(
                 start_index=20,
                 end_index=31,
                 text=content[20:31],
-                token_count=11,
+                char_count=11,
             ),
         ]
         store.upsert(doc)
@@ -815,7 +815,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
         store.upsert(doc)
@@ -870,7 +870,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=len(doc.content),
                 text=doc.content,
-                token_count=len(doc.content),
+                char_count=len(doc.content),
             )
         ]
 
@@ -904,20 +904,20 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
                 attributes={"priority": 5, "is_public": False},
             ),
             MarkdownChunk(
                 start_index=6,
                 end_index=10,
                 text="beta",
-                token_count=4,
+                char_count=4,
             ),
             MarkdownChunk(
                 start_index=11,
                 end_index=16,
                 text="gamma",
-                token_count=5,
+                char_count=5,
             ),
         ]
 
@@ -1005,7 +1005,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1037,7 +1037,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1082,7 +1082,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1145,7 +1145,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1182,7 +1182,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1203,7 +1203,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=10,
                 text="alpha beta",
-                token_count=10,
+                char_count=10,
             )
         ]
 
@@ -1244,7 +1244,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
         store.upsert(first, skip_if_unchanged=False)
@@ -1259,7 +1259,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=10,
                 text="alpha beta",
-                token_count=10,
+                char_count=10,
             )
         ]
         store.upsert(second, skip_if_unchanged=False)
@@ -1288,7 +1288,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="alpha",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1309,7 +1309,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=10,
                 text="alpha beta",
-                token_count=10,
+                char_count=10,
             )
         ]
 
@@ -1345,7 +1345,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1369,7 +1369,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1394,7 +1394,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
                 attributes={"unknown": "x"},
             )
         ]
@@ -1420,7 +1420,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1448,7 +1448,7 @@ class TestDuckDBStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             )
         ]
 
@@ -1625,7 +1625,7 @@ class TestOpenAIStore:
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
                 attributes={"tenant": "docs"},
             )
         ]
@@ -2852,7 +2852,7 @@ def _get_markdown_chunk(doc, start, end):
         start_index=start,
         end_index=end,
         text=doc.content[start:end],
-        token_count=len(doc.content[start:end]),
+        char_count=len(doc.content[start:end]),
     )
 
 
@@ -2922,7 +2922,7 @@ def test_ingest_with_custom_prepare():
                 start_index=0,
                 end_index=len(item["text"]),
                 text=item["text"],
-                token_count=len(item["text"]),
+                char_count=len(item["text"]),
             )
         ]
         return doc
@@ -2974,7 +2974,7 @@ def test_ingest_lazy_evaluation():
                 start_index=0,
                 end_index=len(item["text"]),
                 text=item["text"],
-                token_count=len(item["text"]),
+                char_count=len(item["text"]),
             )
         ]
         with lock:
@@ -3082,6 +3082,7 @@ def test_create_does_not_add_chunk_text_column_to_embeddings():
         "chunk_id",
         "start_index",
         "end_index",
+        "char_count",
         "context",
     }
 
@@ -3118,7 +3119,7 @@ def test_duckdb_store_does_not_require_pandas():
                 start_index=0,
                 end_index=5,
                 text="hello",
-                token_count=5,
+                char_count=5,
             )
         ]
         store.upsert(doc)

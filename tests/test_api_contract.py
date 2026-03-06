@@ -59,7 +59,7 @@ def test_openai_upsert_rejects_chunked_document():
             text="hello",
             start_index=0,
             end_index=5,
-            token_count=5,
+            char_count=5,
         )
     ]
 
