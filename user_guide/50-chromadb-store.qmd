@@ -151,7 +151,7 @@ results = store.retrieve(
 ```
 
 Chroma built-in filterable columns are:
-`chunk_id`, `start_index`, `end_index`, `token_count`, `context`, and `origin`.
+`chunk_id`, `start_index`, `end_index`, `char_count`, `context`, and `origin`.
 
 For advanced Chroma-specific filters, you can still pass `where=...` directly.
 

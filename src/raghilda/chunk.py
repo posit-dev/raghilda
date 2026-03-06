@@ -21,8 +21,8 @@ class Chunk:
         Character position where this chunk begins in the source document.
     end_index
         Character position where this chunk ends in the source document.
-    token_count
-        Approximate number of tokens in this chunk.
+    char_count
+        Number of characters in this chunk.
     context
         Optional heading context showing the document hierarchy at this
         chunk's position (e.g., the Markdown headings that apply).
@@ -37,7 +37,7 @@ class Chunk:
     text: str
     start_index: int
     end_index: int
-    token_count: int
+    char_count: int
     context: Optional[str] = None
     origin: Optional[str] = None
     attributes: Optional[dict[str, Any]] = None
@@ -90,7 +90,7 @@ class Chunk:
                 text=chunk.text,
                 start_index=chunk.start_index,
                 end_index=chunk.end_index,
-                token_count=chunk.token_count,
+                char_count=getattr(chunk, "char_count", len(chunk.text)),
                 context=getattr(chunk, "context", None),
                 origin=getattr(chunk, "origin", None),
                 attributes=dict(raw_attributes or {}),
@@ -165,7 +165,7 @@ class RetrievedChunk(Chunk):
         text="This is relevant content.",
         start_index=0,
         end_index=25,
-        token_count=5,
+        char_count=25,
         metrics=[
             Metric(name="similarity", value=0.92),
             Metric(name="bm25_score", value=15.3),

@@ -20,7 +20,7 @@ TokenChunker = getattr(chonkie, "TokenChunker")
 
 class TestChonkieChunkCompatibility:
     def test_chonkie_chunk_satisfies_chunk_like(self):
-        """Chonkie Chunk should satisfy our ChunkLike protocol."""
+        """Chonkie Chunk should satisfy the chunk-like protocol."""
         chunk = ChonkieChunk(
             text="hello world",
             start_index=0,
@@ -43,7 +43,7 @@ class TestChonkieChunkCompatibility:
         assert result.text == "hello world"
         assert result.start_index == 0
         assert result.end_index == 11
-        assert result.token_count == 2
+        assert result.char_count == 11
 
     def test_from_any_preserves_chonkie_chunk_context(self):
         """Chunk.from_any should preserve context from chonkie Chunk."""

@@ -67,7 +67,7 @@ _RESERVED_SYSTEM_COLUMNS = {
     "chunk_id",
     "start_index",
     "end_index",
-    "token_count",
+    "char_count",
     "context",
     "origin",
     _CONTENT_HASH_METADATA_KEY,
@@ -78,7 +78,7 @@ _FILTERABLE_BASE_COLUMNS = {
     "chunk_id",
     "start_index",
     "end_index",
-    "token_count",
+    "char_count",
     "context",
     "origin",
 }
@@ -322,18 +322,18 @@ class ChromaDBMarkdownChunk(MarkdownChunk):
         start_index: int,
         end_index: int,
         context=None,
-        token_count=None,
+        char_count=None,
         origin=None,
         attributes=None,
     ):
-        if token_count is None:
-            token_count = len(text)
+        if char_count is None:
+            char_count = len(text)
 
         super().__init__(
             text=text,
             start_index=start_index,
             end_index=end_index,
-            token_count=token_count,
+            char_count=char_count,
             context=context,
             origin=origin,
             attributes=attributes,
@@ -350,7 +350,7 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
         start_index: int,
         end_index: int,
         context=None,
-        token_count=None,
+        char_count=None,
         origin=None,
         metrics=None,
         chunk_ids=None,
@@ -361,7 +361,7 @@ class RetrievedChromaDBMarkdownChunk(ChromaDBMarkdownChunk, RetrievedChunk):
             start_index=start_index,
             end_index=end_index,
             context=context,
-            token_count=token_count,
+            char_count=char_count,
             origin=origin,
             attributes=attributes,
         )
@@ -449,7 +449,7 @@ class ChromaDBStore(BaseStore):
             Optional schema for user-defined attribute columns.
             Attribute names use identifier-style syntax.
             Chroma also provides built-in filterable columns:
-            `chunk_id`, `start_index`, `end_index`, `token_count`,
+            `chunk_id`, `start_index`, `end_index`, `char_count`,
             `context`, and `origin`.
         client
             Optional pre-configured Chroma client (e.g., HttpClient).
@@ -649,7 +649,7 @@ class ChromaDBStore(BaseStore):
                     "chunk_id": assigned_chunk_ids[idx],
                     "start_index": chunk.start_index,
                     "end_index": chunk.end_index,
-                    "token_count": chunk.token_count,
+                    "char_count": chunk.char_count,
                     "context": chunk.context,
                     "origin": document.origin,
                     _CONTENT_HASH_METADATA_KEY: content_hash,
@@ -842,8 +842,8 @@ class ChromaDBStore(BaseStore):
             Optional attribute filter as SQL-like string or dict AST.
             Example string: `"tenant = 'docs' AND priority >= 2"`.
             Supports declared attributes plus built-in columns:
-            `chunk_id`, `start_index`, `end_index`,
-            `token_count`, `context`, and `origin`.
+            `chunk_id`, `start_index`, `end_index`, `char_count`,
+            `context`, and `origin`.
         **kwargs
             Additional arguments passed to ChromaDB's `query()` method.
 
@@ -885,7 +885,9 @@ class ChromaDBStore(BaseStore):
             end_index = int(
                 chunk_attributes.get("end_index", start_index + len(doc_text))
             )
-            token_count = int(chunk_attributes.get("token_count", len(doc_text)))
+            if "char_count" not in chunk_attributes:
+                raise ValueError("Corrupted Chroma store: missing required char_count")
+            char_count = int(chunk_attributes["char_count"])
             metrics = []
             if distance is not None:
                 metrics.append(Metric(name="distance", value=distance))
@@ -894,7 +896,7 @@ class ChromaDBStore(BaseStore):
                 start_index=start_index,
                 end_index=end_index,
                 context=chunk_attributes.get("context"),
-                token_count=token_count,
+                char_count=char_count,
                 origin=chunk_attributes.get("origin"),
                 chunk_ids=(
                     []
@@ -953,8 +955,8 @@ class ChromaDBStore(BaseStore):
                 (
                     chunk.start_index,
                     chunk.end_index,
+                    chunk.char_count,
                     chunk.context,
-                    chunk.token_count,
                     chunk.text,
                     *[resolved_attributes.get(col) for col in attribute_columns],
                 )
@@ -972,12 +974,14 @@ class ChromaDBStore(BaseStore):
         for chunk_text, metadata in zip(chunk_texts, chunk_metadatas, strict=False):
             metadata = metadata or {}
             start_index = int(metadata.get("start_index", 0))
+            if "char_count" not in metadata:
+                raise ValueError("Corrupted Chroma store: missing required char_count")
             signatures.append(
                 (
                     start_index,
                     int(metadata.get("end_index", start_index + len(chunk_text))),
+                    int(metadata["char_count"]),
                     metadata.get("context"),
-                    int(metadata.get("token_count", len(chunk_text))),
                     chunk_text,
                     *[metadata.get(col) for col in attribute_columns],
                 )
@@ -1026,6 +1030,10 @@ class ChromaDBStore(BaseStore):
             chunk_id = int(metadata.get("chunk_id", idx))
             start_index = int(metadata.get("start_index", 0))
             end_index = int(metadata.get("end_index", start_index + len(chunk_text)))
+            if "char_count" not in metadata:
+                raise ValueError(
+                    f"Corrupted Chroma store for origin '{origin}': missing required char_count in chunk metadata"
+                )
             attributes = {
                 key: metadata.get(key)
                 for key in self.metadata.attributes_schema
@@ -1043,7 +1051,7 @@ class ChromaDBStore(BaseStore):
                         text=chunk_text,
                         start_index=start_index,
                         end_index=end_index,
-                        token_count=int(metadata.get("token_count", len(chunk_text))),
+                        char_count=int(metadata["char_count"]),
                         context=metadata.get("context"),
                         origin=origin,
                         attributes=attributes or None,

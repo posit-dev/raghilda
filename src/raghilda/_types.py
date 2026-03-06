@@ -1,8 +1,4 @@
-"""Protocol types for raghilda.
-
-These protocols define the interfaces for type checking compatibility
-with chunks, documents, and chunkers.
-"""
+"""Protocol types for raghilda."""
 
 from typing import TYPE_CHECKING, Protocol, Optional, Sequence, runtime_checkable
 
@@ -18,7 +14,6 @@ class ChunkLike(Protocol):
     text: str
     start_index: int
     end_index: int
-    token_count: int
 
 
 @runtime_checkable
