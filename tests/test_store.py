@@ -3139,3 +3139,48 @@ def test_duckdb_store_does_not_require_pandas():
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_chroma_store_is_optional_dependency():
+    repo_root = Path(__file__).resolve().parents[1]
+    src_path = repo_root / "src"
+    script = textwrap.dedent(
+        """
+        import builtins
+
+        original_import = builtins.__import__
+
+        def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "chromadb" or name.startswith("chromadb."):
+                raise ModuleNotFoundError("No module named 'chromadb'")
+            return original_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = blocked_import
+
+        from raghilda.store import ChromaDBStore
+
+        try:
+            ChromaDBStore.create(location=":memory:", overwrite=True)
+        except ModuleNotFoundError as exc:
+            assert str(exc) == (
+                "ChromaDB is required to use ChromaDBStore. "
+                "Install with `pip install chromadb`."
+            )
+        else:
+            raise AssertionError("Expected ModuleNotFoundError")
+        """
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else str(src_path)
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
