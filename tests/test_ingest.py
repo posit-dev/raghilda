@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -5,6 +6,7 @@ import time
 
 import pytest
 
+import raghilda._ingest as ingest_impl
 from raghilda.chunk import Chunk, MarkdownChunk
 from raghilda.document import MarkdownDocument
 from raghilda.ingest import Ingestor, ItemError, ingest
@@ -50,6 +52,21 @@ class _SlowUpsertStore(_RecordingStore):
         assert isinstance(document, MarkdownDocument)
         if document.origin == "slow":
             time.sleep(1.0)
+        return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
+
+
+class _SignalingStore(_RecordingStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.write_started = threading.Event()
+
+    def upsert(
+        self,
+        document,
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult:
+        self.write_started.set()
         return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
 
 
@@ -278,6 +295,75 @@ def test_ingest_on_error_raise_waits_for_inflight_upserts():
     time.sleep(0.2)
 
     assert store.size() == 1
+
+
+def test_ingest_on_error_raise_prevents_post_error_writes_from_registration_gap(
+    monkeypatch,
+):
+    store = _SignalingStore()
+    registration_waiting = threading.Event()
+    release_registration = threading.Event()
+    real_lock = threading.Lock
+
+    class _BlockingRegistrationLock:
+        def __init__(self) -> None:
+            self._lock = real_lock()
+            self._blocked_once = False
+
+        def acquire(self, *args, **kwargs):
+            return self._lock.acquire(*args, **kwargs)
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+        def __enter__(self):
+            if not self._blocked_once:
+                self._blocked_once = True
+                registration_waiting.set()
+                assert release_registration.wait(timeout=1.0)
+            return self._lock.__enter__()
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self._lock.__exit__(exc_type, exc_value, traceback)
+
+    def lock_factory():
+        frame = inspect.currentframe()
+        caller = frame.f_back if frame is not None else None
+        if (
+            caller is not None
+            and caller.f_code.co_name == "ingest"
+            and caller.f_code.co_filename.endswith("_ingest.py")
+        ):
+            return _BlockingRegistrationLock()
+        return real_lock()
+
+    monkeypatch.setattr(ingest_impl.threading, "Lock", lock_factory)
+
+    def prepare(item: str) -> MarkdownDocument:
+        if item == "bad":
+            assert registration_waiting.wait(timeout=1.0)
+            raise ValueError("boom")
+        return _chunked_doc(origin=item, content=item)
+
+    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom"):
+        ingest(
+            ["race", "bad"],
+            store=store,
+            prepare=prepare,
+            num_workers=2,
+            progress=False,
+        )
+
+    assert store.size() == 0
+    assert not store.write_started.is_set()
+
+    release_registration.set()
+
+    assert not store.write_started.wait(timeout=0.2)
+    assert store.size() == 0
 
 
 def test_ingest_on_error_skip_collects_item_errors():

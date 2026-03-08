@@ -154,12 +154,14 @@ def ingest(
             if cancel_event.is_set():
                 raise _IngestCancelled
             document = resolved_prepare(item)
-            if cancel_event.is_set():
-                raise _IngestCancelled
             with active_upserts_lock:
+                if cancel_event.is_set():
+                    raise _IngestCancelled
                 active_upserts += 1
                 upserts_idle.clear()
             try:
+                if cancel_event.is_set():
+                    raise _IngestCancelled
                 return store.upsert(document)
             finally:
                 with active_upserts_lock:
