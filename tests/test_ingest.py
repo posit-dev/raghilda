@@ -40,6 +40,19 @@ class _RecordingStore(BaseStore):
         return len(self.documents)
 
 
+class _SlowUpsertStore(_RecordingStore):
+    def upsert(
+        self,
+        document,
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult:
+        assert isinstance(document, MarkdownDocument)
+        if document.origin == "slow":
+            time.sleep(1.0)
+        return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
+
+
 def _chunked_doc(origin: str, content: str) -> MarkdownDocument:
     return MarkdownDocument(
         origin=origin,
@@ -238,6 +251,33 @@ def test_ingest_on_error_raise_does_not_wait_for_running_workers():
     time.sleep(1.0)
 
     assert store.size() == 0
+
+
+def test_ingest_on_error_raise_waits_for_inflight_upserts():
+    store = _SlowUpsertStore()
+
+    def prepare(item: str) -> MarkdownDocument:
+        if item == "bad":
+            raise ValueError("boom")
+        return _chunked_doc(origin=item, content=item)
+
+    start = time.monotonic()
+    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom"):
+        ingest(
+            ["slow", "bad"],
+            store=store,
+            prepare=prepare,
+            num_workers=2,
+            progress=False,
+        )
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= 1.0
+    assert store.size() == 1
+
+    time.sleep(0.2)
+
+    assert store.size() == 1
 
 
 def test_ingest_on_error_skip_collects_item_errors():

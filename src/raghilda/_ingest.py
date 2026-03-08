@@ -143,15 +143,29 @@ def ingest(
     result = IngestResult()
     total = len(items) if isinstance(items, Sized) else None
     cancel_event = threading.Event()
+    active_upserts = 0
+    active_upserts_lock = threading.Lock()
+    upserts_idle = threading.Event()
+    upserts_idle.set()
 
     def do_ingest_work(item: Any) -> WriteResult:
+        nonlocal active_upserts
         try:
             if cancel_event.is_set():
                 raise _IngestCancelled
             document = resolved_prepare(item)
             if cancel_event.is_set():
                 raise _IngestCancelled
-            return store.upsert(document)
+            with active_upserts_lock:
+                active_upserts += 1
+                upserts_idle.clear()
+            try:
+                return store.upsert(document)
+            finally:
+                with active_upserts_lock:
+                    active_upserts -= 1
+                    if active_upserts == 0:
+                        upserts_idle.set()
         except _IngestCancelled:
             raise
         except ItemError:
@@ -173,6 +187,7 @@ def ingest(
             except ItemError as error:
                 if on_error == "raise":
                     cancel_event.set()
+                    upserts_idle.wait()
                     raise error
                 result.errors.append(error)
     except Exception:
