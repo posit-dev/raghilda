@@ -233,6 +233,11 @@ def test_ingest_on_error_raise_does_not_wait_for_running_workers():
     elapsed = time.monotonic() - start
 
     assert elapsed < 0.5
+    assert store.size() == 0
+
+    time.sleep(1.0)
+
+    assert store.size() == 0
 
 
 def test_ingest_on_error_skip_collects_item_errors():
@@ -302,7 +307,7 @@ def test_openai_store_default_prepare_uses_read_without_chunking(tmp_path):
     assert result.failed == 0
     assert len(fake_vector_store_files.upload_calls) == 1
     uploaded_name, uploaded_bytes = fake_vector_store_files.upload_calls[0]["file"]
-    assert uploaded_name == f"{path}.md"
+    assert uploaded_name == path.name
     assert b"Body text" in uploaded_bytes
 
 

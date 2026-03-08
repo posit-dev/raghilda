@@ -4,6 +4,8 @@ import hashlib
 import threading
 import logging
 from contextlib import contextmanager
+from pathlib import PurePosixPath, PureWindowsPath
+from urllib.parse import unquote, urlparse
 from ._store import BaseStore, WriteResult
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .document import Document, MarkdownDocument
@@ -46,6 +48,26 @@ def _ensure_openai_user_attribute_limit(user_attribute_count: int) -> None:
             f"received {user_attribute_count} user attributes plus "
             "2 internal attributes. Use at most 14 user attributes."
         )
+
+
+def _managed_openai_filename(origin: str) -> str:
+    parsed = urlparse(origin)
+    if parsed.scheme and parsed.netloc:
+        filename = PurePosixPath(unquote(parsed.path)).name
+        if not filename:
+            filename = parsed.netloc
+    else:
+        filename = PurePosixPath(origin).name
+        if filename == origin:
+            windows_filename = PureWindowsPath(origin).name
+            if windows_filename != origin:
+                filename = windows_filename
+
+    if not filename:
+        filename = "document"
+    if not filename.lower().endswith(".md"):
+        filename = f"{filename}.md"
+    return filename
 
 
 @dataclass(repr=False)
@@ -377,7 +399,10 @@ class OpenAIStore(BaseStore):
                 _INTERNAL_CONTENT_HASH_ATTRIBUTE_KEY: content_hash,
             }
 
-            file = (document.origin + ".md", document.content.encode("utf-8"))
+            file = (
+                _managed_openai_filename(document.origin),
+                document.content.encode("utf-8"),
+            )
             if file_attributes:
                 uploaded_file = self.client.vector_stores.files.upload_and_poll(
                     file=file,

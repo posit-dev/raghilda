@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sized
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+import threading
 from typing import Any, Literal
 
 from tqdm import tqdm
@@ -12,6 +13,10 @@ from ._utils import lazy_map
 from .document import Document
 
 OnError = Literal["raise", "skip"]
+
+
+class _IngestCancelled(Exception):
+    """Internal signal used to stop workers after a fail-fast error."""
 
 
 @dataclass
@@ -137,14 +142,23 @@ def ingest(
     resolved_prepare = prepare if prepare is not None else store.default_prepare()
     result = IngestResult()
     total = len(items) if isinstance(items, Sized) else None
+    cancel_event = threading.Event()
 
     def do_ingest_work(item: Any) -> WriteResult:
         try:
+            if cancel_event.is_set():
+                raise _IngestCancelled
             document = resolved_prepare(item)
+            if cancel_event.is_set():
+                raise _IngestCancelled
             return store.upsert(document)
+        except _IngestCancelled:
+            raise
         except ItemError:
             raise
         except Exception as error:
+            if on_error == "raise":
+                cancel_event.set()
             raise ItemError(item=item, error=error) from error
 
     pool = ThreadPoolExecutor(max_workers=num_workers)
@@ -154,8 +168,11 @@ def ingest(
         ):
             try:
                 result.record_write(future.result())
+            except _IngestCancelled:
+                continue
             except ItemError as error:
                 if on_error == "raise":
+                    cancel_event.set()
                     raise error
                 result.errors.append(error)
     except Exception:
