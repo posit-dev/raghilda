@@ -117,6 +117,7 @@ You can replace the default `prepare` function to control how documents are read
 
 ```{python}
 #| eval: false
+from raghilda.ingest import ingest
 from raghilda.read import read_as_markdown
 from raghilda.chunker import MarkdownChunker
 

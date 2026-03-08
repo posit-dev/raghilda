@@ -113,6 +113,7 @@ The shared `ingest()` function uses default chunking, but you can customize it w
 
 ```{python}
 #| eval: false
+from raghilda.ingest import ingest
 from raghilda.store import DuckDBStore
 from raghilda.read import read_as_markdown
 from raghilda.chunker import MarkdownChunker
