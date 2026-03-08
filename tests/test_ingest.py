@@ -10,7 +10,13 @@ import raghilda._ingest as ingest_impl
 from raghilda.chunk import Chunk, MarkdownChunk
 from raghilda.document import MarkdownDocument
 from raghilda.ingest import Ingestor, ItemError, ingest
-from raghilda.store import BaseStore, DuckDBStore, OpenAIStore, WriteResult
+from raghilda.store import (
+    BaseStore,
+    ChromaDBStore,
+    DuckDBStore,
+    OpenAIStore,
+    WriteResult,
+)
 
 
 class _RecordingStore(BaseStore):
@@ -68,6 +74,38 @@ class _SignalingStore(_RecordingStore):
     ) -> WriteResult:
         self.write_started.set()
         return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
+
+
+class _SinglePage:
+    def __init__(self):
+        self.data = []
+
+    def has_next_page(self):
+        return False
+
+
+class _FakeVectorStoreFiles:
+    def __init__(self):
+        self.upload_calls = []
+
+    def list(self, **kwargs):
+        return _SinglePage()
+
+    def upload_and_poll(self, **kwargs):
+        self.upload_calls.append(kwargs)
+        return SimpleNamespace(id="file_new")
+
+    def delete(self, **kwargs):
+        raise AssertionError("delete should not be called")
+
+
+def _make_fake_openai_store() -> tuple[OpenAIStore, _FakeVectorStoreFiles]:
+    fake_vector_store_files = _FakeVectorStoreFiles()
+    fake_client = SimpleNamespace(
+        vector_stores=SimpleNamespace(files=fake_vector_store_files),
+        files=SimpleNamespace(content=lambda **kwargs: None),
+    )
+    return OpenAIStore(client=fake_client, store_id="vs_test"), fake_vector_store_files
 
 
 def _chunked_doc(origin: str, content: str) -> MarkdownDocument:
@@ -397,33 +435,7 @@ def test_ingest_on_error_skip_collects_item_errors():
 
 
 def test_openai_store_default_prepare_uses_read_without_chunking(tmp_path):
-    class _SinglePage:
-        def __init__(self):
-            self.data = []
-
-        def has_next_page(self):
-            return False
-
-    class FakeVectorStoreFiles:
-        def __init__(self):
-            self.upload_calls = []
-
-        def list(self, **kwargs):
-            return _SinglePage()
-
-        def upload_and_poll(self, **kwargs):
-            self.upload_calls.append(kwargs)
-            return SimpleNamespace(id="file_new")
-
-        def delete(self, **kwargs):
-            raise AssertionError("delete should not be called")
-
-    fake_vector_store_files = FakeVectorStoreFiles()
-    fake_client = SimpleNamespace(
-        vector_stores=SimpleNamespace(files=fake_vector_store_files),
-        files=SimpleNamespace(content=lambda **kwargs: None),
-    )
-    store = OpenAIStore(client=fake_client, store_id="vs_test")
+    store, fake_vector_store_files = _make_fake_openai_store()
     path = tmp_path / "doc.md"
     path.write_text("# Title\n\nBody text\n", encoding="utf-8")
 
@@ -435,6 +447,48 @@ def test_openai_store_default_prepare_uses_read_without_chunking(tmp_path):
     uploaded_name, uploaded_bytes = fake_vector_store_files.upload_calls[0]["file"]
     assert uploaded_name == path.name
     assert b"Body text" in uploaded_bytes
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected_name"),
+    [
+        ("https://example.com/docs/readme", "readme.md"),
+        ("https://example.com/", "example.com.md"),
+        (r"C:\docs\guide.txt", "guide.txt.md"),
+        ("/", "document.md"),
+    ],
+)
+def test_openai_store_normalizes_managed_filenames(origin: str, expected_name: str):
+    store, fake_vector_store_files = _make_fake_openai_store()
+
+    result = store.upsert(
+        MarkdownDocument(origin=origin, content="# Title\n\nBody text\n")
+    )
+
+    assert result.action == "inserted"
+    assert len(fake_vector_store_files.upload_calls) == 1
+    uploaded_name, uploaded_bytes = fake_vector_store_files.upload_calls[0]["file"]
+    assert uploaded_name == expected_name
+    assert b"Body text" in uploaded_bytes
+
+
+def test_chromadb_store_supports_shared_ingest_default_prepare(tmp_path):
+    pytest.importorskip("chromadb")
+    from tests.test_chroma_store import DummyEmbeddingFunction
+
+    store = ChromaDBStore.create(
+        location=":memory:",
+        embed=DummyEmbeddingFunction(),
+        overwrite=True,
+        name="ingest_chroma_shared",
+    )
+    paths = _write_markdown_files(tmp_path, ["first", "second"])
+
+    result = ingest(paths, store=store, progress=False)
+
+    assert result.inserted == 2
+    assert result.failed == 0
+    assert store.size() == 2
 
 
 def test_chonkie_compatibility_via_shared_ingest(tmp_path):
