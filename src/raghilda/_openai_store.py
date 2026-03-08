@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from ._store import BaseStore, WriteResult
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
 from .document import Document, MarkdownDocument
+from .read import read_as_markdown
 from typing import Any, Mapping, Optional, Sequence
 from dataclasses import dataclass
 from ._attributes import (
@@ -250,6 +251,9 @@ class OpenAIStore(BaseStore):
             attributes_spec=resolved_attributes_spec,
             attributes=resolved_attributes_schema,
         )
+
+    def default_prepare(self):
+        return read_as_markdown
 
     def __init__(
         self,

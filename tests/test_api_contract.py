@@ -4,7 +4,9 @@ import pytest
 
 from raghilda.chunk import MarkdownChunk
 from raghilda.document import Document, MarkdownDocument
+import raghilda.ingest as ingest_module
 import raghilda.store as store_module
+from raghilda.ingest import IngestResult, Ingestor, ItemError, ingest
 from raghilda.store import ChromaDBStore, DuckDBStore, OpenAIStore, WriteResult
 
 
@@ -19,6 +21,8 @@ def test_store_api_uses_upsert_not_insert():
     assert hasattr(DuckDBStore, "upsert")
     assert hasattr(ChromaDBStore, "upsert")
     assert hasattr(OpenAIStore, "upsert")
+    assert not hasattr(DuckDBStore, "ingest")
+    assert not hasattr(ChromaDBStore, "ingest")
     assert not hasattr(DuckDBStore, "insert")
     assert not hasattr(ChromaDBStore, "insert")
     assert not hasattr(OpenAIStore, "insert")
@@ -27,6 +31,13 @@ def test_store_api_uses_upsert_not_insert():
 def test_store_exports_write_result_not_insert_result():
     assert WriteResult is store_module.WriteResult
     assert not hasattr(store_module, "InsertResult")
+
+
+def test_ingest_exports_shared_api():
+    assert ItemError is ingest_module.ItemError
+    assert IngestResult is ingest_module.IngestResult
+    assert Ingestor is ingest_module.Ingestor
+    assert ingest is ingest_module.ingest
 
 
 def test_openai_upsert_rejects_chunked_document():

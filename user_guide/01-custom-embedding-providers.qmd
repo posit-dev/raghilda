@@ -92,6 +92,7 @@ The `@register_embedding_provider("EmbeddingVoyage")` decorator registers your p
 
 ```{python}
 #| eval: false
+from raghilda.ingest import ingest
 from raghilda.store import DuckDBStore
 
 # Create store with custom provider
@@ -99,7 +100,7 @@ store = DuckDBStore.create(
     location="my_store.db",
     embed=EmbeddingVoyage(model="voyage-3"),
 )
-store.ingest(documents)
+ingest(documents, store=store)
 
 # Later, reconnect - provider is automatically restored
 store = DuckDBStore.connect("my_store.db")

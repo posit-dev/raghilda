@@ -94,6 +94,7 @@ To chunk a full document (not just text), use `chunk_document()`:
 
 ```{python}
 #| eval: false
+from raghilda.ingest import ingest
 from raghilda.read import read_as_markdown
 from raghilda.chunker import MarkdownChunker
 
@@ -108,7 +109,7 @@ The chunks are attached to the document's `chunks` attribute, preserving the ass
 
 ## Custom Chunking with Ingest
 
-The `ingest()` method uses default chunking, but you can customize it with a `prepare` function:
+The shared `ingest()` function uses default chunking, but you can customize it with a `prepare` function:
 
 ```{python}
 #| eval: false
@@ -129,7 +130,7 @@ def prepare(uri):
     doc = read_as_markdown(uri)
     return chunker.chunk_document(doc)
 
-store.ingest(files, prepare=prepare)
+ingest(files, store=store, prepare=prepare)
 ```
 
 ## Using Chonkie Chunkers
@@ -141,6 +142,7 @@ raghilda is compatible with [chonkie](https://github.com/chonkie-ai/chonkie), a 
 from chonkie import TokenChunker, SemanticChunker
 from raghilda.chunk import Chunk
 from raghilda.document import MarkdownDocument
+from raghilda.ingest import ingest
 from raghilda.read import read_as_markdown
 
 # Use chonkie's TokenChunker
@@ -156,5 +158,5 @@ def prepare(uri):
         chunks=[Chunk.from_any(c) for c in chonkie_chunks],
     )
 
-store.ingest(files, prepare=prepare)
+ingest(files, store=store, prepare=prepare)
 ```
