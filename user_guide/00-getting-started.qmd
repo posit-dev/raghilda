@@ -70,14 +70,16 @@ links = list(Path("docs").glob("**/*.md"))
 
 ## Ingesting Documents
 
-The `ingest()` method handles reading, chunking, embedding, and storing documents in one step:
+The shared `ingest()` function handles reading, chunking, embedding, and storing documents in one step:
 
 ```{python}
-store.ingest(links)
-print(f"Ingested {store.size()} chunks")
+from raghilda.ingest import ingest
+
+result = ingest(links, store=store)
+print(result.inserted, result.replaced, result.failed)
 ```
 
-That's all you need for the preparation phase. Under the hood, `ingest()` converts each item to Markdown, splits it into overlapping chunks, computes embeddings, and writes everything to the store—all in parallel.
+That's all you need for the preparation phase. Under the hood, `ingest()` converts each item to Markdown, splits it into overlapping chunks, computes embeddings, and writes everything to the store, all in parallel.
 
 ## What Happens During Ingestion
 
@@ -124,7 +126,7 @@ def prepare(uri):
     doc = read_as_markdown(uri)
     return chunker.chunk_document(doc)
 
-store.ingest(links, prepare=prepare, num_workers=4)
+result = ingest(links, store=store, prepare=prepare, num_workers=4)
 ```
 
 Common reasons to customize `prepare`:
@@ -239,7 +241,9 @@ links = find_links(
 )
 
 # 3. Ingest
-store.ingest(links, progress=True)
+from raghilda.ingest import ingest
+
+result = ingest(links, store=store, progress=True)
 
 # 4. Build indexes
 store.build_index()

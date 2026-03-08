@@ -12,6 +12,7 @@ from chonkie.types import (
 )  # noqa: E402
 from raghilda.chunk import Chunk  # noqa: E402
 from raghilda.document import Document, MarkdownDocument  # noqa: E402
+from raghilda.ingest import ingest  # noqa: E402
 from raghilda.types import ChunkLike, DocumentLike  # noqa: E402
 from raghilda.store import DuckDBStore  # noqa: E402
 
@@ -123,7 +124,7 @@ class TestChonkieChunkerWithStore:
         assert store.size() == 1
 
     def test_store_ingest_with_chonkie_prepare_function(self):
-        """DuckDBStore.ingest should work with a chonkie-based prepare function."""
+        """Shared ingest should work with a chonkie-based prepare function."""
         import tempfile
         import os
 
@@ -152,7 +153,9 @@ class TestChonkieChunkerWithStore:
                     chunks=[Chunk.from_any(c) for c in chonkie_chunks],
                 )
 
-            store.ingest([temp_path], prepare=prepare_with_chonkie)
+            ingest(
+                [temp_path], store=store, prepare=prepare_with_chonkie, progress=False
+            )
 
             assert store.size() == 1
         finally:

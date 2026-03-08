@@ -1,12 +1,13 @@
-from . import embedding, store, types, chunk, chunker, document, read, scrape
+from . import chunk, chunker, document, embedding, ingest, read, scrape, store, types
 
 __all__ = [
-    "embedding",
-    "store",
-    "types",
     "chunk",
     "chunker",
     "document",
+    "embedding",
+    "ingest",
     "read",
     "scrape",
+    "store",
+    "types",
 ]

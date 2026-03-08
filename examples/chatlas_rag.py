@@ -17,6 +17,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from raghilda.ingest import ingest
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
 from raghilda.scrape import find_links
@@ -50,7 +51,7 @@ def build_rag_index():
         name="chatlas_docs",
         title="Chatlas Documentation",
     )
-    store.ingest(links, progress=True)
+    ingest(links, store=store, progress=True)
 
     # Build indexes for faster retrieval
     print("Building search indexes...")

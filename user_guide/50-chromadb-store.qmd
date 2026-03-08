@@ -88,19 +88,21 @@ For multiple documents, use `ingest()` which handles reading, chunking, and inse
 
 ```{python}
 #| eval: false
+from raghilda.ingest import ingest
+
 # Ingest multiple files
-store.ingest([
+ingest([
     "docs/guide.md",
     "docs/reference.md",
     "docs/tutorial.md",
-])
+], store=store)
 
 # With custom preparation function
 def prepare(uri):
     doc = read_as_markdown(uri)
     return MarkdownChunker(chunk_size=500).chunk_document(doc)
 
-store.ingest(files, prepare=prepare, num_workers=4)
+ingest(files, store=store, prepare=prepare, num_workers=4)
 ```
 
 ## Retrieving Documents
@@ -216,11 +218,13 @@ store = ChromaDBStore.create(
 )
 
 # 2. Ingest documents
-store.ingest([
+from raghilda.ingest import ingest
+
+result = ingest([
     "README.md",
     "docs/getting-started.md",
     "docs/api-reference.md",
-])
+], store=store)
 
 print(f"Indexed {store.size()} documents")
 

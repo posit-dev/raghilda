@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Any, Callable, Literal, Sequence
 
 from .chunk import RetrievedChunk
 from .document import Document, MarkdownDocument
+from .chunker import MarkdownChunker
+from .read import read_as_markdown
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,15 @@ class BaseStore(ABC):
             A newly created store instance.
         """
         pass
+
+    def default_prepare(self) -> Callable[[Any], Document]:
+        """Build the default item-to-document prepare function for ingestion."""
+        chunker = MarkdownChunker()
+
+        def prepare(item: Any) -> Document:
+            return chunker.chunk_document(read_as_markdown(item))
+
+        return prepare
 
     @abstractmethod
     def upsert(

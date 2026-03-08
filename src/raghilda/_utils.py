@@ -43,9 +43,10 @@ def lazy_map(
         if not submit_next():
             break
 
-    # Process until done
+    # Process until done. Refill after yielding so callers can stop on failures
+    # without submitting more work first.
     while pending:
         done, pending = wait(pending, return_when=FIRST_COMPLETED)
         for future in done:
-            submit_next()  # Refill as we complete
             yield future
+            submit_next()
