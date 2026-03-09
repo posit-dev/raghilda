@@ -1,4 +1,3 @@
-import inspect
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -6,7 +5,6 @@ import time
 
 import pytest
 
-import raghilda._ingest as ingest_impl
 from raghilda.chunk import Chunk, MarkdownChunk
 from raghilda.document import MarkdownDocument
 from raghilda.ingest import Ingestor, ItemError, ingest
@@ -58,21 +56,6 @@ class _SlowUpsertStore(_RecordingStore):
         assert isinstance(document, MarkdownDocument)
         if document.origin == "slow":
             time.sleep(1.0)
-        return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
-
-
-class _SignalingStore(_RecordingStore):
-    def __init__(self) -> None:
-        super().__init__()
-        self.write_started = threading.Event()
-
-    def upsert(
-        self,
-        document,
-        *,
-        skip_if_unchanged: bool = True,
-    ) -> WriteResult:
-        self.write_started.set()
         return super().upsert(document, skip_if_unchanged=skip_if_unchanged)
 
 
@@ -141,13 +124,40 @@ def test_ingest_list_input(tmp_path):
     )
     paths = _write_markdown_files(tmp_path, ["first", "second"])
 
-    result = ingest(paths, store=store, progress=False)
+    results = ingest(paths, store=store, progress=False)
 
-    assert result.inserted == 2
-    assert result.replaced == 0
-    assert result.skipped == 0
-    assert result.failed == 0
+    assert results.inserted == 2
+    assert results.replaced == 0
+    assert results.skipped == 0
+    assert results.failed == 0
+    assert results.pending == 0
     assert store.size() == 2
+
+
+def test_ingest_result_keeps_item_scoped_write_outcomes():
+    store = _RecordingStore()
+    items = [
+        {"id": "doc1", "text": "First document content"},
+        {"id": "doc2", "text": "Second document content"},
+    ]
+
+    def custom_prepare(item: dict[str, str]) -> MarkdownDocument:
+        return _chunked_doc(origin=item["id"], content=item["text"])
+
+    results = ingest(
+        items,
+        store=store,
+        prepare=custom_prepare,
+        num_workers=1,
+        progress=False,
+    )
+
+    assert [outcome.item for outcome in results.outcomes] == items
+    assert [outcome.status for outcome in results.outcomes] == ["inserted", "inserted"]
+    assert [write.document.origin for write in results.write_results] == [
+        "doc1",
+        "doc2",
+    ]
 
 
 def test_ingest_with_generator_uses_bounded_lazy_consumption():
@@ -181,7 +191,7 @@ def test_ingest_with_generator_uses_bounded_lazy_consumption():
             inserted_count += 1
         return doc
 
-    result = ingest(
+    results = ingest(
         tracking_generator(),
         store=store,
         prepare=slow_prepare,
@@ -189,9 +199,10 @@ def test_ingest_with_generator_uses_bounded_lazy_consumption():
         progress=False,
     )
 
-    assert result.inserted == 20
+    assert results.inserted == 20
     assert store.size() == 20
     assert max_pending <= 4
+    assert results.pending is None
 
 
 def test_ingestor_run_supports_custom_prepare():
@@ -206,7 +217,7 @@ def test_ingestor_run_supports_custom_prepare():
         return _chunked_doc(origin=item["id"], content=item["text"])
 
     ingestor = Ingestor(prepare=custom_prepare, num_workers=1)
-    result = ingestor.run(
+    results = ingestor.run(
         [
             {"id": "doc1", "text": "First document content"},
             {"id": "doc2", "text": "Second document content"},
@@ -215,8 +226,8 @@ def test_ingestor_run_supports_custom_prepare():
         progress=False,
     )
 
-    assert result.inserted == 2
-    assert result.failed == 0
+    assert results.inserted == 2
+    assert results.failed == 0
     assert store.size() == 2
 
 
@@ -231,7 +242,7 @@ def test_ingest_aggregates_inserted_replaced_and_skipped():
     def custom_prepare(item: dict[str, str]) -> MarkdownDocument:
         return _chunked_doc(origin=item["id"], content=item["text"])
 
-    result = ingest(
+    results = ingest(
         [
             {"id": "doc1", "text": "First version"},
             {"id": "doc2", "text": "Stable document"},
@@ -244,10 +255,10 @@ def test_ingest_aggregates_inserted_replaced_and_skipped():
         progress=False,
     )
 
-    assert result.inserted == 2
-    assert result.replaced == 1
-    assert result.skipped == 1
-    assert result.failed == 0
+    assert results.inserted == 2
+    assert results.replaced == 1
+    assert results.skipped == 1
+    assert results.failed == 0
     assert store.size() == 2
 
 
@@ -275,10 +286,14 @@ def test_ingest_on_error_raise_fails_fast():
 
     assert exc_info.value.item == "bad"
     assert isinstance(exc_info.value.error, ValueError)
+    assert exc_info.value.partial_results is not None
+    assert exc_info.value.partial_results.inserted == 1
+    assert exc_info.value.partial_results.failed == 1
+    assert exc_info.value.partial_results.pending == 1
     assert store.size() == 1
 
 
-def test_ingest_on_error_raise_does_not_wait_for_running_workers():
+def test_ingest_on_error_raise_drains_running_prepare_work():
     store = _RecordingStore()
 
     def prepare(item: str) -> MarkdownDocument:
@@ -290,7 +305,7 @@ def test_ingest_on_error_raise_does_not_wait_for_running_workers():
         return _chunked_doc(origin=item, content=item)
 
     start = time.monotonic()
-    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom"):
+    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom") as exc_info:
         ingest(
             ["slow", "bad"],
             store=store,
@@ -300,12 +315,13 @@ def test_ingest_on_error_raise_does_not_wait_for_running_workers():
         )
     elapsed = time.monotonic() - start
 
-    assert elapsed < 0.5
-    assert store.size() == 0
-
-    time.sleep(1.0)
-
-    assert store.size() == 0
+    assert elapsed >= 1.0
+    assert exc_info.value.partial_results is not None
+    assert exc_info.value.partial_results.inserted == 1
+    assert exc_info.value.partial_results.failed == 1
+    assert exc_info.value.partial_results.cancelled == 0
+    assert exc_info.value.partial_results.pending == 0
+    assert store.size() == 1
 
 
 def test_ingest_on_error_raise_waits_for_inflight_upserts():
@@ -317,7 +333,7 @@ def test_ingest_on_error_raise_waits_for_inflight_upserts():
         return _chunked_doc(origin=item, content=item)
 
     start = time.monotonic()
-    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom"):
+    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom") as exc_info:
         ingest(
             ["slow", "bad"],
             store=store,
@@ -328,80 +344,15 @@ def test_ingest_on_error_raise_waits_for_inflight_upserts():
     elapsed = time.monotonic() - start
 
     assert elapsed >= 1.0
+    assert exc_info.value.partial_results is not None
+    assert exc_info.value.partial_results.inserted == 1
+    assert exc_info.value.partial_results.failed == 1
+    assert exc_info.value.partial_results.cancelled == 0
     assert store.size() == 1
 
     time.sleep(0.2)
 
     assert store.size() == 1
-
-
-def test_ingest_on_error_raise_prevents_post_error_writes_from_registration_gap(
-    monkeypatch,
-):
-    store = _SignalingStore()
-    registration_waiting = threading.Event()
-    release_registration = threading.Event()
-    real_lock = threading.Lock
-
-    class _BlockingRegistrationLock:
-        def __init__(self) -> None:
-            self._lock = real_lock()
-            self._blocked_once = False
-
-        def acquire(self, *args, **kwargs):
-            return self._lock.acquire(*args, **kwargs)
-
-        def release(self) -> None:
-            self._lock.release()
-
-        def locked(self) -> bool:
-            return self._lock.locked()
-
-        def __enter__(self):
-            if not self._blocked_once:
-                self._blocked_once = True
-                registration_waiting.set()
-                assert release_registration.wait(timeout=1.0)
-            return self._lock.__enter__()
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return self._lock.__exit__(exc_type, exc_value, traceback)
-
-    def lock_factory():
-        frame = inspect.currentframe()
-        caller = frame.f_back if frame is not None else None
-        if (
-            caller is not None
-            and caller.f_code.co_name == "ingest"
-            and caller.f_code.co_filename.endswith("_ingest.py")
-        ):
-            return _BlockingRegistrationLock()
-        return real_lock()
-
-    monkeypatch.setattr(ingest_impl.threading, "Lock", lock_factory)
-
-    def prepare(item: str) -> MarkdownDocument:
-        if item == "bad":
-            assert registration_waiting.wait(timeout=1.0)
-            raise ValueError("boom")
-        return _chunked_doc(origin=item, content=item)
-
-    with pytest.raises(ItemError, match="Failed to ingest 'bad': boom"):
-        ingest(
-            ["race", "bad"],
-            store=store,
-            prepare=prepare,
-            num_workers=2,
-            progress=False,
-        )
-
-    assert store.size() == 0
-    assert not store.write_started.is_set()
-
-    release_registration.set()
-
-    assert not store.write_started.wait(timeout=0.2)
-    assert store.size() == 0
 
 
 def test_ingest_on_error_skip_collects_item_errors():
@@ -417,7 +368,7 @@ def test_ingest_on_error_skip_collects_item_errors():
             raise ValueError("boom")
         return _chunked_doc(origin=item, content=item)
 
-    result = ingest(
+    results = ingest(
         ["first", "bad", "later"],
         store=store,
         prepare=prepare,
@@ -426,11 +377,16 @@ def test_ingest_on_error_skip_collects_item_errors():
         progress=False,
     )
 
-    assert result.inserted == 2
-    assert result.failed == 1
-    assert len(result.errors) == 1
-    assert result.errors[0].item == "bad"
-    assert isinstance(result.errors[0].error, ValueError)
+    assert results.inserted == 2
+    assert results.failed == 1
+    assert len(results.errors) == 1
+    assert results.errors[0].item == "bad"
+    assert isinstance(results.errors[0].error, ValueError)
+    assert [outcome.status for outcome in results.outcomes] == [
+        "inserted",
+        "failed",
+        "inserted",
+    ]
     assert store.size() == 2
 
 
@@ -439,10 +395,10 @@ def test_openai_store_default_prepare_uses_read_without_chunking(tmp_path):
     path = tmp_path / "doc.md"
     path.write_text("# Title\n\nBody text\n", encoding="utf-8")
 
-    result = ingest([str(path)], store=store, progress=False)
+    results = ingest([str(path)], store=store, progress=False)
 
-    assert result.inserted == 1
-    assert result.failed == 0
+    assert results.inserted == 1
+    assert results.failed == 0
     assert len(fake_vector_store_files.upload_calls) == 1
     uploaded_name, uploaded_bytes = fake_vector_store_files.upload_calls[0]["file"]
     assert uploaded_name == path.name
@@ -484,10 +440,10 @@ def test_chromadb_store_supports_shared_ingest_default_prepare(tmp_path):
     )
     paths = _write_markdown_files(tmp_path, ["first", "second"])
 
-    result = ingest(paths, store=store, progress=False)
+    results = ingest(paths, store=store, progress=False)
 
-    assert result.inserted == 2
-    assert result.failed == 0
+    assert results.inserted == 2
+    assert results.failed == 0
     assert store.size() == 2
 
 
@@ -516,7 +472,7 @@ def test_chonkie_compatibility_via_shared_ingest(tmp_path):
             chunks=[Chunk.from_any(chunk) for chunk in chonkie_chunks],
         )
 
-    result = ingest([str(path)], store=store, prepare=prepare, progress=False)
+    results = ingest([str(path)], store=store, prepare=prepare, progress=False)
 
-    assert result.inserted == 1
+    assert results.inserted == 1
     assert store.size() == 1

@@ -75,8 +75,8 @@ The shared `ingest()` function handles reading, chunking, embedding, and storing
 ```{python}
 from raghilda.ingest import ingest
 
-result = ingest(links, store=store)
-print(result.inserted, result.replaced, result.failed)
+results = ingest(links, store=store)
+print(results.inserted, results.replaced, results.failed)
 ```
 
 That's all you need for the preparation phase. Under the hood, `ingest()` converts each item to Markdown, splits it into overlapping chunks, computes embeddings, and writes everything to the store, all in parallel.
@@ -127,7 +127,7 @@ def prepare(uri):
     doc = read_as_markdown(uri)
     return chunker.chunk_document(doc)
 
-result = ingest(links, store=store, prepare=prepare, num_workers=4)
+results = ingest(links, store=store, prepare=prepare, num_workers=4)
 ```
 
 Common reasons to customize `prepare`:
@@ -244,7 +244,7 @@ links = find_links(
 # 3. Ingest
 from raghilda.ingest import ingest
 
-result = ingest(links, store=store, progress=True)
+results = ingest(links, store=store, progress=True)
 
 # 4. Build indexes
 store.build_index()

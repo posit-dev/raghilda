@@ -1,3 +1,3 @@
-from ._ingest import IngestResult, Ingestor, ItemError, ingest
+from ._ingest import IngestResults, Ingestor, ItemError, ItemOutcome, ingest
 
-__all__ = ["ItemError", "IngestResult", "Ingestor", "ingest"]
+__all__ = ["ItemError", "ItemOutcome", "IngestResults", "Ingestor", "ingest"]

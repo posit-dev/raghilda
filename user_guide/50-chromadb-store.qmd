@@ -222,7 +222,7 @@ store = ChromaDBStore.create(
 # 2. Ingest documents
 from raghilda.ingest import ingest
 
-result = ingest([
+results = ingest([
     "README.md",
     "docs/getting-started.md",
     "docs/api-reference.md",

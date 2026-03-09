@@ -42,8 +42,8 @@ store = DuckDBStore.create(
 
 # Find and ingest all pages from the chatlas documentation
 links = find_links("https://posit-dev.github.io/chatlas/")
-result = ingest(links, store=store)
-print(result.inserted, result.replaced, result.failed)
+results = ingest(links, store=store)
+print(results.inserted, results.replaced, results.failed)
 
 # Retrieve relevant chunks
 chunks = store.retrieve("How do I stream a response?", top_k=5)
