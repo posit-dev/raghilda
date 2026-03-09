@@ -88,7 +88,9 @@ For multiple documents, use `ingest()` which handles reading, chunking, and inse
 
 ```{python}
 #| eval: false
+from raghilda.chunker import MarkdownChunker
 from raghilda.ingest import ingest
+from raghilda.read import read_as_markdown
 
 # Ingest multiple files
 ingest([
