@@ -1,4 +1,5 @@
 import re
+import threading
 import warnings
 from typing import Optional
 
@@ -82,6 +83,7 @@ def read_as_markdown(
 _session = _requests.Session()
 _session.headers.update({"User-Agent": "raghilda"})
 md = markitdown.MarkItDown(requests_session=_session)
+_MARKITDOWN_PATCH_LOCK = threading.Lock()
 
 
 def _maybe_insert_info_string(text, class_):
@@ -168,36 +170,45 @@ class _patched_markitdown:
         self.html_zap_selectors = html_zap_selectors or []
 
     def __enter__(self):
-        self.og_convert_soup = og_convert_soup = _CustomMarkdownify.convert_soup
-        _self = self
+        _MARKITDOWN_PATCH_LOCK.acquire()
+        try:
+            self.og_convert_soup = og_convert_soup = _CustomMarkdownify.convert_soup
+            _self = self
 
-        def convert_soup(self, soup):
-            for selector in _self.html_extract_selectors:
-                if (tag := soup.select_one(selector)) is not None:
-                    soup = tag.extract()
+            def convert_soup(self, soup):
+                for selector in _self.html_extract_selectors:
+                    if (tag := soup.select_one(selector)) is not None:
+                        soup = tag.extract()
 
-            for selector in _self.html_zap_selectors:
-                while (tag := soup.select_one(selector)) is not None:
-                    tag.decompose()
+                for selector in _self.html_zap_selectors:
+                    while (tag := soup.select_one(selector)) is not None:
+                        tag.decompose()
 
-            return og_convert_soup(self, soup)
+                return og_convert_soup(self, soup)
 
-        _CustomMarkdownify.convert_soup = convert_soup
+            _CustomMarkdownify.convert_soup = convert_soup
 
-        self.og_convert_pre = og_convert_pre = _CustomMarkdownify.convert_pre  # type: ignore[attr-defined]
+            self.og_convert_pre = og_convert_pre = _CustomMarkdownify.convert_pre  # type: ignore[attr-defined]
 
-        def convert_pre(self, el, text, parent_tags):
-            class_ = el.get("class", [])
-            text = og_convert_pre(self, el, text, parent_tags)
-            text = _maybe_expand_outer_code_fence(text)
-            text = _maybe_insert_info_string(text, class_)
-            return text
+            def convert_pre(self, el, text, parent_tags):
+                class_ = el.get("class", [])
+                text = og_convert_pre(self, el, text, parent_tags)
+                text = _maybe_expand_outer_code_fence(text)
+                text = _maybe_insert_info_string(text, class_)
+                return text
 
-        _CustomMarkdownify.convert_pre = convert_pre  # type: ignore[attr-defined]
+            _CustomMarkdownify.convert_pre = convert_pre  # type: ignore[attr-defined]
+            return self
+        except Exception:
+            _MARKITDOWN_PATCH_LOCK.release()
+            raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        _CustomMarkdownify.convert_pre = self.og_convert_pre  # type: ignore[attr-defined]
-        _CustomMarkdownify.convert_soup = self.og_convert_soup
+        try:
+            _CustomMarkdownify.convert_pre = self.og_convert_pre  # type: ignore[attr-defined]
+            _CustomMarkdownify.convert_soup = self.og_convert_soup
+        finally:
+            _MARKITDOWN_PATCH_LOCK.release()
 
 
 def _as_str_list(x):
