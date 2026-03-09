@@ -45,3 +45,14 @@ def test_chunking_custom_prepare_example_imports_ingest():
     block = _block_containing(path, "ingest(files, store=store, prepare=prepare)")
 
     assert "from raghilda.ingest import ingest" in block
+
+
+def test_chromadb_custom_prepare_example_imports_prepare_dependencies():
+    path = ROOT / "user_guide" / "50-chromadb-store.qmd"
+    block = _block_containing(
+        path, "ingest(files, store=store, prepare=prepare, num_workers=4)"
+    )
+
+    assert "from raghilda.ingest import ingest" in block
+    assert "from raghilda.read import read_as_markdown" in block
+    assert "from raghilda.chunker import MarkdownChunker" in block
