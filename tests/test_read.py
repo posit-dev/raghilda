@@ -1,6 +1,9 @@
 import textwrap
+import threading
 
-from raghilda.read import read_as_markdown
+from markitdown.converters._markdownify import _CustomMarkdownify
+
+from raghilda.read import _patched_markitdown, read_as_markdown
 
 
 def _write_html(tmp_path, name, html):
@@ -70,6 +73,56 @@ def test_read_as_markdown_extract_selectors_scope_content(tmp_path):
     assert "Sidebar content" not in main_scope
     assert "Sidebar content" in full_scope
     assert _strip_title(main_scope) in full_scope
+
+
+def test_patched_markitdown_serializes_global_converter_patches():
+    original_convert_soup = _CustomMarkdownify.convert_soup
+    original_convert_pre = getattr(_CustomMarkdownify, "convert_pre")
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def hold_first_patch():
+        with _patched_markitdown(html_extract_selectors=["main"]):
+            first_entered.set()
+            assert release_first.wait(timeout=1.0)
+
+    def hold_second_patch():
+        assert first_entered.wait(timeout=1.0)
+        with _patched_markitdown(html_extract_selectors=[]):
+            second_entered.set()
+            assert release_second.wait(timeout=1.0)
+
+    first_thread = threading.Thread(target=hold_first_patch)
+    second_thread = threading.Thread(target=hold_second_patch)
+
+    try:
+        first_thread.start()
+        assert first_entered.wait(timeout=1.0)
+
+        second_thread.start()
+        assert not second_entered.wait(timeout=0.2)
+
+        release_first.set()
+        first_thread.join(timeout=1.0)
+        assert not first_thread.is_alive()
+
+        assert second_entered.wait(timeout=1.0)
+
+        release_second.set()
+        second_thread.join(timeout=1.0)
+        assert not second_thread.is_alive()
+
+        assert _CustomMarkdownify.convert_soup is original_convert_soup
+        assert getattr(_CustomMarkdownify, "convert_pre") is original_convert_pre
+    finally:
+        release_first.set()
+        release_second.set()
+        first_thread.join(timeout=1.0)
+        second_thread.join(timeout=1.0)
+        _CustomMarkdownify.convert_soup = original_convert_soup
+        setattr(_CustomMarkdownify, "convert_pre", original_convert_pre)
 
 
 def test_read_as_markdown_expands_nested_fences(tmp_path):
