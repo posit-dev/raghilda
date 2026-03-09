@@ -66,7 +66,7 @@ def _managed_openai_filename(origin: str) -> str:
     if not filename:
         filename = "document"
     if not filename.lower().endswith(".md"):
-        filename = f"{filename}.md"
+        filename += ".md"
     return filename
 
 
