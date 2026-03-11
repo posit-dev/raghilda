@@ -68,20 +68,29 @@ from pathlib import Path
 links = list(Path("docs").glob("**/*.md"))
 ```
 
-## Ingesting Documents
+## Preparing Documents
 
-The `ingest()` method handles reading, chunking, embedding, and storing documents in one step:
+Prepare each document explicitly by reading it, chunking it, and passing the result to `upsert()`:
 
 ```{python}
-store.ingest(links)
-print(f"Ingested {store.size()} chunks")
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+chunker = MarkdownChunker()
+
+for link in links:
+    document = read_as_markdown(link)
+    chunked = chunker.chunk_document(document)
+    store.upsert(chunked)
+
+print(f"Indexed {store.size()} documents")
 ```
 
-That's all you need for the preparation phase. Under the hood, `ingest()` converts each item to Markdown, splits it into overlapping chunks, computes embeddings, and writes everything to the store—all in parallel.
+That is the full preparation phase. Each document is converted to Markdown, split into overlapping chunks, embedded, and written to the store through explicit calls that keep the indexing pipeline visible.
 
-## What Happens During Ingestion
+## What Happens During Preparation
 
-Each item passed to `ingest()` goes through a **prepare** step before being embedded and stored. The default `prepare` function does two things:
+Each item you index typically goes through two steps before it is stored:
 
 **1. Convert to Markdown** — `read_as_markdown()` converts the item (a URL or file path) into a Markdown document. It handles HTML pages, PDFs, DOCX files, and more using [MarkItDown](https://github.com/microsoft/markitdown). For HTML, it extracts the `<main>` element and removes `<nav>` elements by default.
 
@@ -107,11 +116,11 @@ print(f"\nFirst chunk context: {chunked_doc.chunks[0].context}")
 print(f"First chunk text:\n{chunked_doc.chunks[0].text[:200]}...")
 ```
 
-After `prepare` runs, `ingest()` embeds the chunks using the store's embedding provider and writes them to the database.
+After chunking, `upsert()` embeds the chunks using the store's embedding provider and writes them to the database.
 
-## Customizing Ingestion
+## Customizing Preparation
 
-You can replace the default `prepare` function to control how documents are read and chunked. A custom `prepare` takes an item from your input list and returns a chunked `Document`:
+You can wrap your preferred reading and chunking logic in a helper that returns a chunked `Document`:
 
 ```{python}
 #| eval: false
@@ -124,7 +133,8 @@ def prepare(uri):
     doc = read_as_markdown(uri)
     return chunker.chunk_document(doc)
 
-store.ingest(links, prepare=prepare, num_workers=4)
+for link in links:
+    store.upsert(prepare(link))
 ```
 
 Common reasons to customize `prepare`:
@@ -238,8 +248,13 @@ links = find_links(
     children_only=True,
 )
 
-# 3. Ingest
-store.ingest(links, progress=True)
+# 3. Prepare and insert documents
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+chunker = MarkdownChunker()
+for link in links:
+    store.upsert(chunker.chunk_document(read_as_markdown(link)))
 
 # 4. Build indexes
 store.build_index()
