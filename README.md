@@ -32,6 +32,8 @@ raghilda handles the complete RAG pipeline:
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
 from raghilda.scrape import find_links
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
 
 # Create a store with embeddings
 store = DuckDBStore.create(
@@ -39,9 +41,14 @@ store = DuckDBStore.create(
     embed=EmbeddingOpenAI(),
 )
 
-# Find and ingest all pages from the chatlas documentation
+# Find and index pages from the chatlas documentation
 links = find_links("https://posit-dev.github.io/chatlas/")
-store.ingest(links)
+chunker = MarkdownChunker()
+
+for link in links:
+    document = read_as_markdown(link)
+    chunked_document = chunker.chunk_document(document)
+    store.upsert(chunked_document)
 
 # Retrieve relevant chunks
 chunks = store.retrieve("How do I stream a response?", top_k=5)

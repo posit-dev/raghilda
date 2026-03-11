@@ -1,21 +1,16 @@
 from ._store import BaseStore, WriteResult
-from collections.abc import Sized
 import json
 import os
 import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .chunker import MarkdownChunker
-from .read import read_as_markdown
 from .document import Document, MarkdownDocument
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
 from enum import StrEnum
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
 from ._deoverlap import deoverlap_chunks
 from ._attributes import (
     AttributeFilter,
@@ -32,7 +27,6 @@ from ._attributes import (
     normalize_attributes_spec,
     merge_attribute_values,
 )
-from ._utils import lazy_map
 from ._store_metadata import (
     EmbeddedAttributesStoreMetadata,
     attributes_schema_from_spec,
@@ -175,8 +169,15 @@ class DuckDBStore(BaseStore):
         embed=EmbeddingOpenAI(),
     )
 
-    # Insert documents
-    store.ingest(["https://example.com/doc1.md", "https://example.com/doc2.md"])
+    # Insert a chunked document
+    from raghilda.document import MarkdownDocument
+    from raghilda.chunker import MarkdownChunker
+
+    doc = MarkdownDocument(
+        origin="https://example.com/doc1.md",
+        content="# Example\n\nThis is a sample document.",
+    )
+    store.upsert(MarkdownChunker().chunk_document(doc))
 
     # Retrieve similar chunks
     chunks = store.retrieve("How do I use this?", top_k=5)
@@ -509,106 +510,6 @@ class DuckDBStore(BaseStore):
                 document=current_document,
                 replaced_document=replaced_document,
             )
-
-    def ingest(
-        self,
-        items: Iterable[Any],
-        prepare: Optional[Callable[[Any], Document]] = None,
-        num_workers: Optional[int] = None,
-        progress: bool = True,
-    ) -> None:
-        """
-        Ingest multiple documents in parallel.
-
-        This method processes items through a prepare function to create Documents,
-        then inserts them into the store. Items are processed in parallel using
-        a thread pool for improved performance.
-
-        Parameters
-        ----------
-        items
-            An iterable of items to ingest. Can be any iterable including lists,
-            generators, or other iterables. Each item will be passed to the prepare
-            function to create a Document. By default, items are expected to be
-            URIs (file paths or URLs) that will be read with read_as_markdown
-            and chunked automatically.
-        prepare
-            A callable that takes an item and returns a Document with chunks computed.
-            Use this to customize how items are converted to documents. The function
-            should handle chunking if needed. If None, items are treated as URIs
-            and processed with read_as_markdown followed by MarkdownChunker.
-        num_workers
-            The number of worker threads to use for parallel ingestion.
-            If None, defaults to 4 to avoid API rate limiting.
-        progress
-            Whether to display a progress bar during ingestion. Default is True.
-            The progress bar shows the total count only if items has a known length
-            (e.g., a list). For generators, it shows progress without a total.
-
-        Examples
-        --------
-        Ingest files from a list of paths:
-
-        ```{python}
-        #| eval: false
-        store.ingest(["doc1.md", "doc2.pdf", "doc3.html"])
-        ```
-
-        Ingest from a generator:
-
-        ```{python}
-        #| eval: false
-        def get_urls():
-            for url in scrape_sitemap("https://example.com/sitemap.xml"):
-                yield url
-
-        store.ingest(get_urls())
-        ```
-
-        Ingest with a custom prepare function:
-
-        ```{python}
-        #| eval: false
-        from raghilda.chunker import MarkdownChunker
-
-        chunker = MarkdownChunker()
-
-        def prepare_record(record: dict) -> MarkdownDocument:
-            doc = MarkdownDocument(
-                origin=record["id"],
-                content=record["text"]
-            )
-            return chunker.chunk_document(doc)
-
-        records = [{"id": "1", "text": "Hello"}, {"id": "2", "text": "World"}]
-        store.ingest(records, prepare=prepare_record)
-        ```
-        """
-        if num_workers is None:
-            num_workers = 4
-
-        if prepare is None:
-            chunker = MarkdownChunker()
-
-            def default_prepare(uri: str) -> Document:
-                return chunker.chunk_document(read_as_markdown(uri))
-
-            prepare = default_prepare
-
-        total = len(items) if isinstance(items, Sized) else None
-
-        def do_ingest_work(item: Any) -> None:
-            try:
-                doc = prepare(item)
-                self.upsert(doc)
-            except Exception as e:
-                raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
-
-        with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            for future in tqdm(
-                lazy_map(pool, do_ingest_work, items), total=total, disable=not progress
-            ):
-                future.result()
 
     def _prepare_chunked_document_rows(
         self,

@@ -7,11 +7,8 @@ import importlib
 import json
 from pathlib import Path
 import threading
-from collections.abc import Sized
 from typing import (
     Any,
-    Callable,
-    Iterable,
     Optional,
     Sequence,
     TYPE_CHECKING,
@@ -19,14 +16,10 @@ from typing import (
     cast,
     overload,
 )
-from concurrent.futures import ThreadPoolExecutor
 
 from ._store import BaseStore, WriteResult
-from ._utils import lazy_map
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .chunker import MarkdownChunker
 from .document import Document, MarkdownDocument
-from .read import read_as_markdown
 from ._deoverlap import deoverlap_chunks
 from ._embedding import (
     EmbeddingCohere,
@@ -46,7 +39,6 @@ from ._attributes import (
     merge_attribute_values,
     normalize_attributes_spec,
 )
-from tqdm import tqdm
 from ._store_metadata import AttributesStoreMetadata, attributes_schema_from_spec
 
 if TYPE_CHECKING:
@@ -710,106 +702,6 @@ class ChromaDBStore(BaseStore):
                         self._origin_locks.pop(origin, None)
                 else:
                     self._origin_lock_ref_counts[origin] = remaining
-
-    def ingest(
-        self,
-        items: Iterable[Any],
-        prepare: Optional[Callable[[Any], Document]] = None,
-        num_workers: Optional[int] = None,
-        progress: bool = True,
-    ) -> None:
-        """
-        Ingest multiple documents in parallel.
-
-        This method processes items through a prepare function to create Documents,
-        then inserts them into the store. Items are processed in parallel using
-        a thread pool for improved performance.
-
-        Parameters
-        ----------
-        items
-            An iterable of items to ingest. Can be any iterable including lists,
-            generators, or other iterables. Each item will be passed to the prepare
-            function to create a Document. By default, items are expected to be
-            URIs (file paths or URLs) that will be read with read_as_markdown
-            and chunked automatically.
-        prepare
-            A callable that takes an item and returns a Document with chunks computed.
-            Use this to customize how items are converted to documents. The function
-            should handle chunking if needed. If None, items are treated as URIs
-            and processed with read_as_markdown followed by MarkdownChunker.
-        num_workers
-            The number of worker threads to use for parallel ingestion.
-            If None, defaults to 4 to avoid API rate limiting.
-        progress
-            Whether to display a progress bar during ingestion. Default is True.
-            The progress bar shows the total count only if items has a known length
-            (e.g., a list). For generators, it shows progress without a total.
-
-        Examples
-        --------
-        Ingest files from a list of paths:
-
-        ```{python}
-        #| eval: false
-        store.ingest(["doc1.md", "doc2.pdf", "doc3.html"])
-        ```
-
-        Ingest from a generator:
-
-        ```{python}
-        #| eval: false
-        def get_urls():
-            for url in scrape_sitemap("https://example.com/sitemap.xml"):
-                yield url
-
-        store.ingest(get_urls())
-        ```
-
-        Ingest with a custom prepare function:
-
-        ```{python}
-        #| eval: false
-        from raghilda.chunker import MarkdownChunker
-
-        chunker = MarkdownChunker()
-
-        def prepare_record(record: dict) -> MarkdownDocument:
-            doc = MarkdownDocument(
-                origin=record["id"],
-                content=record["text"]
-            )
-            return chunker.chunk_document(doc)
-
-        records = [{"id": "1", "text": "Hello"}, {"id": "2", "text": "World"}]
-        store.ingest(records, prepare=prepare_record)
-        ```
-        """
-        if num_workers is None:
-            num_workers = 4
-
-        if prepare is None:
-            chunker = MarkdownChunker()
-
-            def default_prepare(uri: str) -> Document:
-                return chunker.chunk_document(read_as_markdown(uri))
-
-            prepare = default_prepare
-
-        total = len(items) if isinstance(items, Sized) else None
-
-        def do_ingest_work(item: Any) -> None:
-            try:
-                doc = prepare(item)
-                self.upsert(doc)
-            except Exception as e:
-                raise RuntimeError(f"Failed to ingest '{item}': {e}") from e
-
-        with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            for future in tqdm(
-                lazy_map(pool, do_ingest_work, items), total=total, disable=not progress
-            ):
-                future.result()
 
     def retrieve(
         self,

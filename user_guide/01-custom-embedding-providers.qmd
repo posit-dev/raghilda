@@ -93,13 +93,17 @@ The `@register_embedding_provider("EmbeddingVoyage")` decorator registers your p
 ```{python}
 #| eval: false
 from raghilda.store import DuckDBStore
+from raghilda.chunker import MarkdownChunker
+from raghilda.read import read_as_markdown
 
 # Create store with custom provider
 store = DuckDBStore.create(
     location="my_store.db",
     embed=EmbeddingVoyage(model="voyage-3"),
 )
-store.ingest(documents)
+chunker = MarkdownChunker()
+for uri in documents:
+    store.upsert(chunker.chunk_document(read_as_markdown(uri)))
 
 # Later, reconnect - provider is automatically restored
 store = DuckDBStore.connect("my_store.db")
