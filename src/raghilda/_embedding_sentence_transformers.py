@@ -30,6 +30,12 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
 
     Examples
     --------
+    Install raghilda with sentence-transformers support:
+
+    ```bash
+    pip install raghilda[sentence-transformers]
+    ```
+
     ```{python}
     #| eval: false
     from raghilda.embedding import EmbeddingSentenceTransformers
