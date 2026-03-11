@@ -96,6 +96,40 @@ class TestEmbeddingSentenceTransformers:
         assert provider.device == "cpu"
         assert provider.batch_size == 32
 
+    def test_prompts_prepend_prefix(self):
+        prompts = {
+            EmbedInputType.QUERY: "search_query: ",
+            EmbedInputType.DOCUMENT: "search_document: ",
+        }
+        provider = EmbeddingSentenceTransformers(prompts=prompts)
+
+        doc_emb = provider.embed(["hello world"], EmbedInputType.DOCUMENT)
+        query_emb = provider.embed(["hello world"], EmbedInputType.QUERY)
+
+        # Different prefixes should produce different embeddings
+        assert doc_emb[0] != query_emb[0]
+
+    def test_prompts_config_roundtrip(self):
+        prompts = {
+            EmbedInputType.QUERY: "search_query: ",
+            EmbedInputType.DOCUMENT: "search_document: ",
+        }
+        provider = EmbeddingSentenceTransformers(prompts=prompts)
+        config = provider.get_config()
+
+        assert config["prompts"] == {
+            "query": "search_query: ",
+            "document": "search_document: ",
+        }
+
+        restored = EmbeddingSentenceTransformers.from_config(config)
+        assert restored.prompts == prompts
+
+    def test_no_prompts_omitted_from_config(self):
+        provider = EmbeddingSentenceTransformers()
+        config = provider.get_config()
+        assert "prompts" not in config
+
     def test_registry_roundtrip(self):
         provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2")
         config = provider.get_config()
