@@ -106,9 +106,9 @@ print(f"Created {len(chunked_doc.chunks)} chunks")
 
 The chunks are attached to the document's `chunks` attribute, preserving the association with the source.
 
-## Custom Chunking with Ingest
+## Custom Chunking Before Upsert
 
-The `ingest()` method uses default chunking, but you can customize it with a `prepare` function:
+Prepare documents explicitly before calling `upsert()` when you want full control over chunking:
 
 ```{python}
 #| eval: false
@@ -129,7 +129,8 @@ def prepare(uri):
     doc = read_as_markdown(uri)
     return chunker.chunk_document(doc)
 
-store.ingest(files, prepare=prepare)
+for uri in files:
+    store.upsert(prepare(uri))
 ```
 
 ## Using Chonkie Chunkers
@@ -156,5 +157,6 @@ def prepare(uri):
         chunks=[Chunk.from_any(c) for c in chonkie_chunks],
     )
 
-store.ingest(files, prepare=prepare)
+for uri in files:
+    store.upsert(prepare(uri))
 ```

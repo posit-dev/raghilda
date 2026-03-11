@@ -121,39 +121,3 @@ class TestChonkieChunkerWithStore:
         store.upsert(doc)
 
         assert store.size() == 1
-
-    def test_store_ingest_with_chonkie_prepare_function(self):
-        """DuckDBStore.ingest should work with a chonkie-based prepare function."""
-        import tempfile
-        import os
-
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
-            f.write("# Test Document\n\nThis is test content for chonkie chunking.")
-            temp_path = f.name
-
-        try:
-            store = DuckDBStore.create(
-                location=":memory:",
-                embed=None,
-                name="test_db",
-                title="Test Store",
-            )
-
-            chunker = TokenChunker(chunk_size=50, chunk_overlap=10)
-
-            def prepare_with_chonkie(uri: str) -> MarkdownDocument:
-                with open(uri) as f:
-                    content = f.read()
-                chonkie_chunks = chunker.chunk(content)
-                return MarkdownDocument(
-                    content=content,
-                    origin=uri,
-                    chunks=[Chunk.from_any(c) for c in chonkie_chunks],
-                )
-
-            store.ingest([temp_path], prepare=prepare_with_chonkie)
-
-            assert store.size() == 1
-        finally:
-            os.unlink(temp_path)

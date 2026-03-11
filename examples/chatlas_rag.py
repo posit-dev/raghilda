@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
+from raghilda.chunker import MarkdownChunker
+from raghilda.read import read_as_markdown
 from raghilda.scrape import find_links
 
 load_dotenv()
@@ -42,7 +44,7 @@ def build_rag_index():
     links = [link for link in links if not link.lower().endswith(excluded_extensions)]
     print(f"Found {len(links)} pages to index.")
 
-    print("Creating RAG store and ingesting documents...")
+    print("Creating RAG store and indexing documents...")
     store = DuckDBStore.create(
         location=str(DB_PATH),
         embed=EmbeddingOpenAI(),
@@ -50,7 +52,9 @@ def build_rag_index():
         name="chatlas_docs",
         title="Chatlas Documentation",
     )
-    store.ingest(links, progress=True)
+    chunker = MarkdownChunker()
+    for link in links:
+        store.upsert(chunker.chunk_document(read_as_markdown(link)))
 
     # Build indexes for faster retrieval
     print("Building search indexes...")
