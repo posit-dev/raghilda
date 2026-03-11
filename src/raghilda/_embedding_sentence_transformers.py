@@ -62,12 +62,14 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
         self.model_instance = SentenceTransformer(model, device=device)
 
     def get_config(self) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "type": "EmbeddingSentenceTransformers",
             "model": self.model,
-            "device": self.device,
             "batch_size": self.batch_size,
         }
+        if self.device is not None:
+            config["device"] = self.device
+        return config
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "EmbeddingSentenceTransformers":

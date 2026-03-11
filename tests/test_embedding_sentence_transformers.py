@@ -18,12 +18,12 @@ class TestEmbeddingSentenceTransformers:
 
     def test_init_with_params(self):
         provider = EmbeddingSentenceTransformers(
-            model="all-MiniLM-L6-v2",
+            model="sentence-transformers/all-mpnet-base-v2",
             device="cpu",
             batch_size=32,
         )
 
-        assert provider.model == "all-MiniLM-L6-v2"
+        assert provider.model == "sentence-transformers/all-mpnet-base-v2"
         assert provider.device == "cpu"
         assert provider.batch_size == 32
 
