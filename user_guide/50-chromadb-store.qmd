@@ -82,25 +82,25 @@ chunked_doc = chunker.chunk_document(doc)
 store.upsert(chunked_doc)
 ```
 
-### Batch Ingestion
+### Multiple Documents
 
-For multiple documents, use `ingest()` which handles reading, chunking, and insertion:
+For multiple documents, read and chunk each item before calling `upsert()`:
 
 ```{python}
 #| eval: false
-# Ingest multiple files
-store.ingest([
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+files = [
     "docs/guide.md",
     "docs/reference.md",
     "docs/tutorial.md",
-])
+]
+chunker = MarkdownChunker(chunk_size=500)
 
-# With custom preparation function
-def prepare(uri):
+for uri in files:
     doc = read_as_markdown(uri)
-    return MarkdownChunker(chunk_size=500).chunk_document(doc)
-
-store.ingest(files, prepare=prepare, num_workers=4)
+    store.upsert(chunker.chunk_document(doc))
 ```
 
 ## Retrieving Documents
@@ -198,7 +198,7 @@ store = ChromaDBStore.create(
 
 ## Complete Example
 
-Here's a complete workflow from ingestion to retrieval:
+Here's a complete workflow from document preparation to retrieval:
 
 ```{python}
 #| eval: false
@@ -215,12 +215,14 @@ store = ChromaDBStore.create(
     overwrite=True,
 )
 
-# 2. Ingest documents
-store.ingest([
+# 2. Prepare and insert documents
+chunker = MarkdownChunker()
+for path in [
     "README.md",
     "docs/getting-started.md",
     "docs/api-reference.md",
-])
+]:
+    store.upsert(chunker.chunk_document(read_as_markdown(path)))
 
 print(f"Indexed {store.size()} documents")
 
