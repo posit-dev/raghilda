@@ -216,12 +216,13 @@ store = ChromaDBStore.create(
 )
 
 # 2. Prepare and insert documents
+chunker = MarkdownChunker()
 for path in [
     "README.md",
     "docs/getting-started.md",
     "docs/api-reference.md",
 ]:
-    store.upsert(MarkdownChunker().chunk_document(read_as_markdown(path)))
+    store.upsert(chunker.chunk_document(read_as_markdown(path)))
 
 print(f"Indexed {store.size()} documents")
 

@@ -21,7 +21,7 @@
 
 ## Testing
 - Optional targeted checks during iteration: `./.venv/bin/task format_check`, `./.venv/bin/task lint_check`, `./.venv/bin/task types_check`.
-- Offline/limited network: `./.venv/bin/pytest tests -k "not OpenAIStore and not ingest"` (skips API and scraping).
+- Offline/limited network: `./.venv/bin/pytest tests -k "not OpenAIStore"` (skips API-dependent tests).
 - Always run the relevant tests yourself and report results; don’t defer to the user.
 
 ## Style & API
