@@ -27,6 +27,11 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
         sentence-transformers will auto-detect the best available device.
     batch_size
         The number of texts to process in each batch.
+    prompts
+        Optional mapping from `EmbedInputType` to a prefix string to prepend
+        to each text before encoding. This is useful for models that require
+        task-specific prefixes (e.g., nomic-embed-text uses "search_query: "
+        and "search_document: ").
 
     Examples
     --------
@@ -45,6 +50,25 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
     print(len(embeddings))
     print(len(embeddings[0]))  # Dimension of the embedding
     ```
+
+    For models that use task-specific prefixes:
+
+    ```{python}
+    #| eval: false
+    from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
+
+    provider = EmbeddingSentenceTransformers(
+        model="nomic-ai/nomic-embed-text-v1.5",
+        prompts={
+            EmbedInputType.QUERY: "search_query: ",
+            EmbedInputType.DOCUMENT: "search_document: ",
+        },
+    )
+    # Queries get "search_query: " prepended automatically
+    query_emb = provider.embed(["Who is Laurens van Der Maaten?"], EmbedInputType.QUERY)
+    # Documents get "search_document: " prepended automatically
+    doc_emb = provider.embed(["TSNE is a dimensionality reduction algorithm"])
+    ```
     """
 
     def __init__(
@@ -52,12 +76,14 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
         model: str = "all-MiniLM-L6-v2",
         device: Optional[str] = None,
         batch_size: int = 64,
+        prompts: Optional[dict[EmbedInputType, str]] = None,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
         self.model = model
         self.device = device
         self.batch_size = batch_size
+        self.prompts = prompts
 
         self.model_instance = SentenceTransformer(model, device=device)
 
@@ -69,14 +95,20 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
         }
         if self.device is not None:
             config["device"] = self.device
+        if self.prompts is not None:
+            config["prompts"] = {k.value: v for k, v in self.prompts.items()}
         return config
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "EmbeddingSentenceTransformers":
+        prompts = None
+        if "prompts" in config:
+            prompts = {EmbedInputType(k): v for k, v in config["prompts"].items()}
         return cls(
             model=config.get("model", "all-MiniLM-L6-v2"),
             device=config.get("device"),
             batch_size=config.get("batch_size", 64),
+            prompts=prompts,
         )
 
     def embed(
@@ -84,8 +116,6 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
         x: Sequence[str],
         input_type: EmbedInputType = EmbedInputType.DOCUMENT,
     ) -> Sequence[Sequence[float]]:
-        # Note: sentence-transformers doesn't differentiate between query and document
-        # embeddings by default, so input_type is accepted but ignored.
         if isinstance(x, str):
             raise TypeError("Input must be a sequence of strings, not a single string.")
 
@@ -100,7 +130,12 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
                 "Empty strings cannot be embedded."
             )
 
+        texts = list(x)
+        if self.prompts and input_type in self.prompts:
+            prefix = self.prompts[input_type]
+            texts = [prefix + t for t in texts]
+
         embeddings = self.model_instance.encode(
-            list(x), batch_size=self.batch_size, show_progress_bar=False
+            texts, batch_size=self.batch_size, show_progress_bar=False
         )
         return embeddings.tolist()
