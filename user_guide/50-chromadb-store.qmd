@@ -76,7 +76,7 @@ doc = MarkdownDocument(
 )
 
 chunker = MarkdownChunker()
-chunked_doc = chunker.chunk_document(doc)
+chunked_doc = chunker.chunk(doc)
 
 # Insert into store
 store.upsert(chunked_doc)
@@ -100,7 +100,7 @@ chunker = MarkdownChunker(chunk_size=500)
 
 for uri in files:
     doc = read_as_markdown(uri)
-    store.upsert(chunker.chunk_document(doc))
+    store.upsert(chunker.chunk(doc))
 ```
 
 ## Retrieving Documents
@@ -222,7 +222,7 @@ for path in [
     "docs/getting-started.md",
     "docs/api-reference.md",
 ]:
-    store.upsert(chunker.chunk_document(read_as_markdown(path)))
+    store.upsert(chunker.chunk(read_as_markdown(path)))
 
 print(f"Indexed {store.size()} documents")
 

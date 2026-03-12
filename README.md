@@ -47,7 +47,7 @@ chunker = MarkdownChunker()
 
 for link in links:
     document = read_as_markdown(link)
-    chunked_document = chunker.chunk_document(document)
+    chunked_document = chunker.chunk(document)
     store.upsert(chunked_document)
 
 # Retrieve relevant chunks

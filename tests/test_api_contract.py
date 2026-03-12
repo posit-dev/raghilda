@@ -57,14 +57,16 @@ def test_openai_upsert_rejects_chunked_document():
     store = OpenAIStore(client=fake_client, store_id="vs_test")
 
     doc = MarkdownDocument(origin="doc", content="hello")
-    doc.chunks = [
-        MarkdownChunk(
-            text="hello",
-            start_index=0,
-            end_index=5,
-            char_count=5,
-        )
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                text="hello",
+                start_index=0,
+                end_index=5,
+                char_count=5,
+            )
+        ]
+    )
 
     with pytest.raises(ValueError, match="does not support chunked documents"):
         store.upsert(doc)

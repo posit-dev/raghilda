@@ -1,10 +1,10 @@
 """Protocol types for raghilda."""
 
-from typing import TYPE_CHECKING, Protocol, Optional, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
 
 if TYPE_CHECKING:
     from .chunk import Chunk
-    from .document import Document
+    from .document import ChunkedDocument, Document
 
 
 @runtime_checkable
@@ -28,7 +28,14 @@ class DocumentLike(Protocol):
     """Any document-like object."""
 
     content: str
-    chunks: Optional[Sequence[ChunkLike]]
+
+
+@runtime_checkable
+class ChunkedDocumentLike(Protocol):
+    """Any chunked document-like object."""
+
+    content: str
+    chunks: Sequence[ChunkLike]
 
 
 @runtime_checkable
@@ -42,4 +49,6 @@ class IntoDocument(Protocol):
 class ChunkerLike(Protocol):
     """Any chunker-like object (chonkie, raghilda, or custom)."""
 
-    def chunk(self, text: str) -> Sequence["Chunk"]: ...
+    def chunk(self, document: "Document") -> "ChunkedDocument": ...
+
+    def chunk_text(self, text: str) -> Sequence["Chunk"]: ...

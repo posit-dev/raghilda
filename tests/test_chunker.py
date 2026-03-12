@@ -1,5 +1,6 @@
 import textwrap
 from raghilda.chunker import MarkdownChunker
+from raghilda.document import ChunkedMarkdownDocument, MarkdownDocument
 
 
 def test_markdown_chunker_basic() -> None:
@@ -32,7 +33,7 @@ def test_markdown_chunker_basic() -> None:
     ).strip()
 
     chunker = MarkdownChunker(chunk_size=40)
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     assert len(chunks) >= 3
     first = chunks[0]
     assert first.text.startswith("# Title")
@@ -47,7 +48,7 @@ def test_markdown_chunker_basic() -> None:
 def test_chunker_overlap() -> None:
     text = "abcdefghijklmnopqrstuvwxyz0123"
     chunker = MarkdownChunker(chunk_size=10, target_overlap=0.5, max_snap_distance=0)
-    chunks = chunker.chunk(text)
+    chunks = chunker.chunk_text(text)
     assert len(chunks) == 5
     for c in chunks:
         assert c.end_index - c.start_index == 10
@@ -64,7 +65,7 @@ def test_chunker_heading_context() -> None:
         segment_by_heading_levels=[2],
         max_snap_distance=0,
     )
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     sub_start = md.index("### Subsection") + len("### Subsection\n\n")
     sub_chunk = next(c for c in chunks if c.start_index >= sub_start)
     assert sub_chunk.context is not None
@@ -77,8 +78,8 @@ def test_chunker_max_snap_distance() -> None:
     chunker_no_snap = MarkdownChunker(
         chunk_size=5, target_overlap=0, max_snap_distance=0
     )
-    chunks_snap = chunker_snap.chunk(text)
-    chunks_no_snap = chunker_no_snap.chunk(text)
+    chunks_snap = chunker_snap.chunk_text(text)
+    chunks_no_snap = chunker_no_snap.chunk_text(text)
     # With snapping, boundaries move to surround whole words
     assert chunks_snap[1].start_index == 6
     assert chunks_snap[1].end_index == 12
@@ -98,7 +99,7 @@ def test_chunker_heading_context_sibling_sections() -> None:
         segment_by_heading_levels=[2],
         max_snap_distance=0,
     )
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     a_heading = md.index("## Section A")
     b_heading = md.index("## Section B")
     a_chunk = next(c for c in chunks if c.start_index == a_heading)
@@ -128,7 +129,7 @@ def test_chunker_heading_context_nested_siblings() -> None:
         segment_by_heading_levels=[2, 3],
         max_snap_distance=0,
     )
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     b_heading = md.index("## Section B")
     b1_heading = md.index("### Section B1")
     b_chunk = next(c for c in chunks if c.start_index == b_heading)
@@ -148,7 +149,7 @@ def test_heading_positions_ignore_code_blocks() -> None:
     assert len(headings) == 2
     assert all("Not a heading" not in h["text"] for h in headings)
     chunker = MarkdownChunker(chunk_size=20, target_overlap=0, max_snap_distance=0)
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     para_start = md.index("Paragraph")
     para_chunk = next(c for c in chunks if c.start_index <= para_start < c.end_index)
     assert para_chunk.context is not None
@@ -163,7 +164,7 @@ def test_chunker_recognizes_setext_headings() -> None:
         segment_by_heading_levels=[2],
         max_snap_distance=0,
     )
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     sub_start = md.index("Subtitle")
     sub_chunk = next(c for c in chunks if c.start_index == sub_start)
     assert sub_chunk.context is not None
@@ -173,12 +174,25 @@ def test_chunker_recognizes_setext_headings() -> None:
 def test_heading_with_space() -> None:
     md = "# Title\n hello world"
     chunker = MarkdownChunker(chunk_size=50, target_overlap=0, max_snap_distance=0)
-    chunks = chunker.chunk(md)
+    chunks = chunker.chunk_text(md)
     assert len(chunks) == 1
     assert chunks[0].context is None
 
 
 def test_chunker_sets_char_count() -> None:
     chunker = MarkdownChunker(chunk_size=50, target_overlap=0, max_snap_distance=0)
-    chunks = chunker.chunk("hello world")
+    chunks = chunker.chunk_text("hello world")
     assert chunks[0].char_count == len(chunks[0].text)
+
+
+def test_chunk_returns_chunked_markdown_document_without_mutating_input() -> None:
+    doc = MarkdownDocument(origin="article.md", content="# Title\n\nHello world")
+    chunker = MarkdownChunker(chunk_size=50, target_overlap=0, max_snap_distance=0)
+
+    chunked = chunker.chunk(doc)
+
+    assert isinstance(chunked, ChunkedMarkdownDocument)
+    assert chunked.origin == doc.origin
+    assert len(chunked.chunks) == 1
+    assert chunked.chunks[0].origin == doc.origin
+    assert not hasattr(doc, "chunks")
