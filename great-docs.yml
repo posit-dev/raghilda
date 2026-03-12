@@ -102,15 +102,18 @@ reference:
       - chunk.Metric
 
   - title: Document
-    desc: Document types with chunks and attributes
+    desc: Document types for unchunked and chunked content
     contents:
       - document.Document
+      - document.ChunkedDocument
       - document.MarkdownDocument
+      - document.ChunkedMarkdownDocument
 
   - title: Types
     desc: Protocol types for type checking compatibility
     contents:
       - types.ChunkLike
+      - types.ChunkedDocumentLike
       - types.DocumentLike
       - types.ChunkerLike
       - types.IntoChunk
