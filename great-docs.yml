@@ -70,13 +70,9 @@ reference:
     desc: Vector storage backends for storing and retrieving chunks
     contents:
       - name: store.BaseStore
-        members: false
       - name: store.DuckDBStore
-        members: false
       - name: store.ChromaDBStore
-        members: false
       - name: store.OpenAIStore
-        members: false
 
   - title: Embedding
     desc: Embedding providers for generating vector representations
@@ -85,6 +81,7 @@ reference:
       - embedding.EmbedInputType
       - embedding.EmbeddingOpenAI
       - embedding.EmbeddingCohere
+      - embedding.EmbeddingSentenceTransformers
 
   - title: Chunker
     desc: Text chunking utilities for splitting documents

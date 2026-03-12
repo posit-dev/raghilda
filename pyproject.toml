@@ -1,6 +1,5 @@
 [project]
 name = "raghilda"
-repository = "https://github.com/dfalbel/raghilda"
 version = "0.1.0"
 description = "RAG made simple"
 license = "MIT"
@@ -18,6 +17,9 @@ dependencies = [
     "markitdown>=0.1.3",
     "tqdm>=4.67.1",
 ]
+
+[project.urls]
+Repository = "https://github.com/dfalbel/raghilda"
 
 [build-system]
 requires = ["uv_build>=0.8.0,<0.9"]

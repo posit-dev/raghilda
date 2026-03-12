@@ -8,12 +8,47 @@ from .document import ChunkedDocument, Document
 
 
 class BaseChunker:
-    """Base class for chunkers."""
+    """Base class for chunkers.
+
+    A chunker splits a :py:class:`raghilda.document.Document` into a
+    :py:class:`raghilda.document.ChunkedDocument` containing
+    smaller text segments suitable for embedding and retrieval.
+
+    Subclasses must implement :py:meth:`chunk` and :py:meth:`chunk_text`
+    to provide a concrete chunking strategy:
+
+    - :py:class:`raghilda.chunker.MarkdownChunker`: splits Markdown documents
+      at semantic boundaries (headings, paragraphs, sentences).
+    """
 
     def chunk(self, document: Document) -> ChunkedDocument:
+        """Chunk a document into a :py:class:`~raghilda.document.ChunkedDocument`.
+
+        Parameters
+        ----------
+        document
+            The document to chunk.
+
+        Returns
+        -------
+        ChunkedDocument
+            The document with chunks attached.
+        """
         raise NotImplementedError
 
     def chunk_text(self, text: str) -> Sequence[Chunk]:
+        """Chunk raw text into a sequence of :py:class:`~raghilda.chunk.Chunk` objects.
+
+        Parameters
+        ----------
+        text
+            The text to chunk.
+
+        Returns
+        -------
+        Sequence[Chunk]
+            The resulting chunks with positional information.
+        """
         raise NotImplementedError
 
 
