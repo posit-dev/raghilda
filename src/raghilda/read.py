@@ -41,11 +41,11 @@ def read_as_markdown(
     html_zap_selectors
         A list of CSS selectors to remove specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['nav'].
+
     Returns
     -------
     MarkdownDocument
         The content of the markdown file as a MarkdownDocument object.
-
 
     Examples
     --------
