@@ -267,8 +267,10 @@ class DuckDBStore(BaseStore):
             Optional schema for user-defined attribute columns stored per chunk.
             Example: `{"tenant": str, "priority": int}`.
             Attribute names use identifier-style syntax.
-            Built-in backend columns that cannot be declared as attributes are:
-            `chunk_id`, `origin`, `start_index`, `end_index`, and `context`.
+            The following names are reserved and cannot be used as attributes:
+            `chunk_id`, `context`, `embedding`, `origin`, `text`,
+            `start_index`, `end_index`, `char_count`, `metric_name`,
+            and `metric_value`.
 
         Returns
         -------
@@ -406,6 +408,21 @@ class DuckDBStore(BaseStore):
         *,
         skip_if_unchanged: bool = True,
     ) -> WriteResult[ChunkedMarkdownDocument]:
+        """Upsert a document into the store.
+
+        The document must be a :py:class:`~raghilda.document.ChunkedMarkdownDocument`.
+        Use :py:class:`~raghilda.chunker.MarkdownChunker` to chunk a
+        :py:class:`~raghilda.document.MarkdownDocument` before upserting.
+
+        Parameters
+        ----------
+        document
+            The chunked document to upsert.
+        skip_if_unchanged
+            If True (default), skip the write when the existing document
+            for the same origin already has identical content and
+            chunk layout. This avoids re-computing embeddings.
+        """
         if not isinstance(document, ChunkedMarkdownDocument):
             raise NotImplementedError(
                 f"Upsert not implemented for type {type(document)}"
@@ -734,7 +751,10 @@ class DuckDBStore(BaseStore):
         text
             The query text to search for.
         top_k
-            The maximum number of chunks to return from each retrieval method.
+            The maximum number of chunks to return from each retrieval
+            method (VSS and BM25). Because results from both methods are
+            combined before deoverlapping, the final count may differ
+            from `top_k`.
         deoverlap
             If True (default), merge overlapping chunks from the same document.
             Overlapping chunks are identified by their `start_index` and `end_index`
