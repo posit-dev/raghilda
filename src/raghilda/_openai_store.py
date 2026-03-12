@@ -6,7 +6,7 @@ import logging
 from contextlib import contextmanager
 from ._store import BaseStore, WriteResult
 from .chunk import MarkdownChunk, RetrievedChunk, Metric
-from .document import Document, MarkdownDocument
+from .document import ChunkedDocument, Document, MarkdownDocument
 from typing import Any, Mapping, Optional, Sequence
 from dataclasses import dataclass
 from ._attributes import (
@@ -293,7 +293,7 @@ class OpenAIStore(BaseStore):
         document: Document,
         *,
         skip_if_unchanged: bool = True,
-    ) -> WriteResult:
+    ) -> WriteResult[MarkdownDocument]:
         # Upload the document content as a file to the vector store
         # create a temporary file, write the content to it, and upload it
         if not isinstance(document, MarkdownDocument):
@@ -301,7 +301,7 @@ class OpenAIStore(BaseStore):
         if not isinstance(document.origin, str) or not document.origin:
             raise ValueError("document.origin must be a non-empty string for upsert().")
 
-        if document.chunks is not None:
+        if isinstance(document, ChunkedDocument):
             raise ValueError("OpenAIStore does not support chunked documents.")
 
         resolved_attributes = merge_attribute_values(

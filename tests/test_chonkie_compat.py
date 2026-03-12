@@ -11,8 +11,8 @@ from chonkie.types import (
     Document as ChonkieDocument,
 )  # noqa: E402
 from raghilda.chunk import Chunk  # noqa: E402
-from raghilda.document import Document, MarkdownDocument  # noqa: E402
-from raghilda.types import ChunkLike, DocumentLike  # noqa: E402
+from raghilda.document import ChunkedDocument, Document, MarkdownDocument  # noqa: E402
+from raghilda.types import ChunkLike, ChunkedDocumentLike, DocumentLike  # noqa: E402
 from raghilda.store import DuckDBStore  # noqa: E402
 
 TokenChunker = getattr(chonkie, "TokenChunker")
@@ -72,17 +72,26 @@ class TestChonkieDocumentCompatibility:
         assert isinstance(result, Document)
         assert result.content == "hello world"
 
-    def test_from_any_converts_chonkie_document_with_chunks(self):
-        """Document.from_any should convert a chonkie Document with chunks."""
+    def test_chonkie_document_with_chunks_satisfies_chunked_document_like(self):
+        """Chunked chonkie Document should satisfy our chunked protocol."""
         chonkie_doc = ChonkieDocument(content="hello world")
         chonkie_doc.chunks = [
             ChonkieChunk(text="hello", start_index=0, end_index=5, token_count=1),
             ChonkieChunk(text="world", start_index=6, end_index=11, token_count=1),
         ]
-        result = Document.from_any(chonkie_doc)  # type: ignore[arg-type]
 
-        assert isinstance(result, Document)
-        assert result.chunks is not None
+        assert isinstance(chonkie_doc, ChunkedDocumentLike)
+
+    def test_chunked_document_from_any_converts_chonkie_document_with_chunks(self):
+        """ChunkedDocument.from_any should convert a chonkie Document with chunks."""
+        chonkie_doc = ChonkieDocument(content="hello world")
+        chonkie_doc.chunks = [
+            ChonkieChunk(text="hello", start_index=0, end_index=5, token_count=1),
+            ChonkieChunk(text="world", start_index=6, end_index=11, token_count=1),
+        ]
+        result = ChunkedDocument.from_any(chonkie_doc)  # type: ignore[arg-type]
+
+        assert isinstance(result, ChunkedDocument)
         assert len(result.chunks) == 2
         assert all(isinstance(c, Chunk) for c in result.chunks)
         assert result.chunks[0].text == "hello"
@@ -114,8 +123,7 @@ class TestChonkieChunkerWithStore:
         doc = MarkdownDocument(
             content=text,
             origin="test://chonkie",
-            chunks=[Chunk.from_any(c) for c in chonkie_chunks],
-        )
+        ).to_chunked([Chunk.from_any(c) for c in chonkie_chunks])
 
         # Insert into store
         store.upsert(doc)

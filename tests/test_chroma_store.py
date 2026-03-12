@@ -101,38 +101,40 @@ class HashTestProvider(EmbeddingProvider):
 
 def _make_doc():
     doc = MarkdownDocument(origin="test", content="This is a test document.")
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=4,
-            text=doc.content[0:4],
-            char_count=len(doc.content[0:4]),
-        ),
-        MarkdownChunk(
-            start_index=5,
-            end_index=7,
-            text=doc.content[5:7],
-            char_count=len(doc.content[5:7]),
-        ),
-        MarkdownChunk(
-            start_index=8,
-            end_index=9,
-            text=doc.content[8:9],
-            char_count=len(doc.content[8:9]),
-        ),
-        MarkdownChunk(
-            start_index=10,
-            end_index=14,
-            text=doc.content[10:14],
-            char_count=len(doc.content[10:14]),
-        ),
-        MarkdownChunk(
-            start_index=15,
-            end_index=23,
-            text=doc.content[15:23],
-            char_count=len(doc.content[15:23]),
-        ),
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=4,
+                text=doc.content[0:4],
+                char_count=len(doc.content[0:4]),
+            ),
+            MarkdownChunk(
+                start_index=5,
+                end_index=7,
+                text=doc.content[5:7],
+                char_count=len(doc.content[5:7]),
+            ),
+            MarkdownChunk(
+                start_index=8,
+                end_index=9,
+                text=doc.content[8:9],
+                char_count=len(doc.content[8:9]),
+            ),
+            MarkdownChunk(
+                start_index=10,
+                end_index=14,
+                text=doc.content[10:14],
+                char_count=len(doc.content[10:14]),
+            ),
+            MarkdownChunk(
+                start_index=15,
+                end_index=23,
+                text=doc.content[15:23],
+                char_count=len(doc.content[15:23]),
+            ),
+        ]
+    )
     return doc
 
 
@@ -199,14 +201,16 @@ def test_insert_same_content_but_different_chunking_updates():
         content=content,
         attributes={"tenant": "docs"},
     )
-    doc1.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(content),
-            text=content,
-            char_count=len(content),
-        )
-    ]
+    doc1 = doc1.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                char_count=len(content),
+            )
+        ]
+    )
     first = store.upsert(doc1)
     assert first.action == "inserted"
     assert store.collection.count() == 1
@@ -216,20 +220,22 @@ def test_insert_same_content_but_different_chunking_updates():
         content=content,
         attributes={"tenant": "eng"},
     )
-    doc2.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=5,
-            text=content[:5],
-            char_count=5,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=len(content),
-            text=content[6:],
-            char_count=len(content[6:]),
-        ),
-    ]
+    doc2 = doc2.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                char_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                char_count=len(content[6:]),
+            ),
+        ]
+    )
     second = store.upsert(doc2)
     assert second.action == "replaced"
     assert second.replaced_document is not None
@@ -254,14 +260,16 @@ def test_insert_unchanged_preserves_document_attributes():
         content=content,
         attributes={"tenant": "docs"},
     )
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(content),
-            text=content,
-            char_count=len(content),
-        )
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                char_count=len(content),
+            )
+        ]
+    )
 
     store.upsert(doc)
     second = store.upsert(doc)
@@ -280,20 +288,22 @@ def test_insert_same_content_skips_when_existing_chunks_returned_in_reverse_orde
     )
     content = "hello world"
     doc = MarkdownDocument(origin="same-origin", content=content)
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=5,
-            text=content[:5],
-            char_count=5,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=11,
-            text=content[6:],
-            char_count=5,
-        ),
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                char_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=11,
+                text=content[6:],
+                char_count=5,
+            ),
+        ]
+    )
     store.upsert(doc)
 
     original_get = store.collection.get
@@ -332,15 +342,17 @@ def test_insert_result_document_includes_merged_chunk_attributes():
         origin="same-origin",
         content="hello world",
     )
-    original.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(original.content),
-            text=original.content,
-            char_count=len(original.content),
-            attributes={"tenant": "docs"},
-        )
-    ]
+    original = original.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(original.content),
+                text=original.content,
+                char_count=len(original.content),
+                attributes={"tenant": "docs"},
+            )
+        ]
+    )
 
     inserted = store.upsert(original)
     assert inserted.action == "inserted"
@@ -350,15 +362,17 @@ def test_insert_result_document_includes_merged_chunk_attributes():
         origin="same-origin",
         content="hello world updated",
     )
-    updated.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(updated.content),
-            text=updated.content,
-            char_count=len(updated.content),
-            attributes={"tenant": "docs"},
-        )
-    ]
+    updated = updated.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(updated.content),
+                text=updated.content,
+                char_count=len(updated.content),
+                attributes={"tenant": "docs"},
+            )
+        ]
+    )
 
     replaced = store.upsert(updated, skip_if_unchanged=False)
     assert replaced.action == "replaced"
@@ -376,14 +390,16 @@ def test_insert_keeps_existing_chunks_when_upsert_fails(monkeypatch):
     )
 
     doc = MarkdownDocument(origin="same-origin", content="hello world")
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(doc.content),
-            text=doc.content,
-            char_count=len(doc.content),
-        )
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(doc.content),
+                text=doc.content,
+                char_count=len(doc.content),
+            )
+        ]
+    )
     store.upsert(doc)
 
     def fail_upsert(**kwargs):
@@ -392,14 +408,16 @@ def test_insert_keeps_existing_chunks_when_upsert_fails(monkeypatch):
     monkeypatch.setattr(store.collection, "upsert", fail_upsert)
 
     updated = MarkdownDocument(origin="same-origin", content="goodbye world")
-    updated.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(updated.content),
-            text=updated.content,
-            char_count=len(updated.content),
-        )
-    ]
+    updated = updated.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(updated.content),
+                text=updated.content,
+                char_count=len(updated.content),
+            )
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="upsert failed"):
         store.upsert(updated, skip_if_unchanged=False)
@@ -422,20 +440,22 @@ def test_insert_raises_when_stale_chunk_delete_fails(monkeypatch):
 
     content = "hello world"
     original = MarkdownDocument(origin="same-origin", content=content)
-    original.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=5,
-            text=content[:5],
-            char_count=5,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=len(content),
-            text=content[6:],
-            char_count=len(content[6:]),
-        ),
-    ]
+    original = original.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                char_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                char_count=len(content[6:]),
+            ),
+        ]
+    )
     store.upsert(original)
 
     delete_calls = []
@@ -447,14 +467,16 @@ def test_insert_raises_when_stale_chunk_delete_fails(monkeypatch):
     monkeypatch.setattr(store.collection, "delete", fail_delete)
 
     updated = MarkdownDocument(origin="same-origin", content=content)
-    updated.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(content),
-            text=content,
-            char_count=len(content),
-        )
-    ]
+    updated = updated.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                char_count=len(content),
+            )
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="delete failed"):
         store.upsert(updated, skip_if_unchanged=False)
@@ -471,14 +493,16 @@ def test_upsert_replaces_when_existing_metadata_missing_content_text(monkeypatch
     )
 
     original = MarkdownDocument(origin="same-origin", content="hello world")
-    original.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(original.content),
-            text=original.content,
-            char_count=len(original.content),
-        )
-    ]
+    original = original.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(original.content),
+                text=original.content,
+                char_count=len(original.content),
+            )
+        ]
+    )
     store.upsert(original)
 
     original_get = store.collection.get
@@ -499,14 +523,16 @@ def test_upsert_replaces_when_existing_metadata_missing_content_text(monkeypatch
     monkeypatch.setattr(store.collection, "get", missing_content_text_get)
 
     updated = MarkdownDocument(origin="same-origin", content="updated content")
-    updated.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(updated.content),
-            text=updated.content,
-            char_count=len(updated.content),
-        )
-    ]
+    updated = updated.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(updated.content),
+                text=updated.content,
+                char_count=len(updated.content),
+            )
+        ]
+    )
 
     result = store.upsert(updated, skip_if_unchanged=False)
 
@@ -530,14 +556,16 @@ def test_upsert_accepts_existing_empty_content_text_metadata():
     )
 
     original = MarkdownDocument(origin="same-origin", content="")
-    original.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=0,
-            text="",
-            char_count=0,
-        )
-    ]
+    original = original.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=0,
+                text="",
+                char_count=0,
+            )
+        ]
+    )
 
     store.upsert(original)
     result = store.upsert(original)
@@ -556,29 +584,33 @@ def test_insert_same_origin_concurrent_updates_do_not_leave_stale_chunks(monkeyp
 
     content = "hello world"
     doc_two_chunks = MarkdownDocument(origin="same-origin", content=content)
-    doc_two_chunks.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=5,
-            text=content[:5],
-            char_count=5,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=len(content),
-            text=content[6:],
-            char_count=len(content[6:]),
-        ),
-    ]
+    doc_two_chunks = doc_two_chunks.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                char_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                char_count=len(content[6:]),
+            ),
+        ]
+    )
     doc_one_chunk = MarkdownDocument(origin="same-origin", content=content)
-    doc_one_chunk.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=len(content),
-            text=content,
-            char_count=len(content),
-        )
-    ]
+    doc_one_chunk = doc_one_chunk.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=len(content),
+                text=content,
+                char_count=len(content),
+            )
+        ]
+    )
 
     original_get = store.collection.get
     original_upsert = store.collection.upsert
@@ -635,14 +667,16 @@ def test_insert_releases_origin_locks_for_completed_origins():
     for idx in range(100):
         content = f"doc {idx}"
         doc = MarkdownDocument(origin=f"origin-{idx}", content=content)
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content,
-                char_count=len(content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content,
+                    char_count=len(content),
+                )
+            ]
+        )
         store.upsert(doc, skip_if_unchanged=False)
 
     assert store._origin_locks == {}
@@ -658,20 +692,22 @@ def test_insert_stores_document_content_once_in_metadata():
 
     content = "hello world"
     doc = MarkdownDocument(origin="same-origin", content=content)
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=5,
-            text=content[:5],
-            char_count=5,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=len(content),
-            text=content[6:],
-            char_count=len(content[6:]),
-        ),
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=5,
+                text=content[:5],
+                char_count=5,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=len(content),
+                text=content[6:],
+                char_count=len(content[6:]),
+            ),
+        ]
+    )
     store.upsert(doc)
 
     existing = store.collection.get(
@@ -821,20 +857,22 @@ def _make_doc_with_overlapping_chunks():
     """Create a document with overlapping chunks for testing deoverlap."""
     content = "hello world hello"
     doc = MarkdownDocument(origin="test_overlap", content=content)
-    doc.chunks = [
-        MarkdownChunk(
-            start_index=0,
-            end_index=11,
-            text=content[0:11],  # "hello world"
-            char_count=11,
-        ),
-        MarkdownChunk(
-            start_index=6,
-            end_index=17,
-            text=content[6:17],  # "world hello"
-            char_count=11,
-        ),
-    ]
+    doc = doc.to_chunked(
+        [
+            MarkdownChunk(
+                start_index=0,
+                end_index=11,
+                text=content[0:11],  # "hello world"
+                char_count=11,
+            ),
+            MarkdownChunk(
+                start_index=6,
+                end_index=17,
+                text=content[6:17],  # "world hello"
+                char_count=11,
+            ),
+        ]
+    )
     return doc
 
 
