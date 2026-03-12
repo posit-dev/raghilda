@@ -54,7 +54,7 @@ def build_rag_index():
     )
     chunker = MarkdownChunker()
     for link in links:
-        store.upsert(chunker.chunk_document(read_as_markdown(link)))
+        store.upsert(chunker.chunk(read_as_markdown(link)))
 
     # Build indexes for faster retrieval
     print("Building search indexes...")

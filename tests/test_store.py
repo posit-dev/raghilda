@@ -78,13 +78,15 @@ class TestDuckDBStore:
     @pytest.fixture
     def store_with_docs(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
-        doc.chunks = [
-            _get_markdown_chunk(doc, start=0, end=4),
-            _get_markdown_chunk(doc, start=5, end=7),
-            _get_markdown_chunk(doc, start=8, end=9),
-            _get_markdown_chunk(doc, start=10, end=14),
-            _get_markdown_chunk(doc, start=15, end=23),
-        ]
+        doc = doc.to_chunked(
+            [
+                _get_markdown_chunk(doc, start=0, end=4),
+                _get_markdown_chunk(doc, start=5, end=7),
+                _get_markdown_chunk(doc, start=8, end=9),
+                _get_markdown_chunk(doc, start=10, end=14),
+                _get_markdown_chunk(doc, start=15, end=23),
+            ]
+        )
         store.upsert(doc)
         return store
 
@@ -108,14 +110,16 @@ class TestDuckDBStore:
         )
         calls_after_create = embed.calls
         doc = MarkdownDocument(origin="doc-1", content="hello world")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
 
         first_write = store.upsert(doc)
         assert first_write.document.origin == "doc-1"
@@ -144,14 +148,16 @@ class TestDuckDBStore:
         )
         calls_after_create = embed.calls
         doc = MarkdownDocument(origin="doc-1", content="hello world")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
 
         store.upsert(doc)
         assert embed.calls == calls_after_create + 1
@@ -171,33 +177,37 @@ class TestDuckDBStore:
 
         content = "hello world"
         doc1 = MarkdownDocument(origin="doc-1", content=content)
-        doc1.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content,
-                char_count=len(content),
-            )
-        ]
+        doc1 = doc1.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content,
+                    char_count=len(content),
+                )
+            ]
+        )
         first = store.upsert(doc1)
         assert first.action == "inserted"
         assert embed.calls == calls_after_create + 1
 
         doc2 = MarkdownDocument(origin="doc-1", content=content)
-        doc2.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text=content[0:5],
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=len(content),
-                text=content[6:],
-                char_count=len(content[6:]),
-            ),
-        ]
+        doc2 = doc2.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text=content[0:5],
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=len(content),
+                    text=content[6:],
+                    char_count=len(content[6:]),
+                ),
+            ]
+        )
         second = store.upsert(doc2)
         assert second.action == "replaced"
         assert embed.calls == calls_after_create + 2
@@ -220,27 +230,31 @@ class TestDuckDBStore:
 
         content = "hello world"
         doc1 = MarkdownDocument(origin="doc-1", content=content)
-        doc1.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content,
-                char_count=len(content),
-            )
-        ]
+        doc1 = doc1.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content,
+                    char_count=len(content),
+                )
+            ]
+        )
         first = store.upsert(doc1)
         assert first.action == "inserted"
         assert embed.calls == calls_after_create + 1
 
         doc2 = MarkdownDocument(origin="doc-1", content=content)
-        doc2.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content.upper(),
-                char_count=len(content),
-            )
-        ]
+        doc2 = doc2.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content.upper(),
+                    char_count=len(content),
+                )
+            ]
+        )
         with pytest.raises(
             ValueError,
             match=r"Chunk text must match document\.content\[start_index:end_index\]",
@@ -260,14 +274,16 @@ class TestDuckDBStore:
 
         content = "Hello World"
         first = MarkdownDocument(origin="doc-1", content=content)
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content.lower(),
-                char_count=len(content),
-            )
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content.lower(),
+                    char_count=len(content),
+                )
+            ]
+        )
         with pytest.raises(
             ValueError,
             match=r"Chunk text must match document\.content\[start_index:end_index\]",
@@ -287,15 +303,17 @@ class TestDuckDBStore:
 
         content = "Hello World"
         first = MarkdownDocument(origin="doc-1", content=content)
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(content),
-                text=content,
-                char_count=len(content),
-                origin="doc-2",
-            )
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(content),
+                    text=content,
+                    char_count=len(content),
+                    origin="doc-2",
+                )
+            ]
+        )
         with pytest.raises(
             ValueError,
             match=r"Chunk origin must be None or match document\.origin",
@@ -319,20 +337,22 @@ class TestDuckDBStore:
             content=content,
             attributes={"tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text=content[:5],
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=len(content),
-                text=content[6:],
-                char_count=len(content[6:]),
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text=content[:5],
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=len(content),
+                    text=content[6:],
+                    char_count=len(content[6:]),
+                ),
+            ]
+        )
 
         first = store.upsert(doc)
         assert first.action == "inserted"
@@ -366,14 +386,16 @@ class TestDuckDBStore:
             name="insert_embed_count_mismatch",
         )
         doc = MarkdownDocument(origin="doc-1", content="hello world")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
 
         with pytest.raises(
             ValueError, match="must return exactly one embedding per chunk"
@@ -388,14 +410,16 @@ class TestDuckDBStore:
             name="insert_missing_origin",
         )
         doc = MarkdownDocument(origin=None, content="hello world")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
 
         with pytest.raises(
             ValueError, match="document.origin must be a non-empty string"
@@ -415,14 +439,16 @@ class TestDuckDBStore:
             content="hello world",
             attributes={"tenant": "docs"},
         )
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(first.content),
-                text=first.content,
-                char_count=len(first.content),
-            )
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(first.content),
+                    text=first.content,
+                    char_count=len(first.content),
+                )
+            ]
+        )
 
         inserted = store.upsert(first)
         assert inserted.action == "inserted"
@@ -435,14 +461,16 @@ class TestDuckDBStore:
             content="goodbye world",
             attributes={"tenant": "eng"},
         )
-        second.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(second.content),
-                text=second.content,
-                char_count=len(second.content),
-            )
-        ]
+        second = second.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(second.content),
+                    text=second.content,
+                    char_count=len(second.content),
+                )
+            ]
+        )
 
         updated = store.upsert(second)
         assert updated.action == "replaced"
@@ -472,37 +500,41 @@ class TestDuckDBStore:
             name="insert_replace_multi_chunk_snapshot",
         )
         first = MarkdownDocument(origin="doc-1", content="hello world")
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=11,
-                text="world",
-                char_count=5,
-            ),
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=11,
+                    text="world",
+                    char_count=5,
+                ),
+            ]
+        )
         store.upsert(first)
 
         second = MarkdownDocument(origin="doc-1", content="hello mars")
-        second.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=10,
-                text="mars",
-                char_count=4,
-            ),
-        ]
+        second = second.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=10,
+                    text="mars",
+                    char_count=4,
+                ),
+            ]
+        )
         updated = store.upsert(second)
         assert updated.action == "replaced"
         assert updated.replaced_document is not None
@@ -533,20 +565,22 @@ class TestDuckDBStore:
             name="vss-text-source",
         )
         doc = MarkdownDocument(origin="vss-text-source", content="alphabetagamma")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=5,
-                end_index=9,
-                text="beta",
-                char_count=4,
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=5,
+                    end_index=9,
+                    text="beta",
+                    char_count=4,
+                ),
+            ]
+        )
         store.upsert(doc)
 
         results = store.retrieve_vss(
@@ -572,20 +606,22 @@ class TestDuckDBStore:
     def test_retrieve_bm25_returns_document_slice_for_non_zero_start(self, store):
         # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
         doc = MarkdownDocument(origin="bm25-text-source", content="alphabetagamma")
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            ),
-            MarkdownChunk(
-                start_index=5,
-                end_index=9,
-                text="beta",
-                char_count=4,
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                ),
+                MarkdownChunk(
+                    start_index=5,
+                    end_index=9,
+                    text="beta",
+                    char_count=4,
+                ),
+            ]
+        )
         store.upsert(doc)
         store.build_index("bm25")
 
@@ -611,11 +647,13 @@ class TestDuckDBStore:
         doc = MarkdownDocument(
             origin="test_deoverlap", content="hello world test document"
         )
-        doc.chunks = [
-            _get_markdown_chunk(doc, start=0, end=11),  # "hello world"
-            _get_markdown_chunk(doc, start=6, end=16),  # "world test"
-            _get_markdown_chunk(doc, start=12, end=25),  # "test document"
-        ]
+        doc = doc.to_chunked(
+            [
+                _get_markdown_chunk(doc, start=0, end=11),  # "hello world"
+                _get_markdown_chunk(doc, start=6, end=16),  # "world test"
+                _get_markdown_chunk(doc, start=12, end=25),  # "test document"
+            ]
+        )
         store.upsert(doc)
         store.build_index("bm25")
 
@@ -652,23 +690,25 @@ class TestDuckDBStore:
             content="alpha beta gamma",
             attributes={"topic": "first"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=10,
-                text="alpha beta",
-                char_count=10,
-                context="h1",
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=16,
-                text="beta gamma",
-                char_count=10,
-                context="h2",
-                attributes={"topic": "second"},
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=10,
+                    text="alpha beta",
+                    char_count=10,
+                    context="h1",
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=16,
+                    text="beta gamma",
+                    char_count=10,
+                    context="h2",
+                    attributes={"topic": "second"},
+                ),
+            ]
+        )
         store.upsert(doc)
         store.build_index("bm25")
 
@@ -681,26 +721,28 @@ class TestDuckDBStore:
     def test_retrieve_supports_excluding_seen_chunk_ids(self, store):
         content = "alpha one alpha two alpha three"
         doc = MarkdownDocument(origin="chunk-id-filter", content=content)
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=9,
-                text=content[0:9],
-                char_count=9,
-            ),
-            MarkdownChunk(
-                start_index=10,
-                end_index=19,
-                text=content[10:19],
-                char_count=9,
-            ),
-            MarkdownChunk(
-                start_index=20,
-                end_index=31,
-                text=content[20:31],
-                char_count=11,
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=9,
+                    text=content[0:9],
+                    char_count=9,
+                ),
+                MarkdownChunk(
+                    start_index=10,
+                    end_index=19,
+                    text=content[10:19],
+                    char_count=9,
+                ),
+                MarkdownChunk(
+                    start_index=20,
+                    end_index=31,
+                    text=content[20:31],
+                    char_count=11,
+                ),
+            ]
+        )
         store.upsert(doc)
         store.build_index("bm25")
 
@@ -809,14 +851,16 @@ class TestDuckDBStore:
             content="hello vector attributes",
             attributes={"tenant": "docs", "embedding25": vector},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
         store.upsert(doc)
         store.build_index("bm25")
 
@@ -864,14 +908,16 @@ class TestDuckDBStore:
             content="hello vector unchanged",
             attributes={"tenant": "docs", "embedding3": vector},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=len(doc.content),
-                text=doc.content,
-                char_count=len(doc.content),
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=len(doc.content),
+                    text=doc.content,
+                    char_count=len(doc.content),
+                )
+            ]
+        )
 
         first = store.upsert(doc)
         assert first.action == "inserted"
@@ -898,27 +944,29 @@ class TestDuckDBStore:
             content="alpha beta gamma",
             attributes={"tenant": "docs", "priority": 1},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-                attributes={"priority": 5, "is_public": False},
-            ),
-            MarkdownChunk(
-                start_index=6,
-                end_index=10,
-                text="beta",
-                char_count=4,
-            ),
-            MarkdownChunk(
-                start_index=11,
-                end_index=16,
-                text="gamma",
-                char_count=5,
-            ),
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                    attributes={"priority": 5, "is_public": False},
+                ),
+                MarkdownChunk(
+                    start_index=6,
+                    end_index=10,
+                    text="beta",
+                    char_count=4,
+                ),
+                MarkdownChunk(
+                    start_index=11,
+                    end_index=16,
+                    text="gamma",
+                    char_count=5,
+                ),
+            ]
+        )
 
         store.upsert(doc)
         store.build_index("bm25")
@@ -999,14 +1047,16 @@ class TestDuckDBStore:
             content="alpha beta",
             attributes={"id": "attr-id-1", "tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         store.upsert(doc)
         store.build_index("bm25")
@@ -1031,14 +1081,16 @@ class TestDuckDBStore:
             origin="text-filter-test",
             content="alpha beta",
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         store.upsert(doc)
         store.build_index("bm25")
@@ -1076,14 +1128,16 @@ class TestDuckDBStore:
                 },
             },
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         store.upsert(doc)
         store.build_index("bm25")
@@ -1139,14 +1193,16 @@ class TestDuckDBStore:
             content="alpha beta",
             attributes={"tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         store.upsert(doc)
         store.build_index("bm25")
@@ -1176,14 +1232,16 @@ class TestDuckDBStore:
             content="alpha",
             attributes={"tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         inserted = store.upsert(doc)
         assert inserted.action == "inserted"
@@ -1197,14 +1255,16 @@ class TestDuckDBStore:
             content="alpha beta",
             attributes={"tenant": "docs"},
         )
-        updated.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=10,
-                text="alpha beta",
-                char_count=10,
-            )
-        ]
+        updated = updated.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=10,
+                    text="alpha beta",
+                    char_count=10,
+                )
+            ]
+        )
 
         replaced = store.upsert(updated, skip_if_unchanged=False)
         assert replaced.action == "replaced"
@@ -1238,14 +1298,16 @@ class TestDuckDBStore:
             content="alpha",
             attributes={"tenant": "docs"},
         )
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
         store.upsert(first, skip_if_unchanged=False)
 
         second = MarkdownDocument(
@@ -1253,14 +1315,16 @@ class TestDuckDBStore:
             content="alpha beta",
             attributes={"tenant": "docs"},
         )
-        second.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=10,
-                text="alpha beta",
-                char_count=10,
-            )
-        ]
+        second = second.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=10,
+                    text="alpha beta",
+                    char_count=10,
+                )
+            ]
+        )
         store.upsert(second, skip_if_unchanged=False)
 
         assert observed_lock_states
@@ -1282,14 +1346,16 @@ class TestDuckDBStore:
             content="alpha",
             attributes={"tenant": "docs", "topic": None},
         )
-        first.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="alpha",
-                char_count=5,
-            )
-        ]
+        first = first.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="alpha",
+                    char_count=5,
+                )
+            ]
+        )
 
         inserted = store.upsert(first)
         assert inserted.action == "inserted"
@@ -1303,14 +1369,16 @@ class TestDuckDBStore:
             content="alpha beta",
             attributes={"tenant": "docs", "topic": "updated"},
         )
-        second.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=10,
-                text="alpha beta",
-                char_count=10,
-            )
-        ]
+        second = second.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=10,
+                    text="alpha beta",
+                    char_count=10,
+                )
+            ]
+        )
 
         replaced = store.upsert(second, skip_if_unchanged=False)
         assert replaced.action == "replaced"
@@ -1339,14 +1407,16 @@ class TestDuckDBStore:
             origin="required-fail",
             content="hello",
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                )
+            ]
+        )
 
         with pytest.raises(ValueError, match="Missing required attribute 'tenant'"):
             store.upsert(doc)
@@ -1363,14 +1433,16 @@ class TestDuckDBStore:
             content="hello",
             attributes={"tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                )
+            ]
+        )
 
         with pytest.raises(ValueError, match="Unknown attribute key 'tenant'"):
             store.upsert(doc)
@@ -1388,15 +1460,17 @@ class TestDuckDBStore:
             content="hello",
             attributes={"tenant": "docs"},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-                attributes={"unknown": "x"},
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                    attributes={"unknown": "x"},
+                )
+            ]
+        )
 
         with pytest.raises(ValueError, match="Unknown attribute key 'unknown'"):
             store.upsert(doc)
@@ -1414,14 +1488,16 @@ class TestDuckDBStore:
             content="hello",
             attributes={"priority": 1.5},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                )
+            ]
+        )
 
         with pytest.raises(
             ValueError,
@@ -1442,14 +1518,16 @@ class TestDuckDBStore:
             content="hello",
             attributes={"score": 1},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                )
+            ]
+        )
 
         with pytest.raises(
             ValueError,
@@ -1619,15 +1697,17 @@ class TestOpenAIStore:
             content="hello",
             attributes={"tenant": "docs", "priority": 1},
         )
-        doc.chunks = [
-            MarkdownChunk(
-                start_index=0,
-                end_index=5,
-                text="hello",
-                char_count=5,
-                attributes={"tenant": "docs"},
-            )
-        ]
+        doc = doc.to_chunked(
+            [
+                MarkdownChunk(
+                    start_index=0,
+                    end_index=5,
+                    text="hello",
+                    char_count=5,
+                    attributes={"tenant": "docs"},
+                )
+            ]
+        )
 
         with pytest.raises(
             ValueError, match="OpenAIStore does not support chunked documents"
@@ -2867,7 +2947,7 @@ def test_connect(tmp_path):
         title="Connect Test Store",
     )
     doc = MarkdownDocument(origin="test", content="hello world")
-    doc.chunks = [_get_markdown_chunk(doc, start=0, end=5)]
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
     store.upsert(doc)
     store.build_index()
     store.con.close()
@@ -2907,7 +2987,7 @@ def test_upsert_after_hnsw_index_on_reconnect(tmp_path):
         title="HNSW Upsert Test",
     )
     doc1 = MarkdownDocument(origin="doc1", content="alpha beta gamma")
-    doc1.chunks = [_get_markdown_chunk(doc1, start=0, end=5)]
+    doc1 = doc1.to_chunked([_get_markdown_chunk(doc1, start=0, end=5)])
     store.upsert(doc1)
     store.build_index("hnsw")
     store.con.close()
@@ -2919,7 +2999,7 @@ def test_upsert_after_hnsw_index_on_reconnect(tmp_path):
     store2.metadata.embed = CountingEmbedding()
 
     doc2 = MarkdownDocument(origin="doc2", content="delta epsilon")
-    doc2.chunks = [_get_markdown_chunk(doc2, start=0, end=5)]
+    doc2 = doc2.to_chunked([_get_markdown_chunk(doc2, start=0, end=5)])
     store2.upsert(doc2)
 
     assert store2.size() == 2
@@ -2974,14 +3054,14 @@ def test_duckdb_store_does_not_require_pandas():
 
         store = DuckDBStore.create(location=":memory:", embed=None, overwrite=True)
         doc = MarkdownDocument(origin="test", content="hello world")
-        doc.chunks = [
+        doc = doc.to_chunked([
             MarkdownChunk(
                 start_index=0,
                 end_index=5,
                 text="hello",
                 char_count=5,
             )
-        ]
+        ])
         store.upsert(doc)
         assert store.size() == 1
         """

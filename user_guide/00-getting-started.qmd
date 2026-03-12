@@ -80,7 +80,7 @@ chunker = MarkdownChunker()
 
 for link in links:
     document = read_as_markdown(link)
-    chunked = chunker.chunk_document(document)
+    chunked = chunker.chunk(document)
     store.upsert(chunked)
 
 print(f"Indexed {store.size()} documents")
@@ -110,7 +110,7 @@ chunker = MarkdownChunker(
     chunk_size=1600,      # Target size in characters
     target_overlap=0.5,   # 50% overlap between chunks
 )
-chunked_doc = chunker.chunk_document(doc)
+chunked_doc = chunker.chunk(doc)
 print(f"Created {len(chunked_doc.chunks)} chunks")
 print(f"\nFirst chunk context: {chunked_doc.chunks[0].context}")
 print(f"First chunk text:\n{chunked_doc.chunks[0].text[:200]}...")
@@ -131,7 +131,7 @@ chunker = MarkdownChunker(chunk_size=800, target_overlap=0.3)
 
 def prepare(uri):
     doc = read_as_markdown(uri)
-    return chunker.chunk_document(doc)
+    return chunker.chunk(doc)
 
 for link in links:
     store.upsert(prepare(link))
@@ -142,7 +142,7 @@ Common reasons to customize `prepare`:
 - **Adjust chunk size or overlap** — Smaller chunks for more precise retrieval, larger for more context.
 - **Set hard heading boundaries** — Use `segment_by_heading_levels=[1, 2]` to prevent chunks from crossing major sections.
 - **Control HTML extraction** — Pass `html_extract_selectors` or `html_zap_selectors` to `read_as_markdown()`.
-- **Use a different chunker** — Any chunker that produces a `Document` with `.chunks` will work. See the [Chunking](02-chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
+- **Use a different chunker** — Any chunker that returns a chunked document will work. See the [Chunking](02-chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
 
 ## Building Indexes
 
@@ -254,7 +254,7 @@ from raghilda.chunker import MarkdownChunker
 
 chunker = MarkdownChunker()
 for link in links:
-    store.upsert(chunker.chunk_document(read_as_markdown(link)))
+    store.upsert(chunker.chunk(read_as_markdown(link)))
 
 # 4. Build indexes
 store.build_index()

@@ -24,7 +24,7 @@ chunker = MarkdownChunker(
     target_overlap=0.5,   # 50% overlap
 )
 
-chunks = chunker.chunk(markdown_text)
+chunks = chunker.chunk_text(markdown_text)
 ```
 
 ### Parameters
@@ -90,7 +90,7 @@ This context is stored alongside the chunk and can help the LLM understand where
 
 ## Chunking Documents
 
-To chunk a full document (not just text), use `chunk_document()`:
+To chunk a full document, use `chunk()`:
 
 ```{python}
 #| eval: false
@@ -100,11 +100,11 @@ from raghilda.chunker import MarkdownChunker
 doc = read_as_markdown("article.md")
 chunker = MarkdownChunker(chunk_size=800)
 
-chunked_doc = chunker.chunk_document(doc)
+chunked_doc = chunker.chunk(doc)
 print(f"Created {len(chunked_doc.chunks)} chunks")
 ```
 
-The chunks are attached to the document's `chunks` attribute, preserving the association with the source.
+`chunk()` returns a chunked document object, preserving the original document fields alongside its `chunks`.
 
 ## Custom Chunking Before Upsert
 
@@ -127,7 +127,7 @@ chunker = MarkdownChunker(
 
 def prepare(uri):
     doc = read_as_markdown(uri)
-    return chunker.chunk_document(doc)
+    return chunker.chunk(doc)
 
 for uri in files:
     store.upsert(prepare(uri))
@@ -154,8 +154,7 @@ def prepare(uri):
     return MarkdownDocument(
         content=doc.content,
         origin=uri,
-        chunks=[Chunk.from_any(c) for c in chonkie_chunks],
-    )
+    ).to_chunked([Chunk.from_any(c) for c in chonkie_chunks])
 
 for uri in files:
     store.upsert(prepare(uri))

@@ -4,7 +4,7 @@ import os
 import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .document import Document, MarkdownDocument
+from .document import ChunkedMarkdownDocument, Document
 from typing import Any, Mapping, Optional, Sequence
 import duckdb
 from dataclasses import dataclass, asdict
@@ -177,7 +177,7 @@ class DuckDBStore(BaseStore):
         origin="https://example.com/doc1.md",
         content="# Example\n\nThis is a sample document.",
     )
-    store.upsert(MarkdownChunker().chunk_document(doc))
+    store.upsert(MarkdownChunker().chunk(doc))
 
     # Retrieve similar chunks
     chunks = store.retrieve("How do I use this?", top_k=5)
@@ -405,15 +405,13 @@ class DuckDBStore(BaseStore):
         document: Document,
         *,
         skip_if_unchanged: bool = True,
-    ) -> WriteResult:
-        if not isinstance(document, MarkdownDocument):
+    ) -> WriteResult[ChunkedMarkdownDocument]:
+        if not isinstance(document, ChunkedMarkdownDocument):
             raise NotImplementedError(
                 f"Upsert not implemented for type {type(document)}"
             )
         if not isinstance(document.origin, str) or not document.origin:
             raise ValueError("document.origin must be a non-empty string for upsert().")
-        if document.chunks is None:
-            raise ValueError("Document must be chunked before insertion.")
         if len(document.chunks) == 0:
             raise ValueError("Document must contain at least one chunk.")
         for chunk in document.chunks:
@@ -471,7 +469,7 @@ class DuckDBStore(BaseStore):
                 )
 
             action = "inserted"
-            replaced_document: MarkdownDocument | None = None
+            replaced_document: ChunkedMarkdownDocument | None = None
             if existing is not None:
                 action = "replaced"
                 replaced_document = self._load_document_snapshot(
@@ -513,10 +511,8 @@ class DuckDBStore(BaseStore):
 
     def _prepare_chunked_document_rows(
         self,
-        chunked_doc: MarkdownDocument,
+        chunked_doc: ChunkedMarkdownDocument,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        assert chunked_doc.chunks is not None
-
         doc = {
             "origin": chunked_doc.origin,
             "text": chunked_doc.content,
@@ -524,7 +520,7 @@ class DuckDBStore(BaseStore):
         chunks = [asdict(chunk) for chunk in chunked_doc.chunks]
 
         resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
-        for chunk in chunked_doc.chunks or []:
+        for chunk in chunked_doc.chunks:
             chunk_attributes = getattr(chunk, "attributes", None)
             resolved_chunk_attributes.append(
                 merge_attribute_values(
@@ -582,18 +578,18 @@ class DuckDBStore(BaseStore):
         ]
 
     def _chunk_layout_matches_existing(
-        self, *, chunked_doc: MarkdownDocument, origin: str
+        self, *, chunked_doc: ChunkedMarkdownDocument, origin: str
     ) -> bool:
         incoming = self._chunk_layout_records(chunked_doc)
         existing = self._chunk_layout_records_from_store(origin)
         return incoming == existing
 
     def _chunk_layout_records(
-        self, chunked_doc: MarkdownDocument
+        self, chunked_doc: ChunkedMarkdownDocument
     ) -> list[tuple[Any, ...]]:
         records: list[tuple[Any, ...]] = []
         attributes_columns = list(self.metadata.attributes_schema)
-        for chunk in chunked_doc.chunks or []:
+        for chunk in chunked_doc.chunks:
             resolved = merge_attribute_values(
                 attributes_spec=self.metadata.attributes_spec,
                 sources=[chunked_doc.attributes, chunk.attributes],
@@ -656,7 +652,9 @@ class DuckDBStore(BaseStore):
             self.metadata.attributes_schema[column],
         )
 
-    def _load_document_snapshot(self, *, origin: str, text: str) -> MarkdownDocument:
+    def _load_document_snapshot(
+        self, *, origin: str, text: str
+    ) -> ChunkedMarkdownDocument:
         attribute_columns = list(self.metadata.attributes_schema)
         attribute_select = ", ".join(
             _quote_identifier(col) for col in attribute_columns
@@ -711,11 +709,11 @@ class DuckDBStore(BaseStore):
                 )
             )
 
-        return MarkdownDocument(
+        return ChunkedMarkdownDocument(
             origin=origin,
             content=text,
-            chunks=chunks,
             attributes=document_attributes or None,
+            chunks=chunks,
         )
 
     def retrieve(
