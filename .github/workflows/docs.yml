@@ -22,7 +22,7 @@ jobs:
         run: uv python install
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --refresh-package great-docs
 
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
