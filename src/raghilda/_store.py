@@ -24,7 +24,11 @@ class BaseStore(ABC):
     and retrieving relevant chunks based on similarity search.
 
     Subclasses must implement all abstract methods to provide a concrete
-    storage backend (e.g., DuckDB, OpenAI Vector Store).
+    storage backend:
+
+    - :py:class:`raghilda.store.DuckDBStore`: local storage with embedding and BM25 search.
+    - :py:class:`raghilda.store.ChromaDBStore`: local storage using ChromaDB.
+    - :py:class:`raghilda.store.OpenAIStore`: hosted storage using OpenAI's Vector Store API.
     """
 
     @staticmethod
