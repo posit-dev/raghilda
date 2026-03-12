@@ -69,10 +69,14 @@ reference:
   - title: Store
     desc: Vector storage backends for storing and retrieving chunks
     contents:
-      - store.BaseStore
-      - store.DuckDBStore
-      - store.ChromaDBStore
-      - store.OpenAIStore
+      - name: store.BaseStore
+        members: false
+      - name: store.DuckDBStore
+        members: false
+      - name: store.ChromaDBStore
+        members: false
+      - name: store.OpenAIStore
+        members: false
 
   - title: Embedding
     desc: Embedding providers for generating vector representations

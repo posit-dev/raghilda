@@ -1,5 +1,6 @@
 [project]
 name = "raghilda"
+repository = "https://github.com/dfalbel/raghilda"
 version = "0.1.0"
 description = "RAG made simple"
 license = "MIT"
