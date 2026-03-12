@@ -71,6 +71,7 @@ reference:
     contents:
       - store.BaseStore
       - store.DuckDBStore
+      - store.ChromaDBStore
       - store.OpenAIStore
 
   - title: Embedding
