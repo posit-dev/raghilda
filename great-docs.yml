@@ -85,6 +85,7 @@ reference:
       - embedding.EmbedInputType
       - embedding.EmbeddingOpenAI
       - embedding.EmbeddingCohere
+      - embedding.EmbeddingSentenceTransformers
 
   - title: Chunker
     desc: Text chunking utilities for splitting documents
