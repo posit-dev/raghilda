@@ -6,6 +6,7 @@ with chunks, documents, and chunkers.
 
 from ._types import (
     ChunkLike,
+    ChunkedDocumentLike,
     DocumentLike,
     ChunkerLike,
     IntoChunk,
@@ -14,6 +15,7 @@ from ._types import (
 
 __all__ = [
     "ChunkLike",
+    "ChunkedDocumentLike",
     "DocumentLike",
     "ChunkerLike",
     "IntoChunk",

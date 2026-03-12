@@ -103,7 +103,7 @@ store = DuckDBStore.create(
 )
 chunker = MarkdownChunker()
 for uri in documents:
-    store.upsert(chunker.chunk_document(read_as_markdown(uri)))
+    store.upsert(chunker.chunk(read_as_markdown(uri)))
 
 # Later, reconnect - provider is automatically restored
 store = DuckDBStore.connect("my_store.db")

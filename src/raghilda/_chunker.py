@@ -4,24 +4,17 @@ import re
 import commonmark
 
 from .chunk import Chunk, MarkdownChunk
-from .document import Document
+from .document import ChunkedDocument, Document
 
 
 class BaseChunker:
     """Base class for chunkers."""
 
-    def chunk(self, text: str) -> Sequence[Chunk]:
+    def chunk(self, document: Document) -> ChunkedDocument:
         raise NotImplementedError
 
-    def chunk_document(self, doc: Document) -> Document:
-        """Chunk a document and return it with chunks attached."""
-        doc.chunks = list(self.chunk(doc.content))
-        for chunk in doc.chunks:
-            chunk.origin = doc.origin
-        return doc
-
-    def __call__(self, text: str) -> Sequence[Chunk]:
-        return self.chunk(text)
+    def chunk_text(self, text: str) -> Sequence[Chunk]:
+        raise NotImplementedError
 
 
 class MarkdownChunker(BaseChunker):
@@ -74,7 +67,7 @@ class MarkdownChunker(BaseChunker):
     The methods section describes our approach.
     '''
 
-    chunks = chunker.chunk(text)
+    chunks = chunker.chunk_text(text)
     for chunk in chunks:
         print(f"[{chunk.start_index}:{chunk.end_index}] {chunk.text[:40]}...")
     ```
@@ -253,7 +246,13 @@ class MarkdownChunker(BaseChunker):
         return [h["text"] for h in stack]
 
     # Main -----------------------------------------------------------------
-    def chunk(self, text: str) -> List[MarkdownChunk]:
+    def chunk(self, document: Document) -> ChunkedDocument:
+        chunks = self.chunk_text(document.content)
+        for chunk in chunks:
+            chunk.origin = document.origin
+        return document.to_chunked(chunks)
+
+    def chunk_text(self, text: str) -> List[MarkdownChunk]:
         md_len = len(text)
         headings = self._heading_positions(text)
 

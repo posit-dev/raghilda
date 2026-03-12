@@ -19,7 +19,7 @@ from typing import (
 
 from ._store import BaseStore, WriteResult
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .document import Document, MarkdownDocument
+from .document import ChunkedMarkdownDocument, Document
 from ._deoverlap import deoverlap_chunks
 from ._embedding import (
     EmbeddingCohere,
@@ -570,11 +570,11 @@ class ChromaDBStore(BaseStore):
         document: Document,
         *,
         skip_if_unchanged: bool = True,
-    ) -> WriteResult:
-        if not isinstance(document, MarkdownDocument):
-            raise ValueError("Only MarkdownDocument is supported for ChromaDBStore")
-        if document.chunks is None:
-            raise ValueError("Document must be chunked before insertion")
+    ) -> WriteResult[ChunkedMarkdownDocument]:
+        if not isinstance(document, ChunkedMarkdownDocument):
+            raise ValueError(
+                "Only ChunkedMarkdownDocument is supported for ChromaDBStore"
+            )
         if len(document.chunks) == 0:
             raise ValueError("Document must contain at least one chunk.")
         if not isinstance(document.origin, str) or not document.origin:
@@ -609,11 +609,11 @@ class ChromaDBStore(BaseStore):
                         )
                     )
                     if current_document is None:
-                        current_document = MarkdownDocument(
+                        current_document = ChunkedMarkdownDocument(
                             origin=document.origin,
                             content=document.content,
-                            chunks=document.chunks,
                             attributes=document.attributes,
+                            chunks=document.chunks,
                         )
                     return WriteResult(
                         action="skipped",
@@ -667,11 +667,11 @@ class ChromaDBStore(BaseStore):
             ]
             if stale_ids:
                 self.collection.delete(ids=stale_ids)
-            current_document = MarkdownDocument(
+            current_document = ChunkedMarkdownDocument(
                 origin=document.origin,
                 content=document.content,
-                chunks=document.chunks,
                 attributes=merged_document_attributes or None,
+                chunks=document.chunks,
             )
             return WriteResult(
                 action="replaced" if existing_ids else "inserted",
@@ -834,11 +834,11 @@ class ChromaDBStore(BaseStore):
         return _FILTERABLE_BASE_COLUMNS | set(self.metadata.attributes_schema)
 
     def _incoming_chunk_signature(
-        self, document: MarkdownDocument
+        self, document: ChunkedMarkdownDocument
     ) -> list[tuple[Any, ...]]:
         signatures: list[tuple[Any, ...]] = []
         attribute_columns = list(self.metadata.attributes_schema)
-        for chunk in document.chunks or []:
+        for chunk in document.chunks:
             resolved_attributes = merge_attribute_values(
                 attributes_spec=self.metadata.attributes_spec,
                 sources=[document.attributes, chunk.attributes],
@@ -886,7 +886,7 @@ class ChromaDBStore(BaseStore):
 
     def _snapshot_document_from_existing_if_available(
         self, existing: dict[str, Any], *, origin: str
-    ) -> Optional[MarkdownDocument]:
+    ) -> Optional[ChunkedMarkdownDocument]:
         try:
             return self._snapshot_document_from_existing(existing, origin=origin)
         except ValueError as exc:
@@ -896,7 +896,7 @@ class ChromaDBStore(BaseStore):
 
     def _snapshot_document_from_existing(
         self, existing: dict[str, Any], *, origin: str
-    ) -> MarkdownDocument:
+    ) -> ChunkedMarkdownDocument:
         chunk_texts = list(existing.get("documents") or [])
         chunk_metadatas = list(existing.get("metadatas") or [])
 
@@ -954,11 +954,11 @@ class ChromaDBStore(BaseStore):
         chunk_rows.sort(key=lambda row: (row[0], row[1], row[2]))
         chunks = [chunk for _, _, _, chunk in chunk_rows]
 
-        return MarkdownDocument(
+        return ChunkedMarkdownDocument(
             origin=origin,
             content=content,
-            chunks=chunks,
             attributes=document_attributes or None,
+            chunks=chunks,
         )
 
     def _allocate_chunk_ids(self, count: int) -> list[int]:

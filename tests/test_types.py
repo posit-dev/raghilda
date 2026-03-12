@@ -1,7 +1,7 @@
 import pytest
 from raghilda.chunk import Chunk
-from raghilda.document import Document
-from raghilda.types import ChunkLike, DocumentLike, IntoChunk
+from raghilda.document import ChunkedDocument, Document
+from raghilda.types import ChunkLike, ChunkedDocumentLike, DocumentLike, IntoChunk
 
 
 class TestChunkLikeProtocol:
@@ -201,20 +201,24 @@ class TestDocumentProtocols:
     def test_custom_class_satisfies_document_like(self):
         class MyDoc:
             content = "hello"
-            chunks = None
 
         assert isinstance(MyDoc(), DocumentLike)
 
     def test_from_any_with_document_like(self):
         class MyDoc:
             content = "hello world"
-            chunks = None
 
         result = Document.from_any(MyDoc())  # type: ignore[arg-type]
         assert isinstance(result, Document)
         assert result.content == "hello world"
 
-    def test_from_any_converts_chunks(self):
+    def test_chunked_document_satisfies_chunked_document_like(self):
+        doc = Document(content="hello world").to_chunked(
+            [Chunk(text="hello", start_index=0, end_index=5, char_count=5)]
+        )
+        assert isinstance(doc, ChunkedDocumentLike)
+
+    def test_custom_class_satisfies_chunked_document_like(self):
         class MyChunk:
             text = "chunk1"
             start_index = 0
@@ -225,8 +229,20 @@ class TestDocumentProtocols:
             content = "chunk1 chunk2"
             chunks = [MyChunk()]
 
-        result = Document.from_any(MyDoc())  # type: ignore[arg-type]
-        assert result.chunks is not None
+        assert isinstance(MyDoc(), ChunkedDocumentLike)
+
+    def test_chunked_document_from_any_converts_chunks(self):
+        class MyChunk:
+            text = "chunk1"
+            start_index = 0
+            end_index = 6
+            char_count = 6
+
+        class MyDoc:
+            content = "chunk1 chunk2"
+            chunks = [MyChunk()]
+
+        result = ChunkedDocument.from_any(MyDoc())  # type: ignore[arg-type]
         assert len(result.chunks) == 1
         assert isinstance(result.chunks[0], Chunk)
         assert result.chunks[0].text == "chunk1"
@@ -256,3 +272,17 @@ class TestErrorCases:
 
         with pytest.raises(TypeError, match="Cannot convert"):
             Document.from_any(Invalid())  # type: ignore[arg-type]
+
+    def test_document_from_any_rejects_chunked_input(self):
+        class MyChunk:
+            text = "hello"
+            start_index = 0
+            end_index = 5
+            char_count = 5
+
+        class ChunkedDoc:
+            content = "hello world"
+            chunks = [MyChunk()]
+
+        with pytest.raises(TypeError, match="use ChunkedDocument.from_any"):
+            Document.from_any(ChunkedDoc())  # type: ignore[arg-type]

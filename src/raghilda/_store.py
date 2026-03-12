@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Generic, Literal, Sequence, TypeVar
 
 from .chunk import RetrievedChunk
-from .document import Document, MarkdownDocument
+from .document import Document
+
+TDocument = TypeVar("TDocument", bound=Document, covariant=True)
 
 
 @dataclass(frozen=True)
-class WriteResult:
+class WriteResult(Generic[TDocument]):
     action: Literal["inserted", "replaced", "skipped"]
-    document: MarkdownDocument
-    replaced_document: MarkdownDocument | None = None
+    document: TDocument
+    replaced_document: TDocument | None = None
 
 
 class BaseStore(ABC):
@@ -55,7 +57,7 @@ class BaseStore(ABC):
         document: Document,
         *,
         skip_if_unchanged: bool = True,
-    ) -> WriteResult:
+    ) -> WriteResult[Document]:
         """Upsert a document into the store.
 
         Insert or replace a document in the store.
