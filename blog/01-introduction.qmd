@@ -1,6 +1,7 @@
 ---
 title: "RAG with raghilda"
-guide-section: "Getting Started"
+description: "An introduction to building retrieval-augmented generation systems with raghilda."
+date: "2026-03-13"
 ---
 
 ## What's RAG and why?
