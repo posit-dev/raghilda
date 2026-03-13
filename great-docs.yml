@@ -129,12 +129,6 @@ reference:
 #   toc-depth: 2               # TOC heading depth (default: 2)
 #   toc-title: On this page    # TOC title
 
-sections:
-  - title: Blog
-    dir: blog
-    type: blog
-    navbar_after: Reference
-
 navbar_color: "#333333"
 
 # Jupyter Kernel
