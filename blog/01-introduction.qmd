@@ -119,6 +119,7 @@ First, you **create a store** with an embedding provider. The store is where you
 their vector embeddings will live:
 
 ```{python}
+#| eval: false
 from raghilda.store import DuckDBStore
 from raghilda.embedding import EmbeddingOpenAI
 
@@ -133,6 +134,7 @@ Then you **read** the document and **chunk** it. `read_as_markdown()` converts t
 to Markdown, and `MarkdownChunker` splits it into overlapping chunks at semantic boundaries:
 
 ```{python}
+#| eval: false
 from raghilda.read import read_as_markdown
 from raghilda.chunker import MarkdownChunker
 
@@ -148,6 +150,10 @@ chunked = chunker.chunk(doc)
 print(f"{len(chunked.chunks)} chunks")
 ```
 
+```
+185 chunks
+```
+
 Finally, you **upsert** the chunked document into the store
 and build the search indexes. Embedding is handled by the
 store itself — since the embedding provider is configured at
@@ -155,6 +161,7 @@ creation time, all chunks in a store are guaranteed to use
 consistent embeddings:
 
 ```{python}
+#| eval: false
 store.upsert(chunked)
 store.build_index()
 ```
@@ -171,14 +178,16 @@ for chunk in chunks:
     print("---")
 ```
 
-```{python}
-#| echo: false
-import textwrap
-
-chunks = store.retrieve("Did she move to Brazil?", top_k=2)
-for chunk in chunks:
-    print(textwrap.fill(chunk.text, width=72))
-    print("---")
+```
+Lorentzen"), a member of the Lorentzen family of shipping magnates.
+In the same year, they moved to Brazil, where her husband was an
+industrialist and a main owner of Aracruz Celulose. She lived in
+Brazil until her death 59 years later.
+---
+to Rio de Janeiro, where her husband had substantial business
+holdings. Their residence in Brazil was originally temporary, but
+they
+---
 ```
 
 ::: {.callout-tip}
@@ -200,6 +209,7 @@ Here's an example using
 [chatlas](https://posit-dev.github.io/chatlas/):
 
 ```{python}
+#| eval: false
 from chatlas import ChatOpenAI
 import json
 
@@ -216,21 +226,26 @@ chat = ChatOpenAI(
     "using the search tool. Always search before answering.",
 )
 chat.register_tool(search_ragnhild)
-chat.chat("Which year did she move to Brazil?", echo="text")
+_ = chat.chat("Which year did she move to Brazil?", echo="text")
 ```
+
+Princess Ragnhild moved to Brazil in the same year she got married, 1953. Her marriage and the move to Brazil were connected, as her husband was an industrialist and owner of business holdings in Brazil. They settled in Rio de Janeiro and lived there until her death in 2012.
 
 Compare this with the same question without the search tool:
 
 ```{python}
+#| eval: false
 chat_no_rag = ChatOpenAI(
     model="gpt-4.1-mini",
     system_prompt="Answer questions about Princess Ragnhild.",
 )
-chat_no_rag.chat(
+_ = chat_no_rag.chat(
     "Which year did she move to Brazil?",
     echo="text",
 )
 ```
+
+Princess Ragnhild moved to Brazil in 1960.
 
 With the search tool, the LLM retrieves the relevant chunks
 and grounds its answer in the actual document. Without it,
