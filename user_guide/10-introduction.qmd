@@ -85,8 +85,8 @@ without fighting the framework.
 A retrieval system has two phases: **ingestion** — turning
 your documents into a searchable store — and **retrieval** —
 finding the right chunks given a query. raghilda exposes both
-the high-level `ingest()` / `retrieve()` workflow and the
-individual steps underneath.
+both phases clearly, with each step exposed as an
+individual call you can customize or replace.
 
 ```{mermaid}
 %%| label: fig-raghilda-pipeline
@@ -143,18 +143,18 @@ doc = read_as_markdown(
 # In practice, chunk sizes of ~1600 characters are a good
 # compromise on size versus retrieval quality.
 chunker = MarkdownChunker(chunk_size=200, target_overlap=0.25)
-chunked = chunker.chunk_document(doc)
+chunked = chunker.chunk(doc)
 print(f"{len(chunked.chunks)} chunks")
 ```
 
-Finally, you **insert** the chunked document into the store
+Finally, you **upsert** the chunked document into the store
 and build the search indexes. Embedding is handled by the
 store itself — since the embedding provider is configured at
 creation time, all chunks in a store are guaranteed to use
 consistent embeddings:
 
 ```{python}
-store.insert(chunked)
+store.upsert(chunked)
 store.build_index()
 ```
 
@@ -182,8 +182,8 @@ for chunk in chunks:
 
 ::: {.callout-tip}
 In practice, you'll usually work with many documents at
-once. The `ingest()` method handles this — it reads, chunks,
-embeds, and inserts a list of URLs or file paths in parallel.
+once — just loop over your URLs or file paths and call
+`upsert()` for each one.
 See the [Getting Started](00-getting-started.qmd) guide for
 a full walkthrough.
 :::
@@ -239,8 +239,7 @@ hallucinate or give a vague response.
 ## Learn more
 
 - [Getting Started](00-getting-started.qmd) — full
-  walkthrough using `ingest()` to build a store from a
-  documentation site
+  walkthrough building a store from a documentation site
 - [Examples](https://github.com/dfalbel/raghilda/tree/main/examples)
   — complete scripts showing RAG workflows with chatlas,
   ChromaDB, and more
