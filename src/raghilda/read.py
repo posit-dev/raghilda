@@ -30,22 +30,22 @@ def read_as_markdown(
     ----------
     uri
         The URI of the markdown file to read. Supported schemes are:
+
         - path/to/file.md
         - http://example.com/file.md
         - https://example.com/file.md
 
-    Returns
-    -------
-    str
-        The content of the markdown file as a string.
-
     html_extract_selectors
         A list of CSS selectors to extract specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['main'].
-
     html_zap_selectors
         A list of CSS selectors to remove specific parts of the HTML content
         when the URI points to an HTML page. Defaults to ['nav'].
+
+    Returns
+    -------
+    MarkdownDocument
+        The content of the markdown file as a MarkdownDocument object.
 
     Examples
     --------
