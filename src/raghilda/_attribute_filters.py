@@ -516,3 +516,71 @@ def _sql_column_expression(column: str) -> str:
         escaped = field.replace("'", "''")
         expr = f"struct_extract({expr}, '{escaped}')"
     return expr
+
+
+def compile_filter_to_sql_postgres(
+    attributes_filter: Optional[AttributeFilter],
+    *,
+    allowed_columns: Optional[Iterable[str]] = None,
+) -> Optional[str]:
+    node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
+    if node is None:
+        return None
+    return _emit_sql_postgres(node)
+
+
+def _emit_sql_postgres(node: FilterNode) -> str:
+    if isinstance(node, FilterLogical):
+        joiner = " AND " if node.operator == "and" else " OR "
+        return "(" + joiner.join(_emit_sql_postgres(child) for child in node.children) + ")"
+
+    column = _sql_column_expression_postgres(node.column)
+    if node.operator == "in":
+        values = cast(list[AttributeScalar], node.value)
+        values_sql = ", ".join(_sql_literal_scalar(value) for value in values)
+        return f"{column} IN ({values_sql})"
+    if node.operator == "nin":
+        values = cast(list[AttributeScalar], node.value)
+        values_sql = ", ".join(_sql_literal_scalar(value) for value in values)
+        return f"{column} NOT IN ({values_sql})"
+
+    value = cast(AttributeFilterValue, node.value)
+    if value is None and node.operator == "eq":
+        return f"{column} IS NULL"
+    if value is None and node.operator == "ne":
+        return f"{column} IS NOT NULL"
+
+    op_map = {
+        "eq": "=",
+        "ne": "!=",
+        "gt": ">",
+        "gte": ">=",
+        "lt": "<",
+        "lte": "<=",
+    }
+    assert value is not None
+    return f"{column} {op_map[node.operator]} {_sql_literal_scalar(value)}"
+
+
+def _sql_column_expression_postgres(column: str) -> str:
+    """Build a SQL column expression for PostgreSQL.
+
+    Simple columns use double-quoted identifiers. Nested struct fields
+    (e.g., 'meta.author') use JSONB arrow notation: ``"meta"->>'author'``.
+    For numeric/boolean comparisons on JSONB fields, callers may need
+    explicit casts (handled at a higher level).
+    """
+    parts = column.split(".")
+    if len(parts) == 1:
+        return _quote_identifier(parts[0])
+    # JSONB path: "col"->>'field' (returns text)
+    expr = _quote_identifier(parts[0])
+    for i, field in enumerate(parts[1:]):
+        escaped = field.replace("'", "''")
+        if i < len(parts) - 2:
+            # Intermediate path: use -> to get JSONB
+            expr = f"{expr}->'{escaped}'"
+        else:
+            # Final path: use ->> to get text
+            expr = f"{expr}->>'{escaped}'"
+    return expr
