@@ -302,7 +302,323 @@ class PostgresStore(BaseStore):
         *,
         skip_if_unchanged: bool = True,
     ) -> WriteResult[ChunkedMarkdownDocument]:
-        raise NotImplementedError("upsert not yet implemented for PostgresStore")
+        """Upsert a document into the store."""
+        if not isinstance(document, ChunkedMarkdownDocument):
+            raise NotImplementedError(
+                f"Upsert not implemented for type {type(document)}"
+            )
+        if not isinstance(document.origin, str) or not document.origin:
+            raise ValueError("document.origin must be a non-empty string for upsert().")
+        if len(document.chunks) == 0:
+            raise ValueError("Document must contain at least one chunk.")
+        for chunk in document.chunks:
+            _validate_chunk_against_document(
+                document_origin=document.origin,
+                content=document.content,
+                chunk=chunk,
+            )
+
+        with self._db_lock:
+            existing_rows = self._get_existing_documents_by_origin(document.origin)
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    origin=existing["origin"],
+                )
+            ):
+                current_document = self._load_document_snapshot(
+                    origin=existing["origin"],
+                    text=existing["text"],
+                )
+                return WriteResult(
+                    action="skipped",
+                    document=current_document,
+                )
+
+        doc_row, chunk_rows = self._prepare_chunked_document_rows(document)
+
+        with self._db_lock:
+            existing_rows = self._get_existing_documents_by_origin(document.origin)
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    origin=existing["origin"],
+                )
+            ):
+                current_document = self._load_document_snapshot(
+                    origin=existing["origin"],
+                    text=existing["text"],
+                )
+                return WriteResult(
+                    action="skipped",
+                    document=current_document,
+                )
+
+            action = "inserted"
+            replaced_document: ChunkedMarkdownDocument | None = None
+            if existing is not None:
+                action = "replaced"
+                replaced_document = self._load_document_snapshot(
+                    origin=existing["origin"],
+                    text=existing["text"],
+                )
+
+            try:
+                if action == "replaced":
+                    self.con.execute(
+                        "DELETE FROM embeddings WHERE origin = %s",
+                        [doc_row["origin"]],
+                    )
+                    self.con.execute(
+                        "UPDATE documents SET text = %s WHERE origin = %s",
+                        [doc_row["text"], doc_row["origin"]],
+                    )
+                else:
+                    _postgres_insert(self.con, "documents", [doc_row])
+                _postgres_insert(self.con, "embeddings", chunk_rows)
+                self.con.commit()
+            except Exception:
+                try:
+                    self.con.rollback()
+                except Exception:
+                    pass
+                raise
+
+            current_document = self._load_document_snapshot(
+                origin=str(doc_row["origin"]),
+                text=document.content,
+            )
+            return WriteResult(
+                action=action,
+                document=current_document,
+                replaced_document=replaced_document,
+            )
+
+    def _prepare_chunked_document_rows(
+        self,
+        chunked_doc: ChunkedMarkdownDocument,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        doc = {
+            "origin": chunked_doc.origin,
+            "text": chunked_doc.content,
+        }
+        chunks = [asdict(chunk) for chunk in chunked_doc.chunks]
+
+        resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
+        for chunk in chunked_doc.chunks:
+            chunk_attributes = getattr(chunk, "attributes", None)
+            resolved_chunk_attributes.append(
+                merge_attribute_values(
+                    attributes_spec=self.metadata.attributes_spec,
+                    sources=[chunked_doc.attributes, chunk_attributes],
+                )
+            )
+
+        embedded_chunks = None
+        chunk_texts = [chunk.text for chunk in chunked_doc.chunks]
+        if self.metadata.embed is not None:
+            embedded_chunks = self.metadata.embed.embed(
+                chunk_texts, EmbedInputType.DOCUMENT
+            )
+            if len(embedded_chunks) != len(chunks):
+                raise ValueError(
+                    "Embedding provider must return exactly one embedding per chunk "
+                    f"(got {len(embedded_chunks)} embeddings for {len(chunks)} chunks)"
+                )
+
+        chunk_rows: list[dict[str, Any]] = []
+        for index, chunk_data in enumerate(chunks):
+            row = dict(chunk_data)
+
+            row.pop("attributes", None)
+            row.pop("text", None)
+            row.pop("id", None)
+            row.pop("origin", None)
+            row.pop("chunk_ids", None)
+
+            if embedded_chunks is not None:
+                # pgvector expects a string like '[1.0,2.0,3.0]'
+                row["embedding"] = (
+                    "[" + ",".join(str(x) for x in embedded_chunks[index]) + "]"
+                )
+            else:
+                row.pop("embedding", None)
+
+            for column in self.metadata.attributes_schema:
+                value = resolved_chunk_attributes[index][column]
+                # JSONB columns need psycopg Json wrapper
+                from ._attributes import AttributeStructType
+                attr_type = self.metadata.attributes_schema[column]
+                if isinstance(attr_type, AttributeStructType) and value is not None:
+                    value = psycopg.types.json.Jsonb(value)
+                row[column] = value
+
+            row["origin"] = doc["origin"]
+            chunk_rows.append(row)
+
+        return doc, chunk_rows
+
+    def _get_existing_documents_by_origin(self, origin: str) -> list[dict[str, str]]:
+        rows = self.con.execute(
+            "SELECT origin, text FROM documents WHERE origin = %s ORDER BY origin",
+            [origin],
+        ).fetchall()
+        return [
+            {
+                "origin": row[0],
+                "text": row[1],
+            }
+            for row in rows
+        ]
+
+    def _chunk_layout_matches_existing(
+        self, *, chunked_doc: ChunkedMarkdownDocument, origin: str
+    ) -> bool:
+        incoming = self._chunk_layout_records(chunked_doc)
+        existing = self._chunk_layout_records_from_store(origin)
+        return incoming == existing
+
+    def _chunk_layout_records(
+        self, chunked_doc: ChunkedMarkdownDocument
+    ) -> list[tuple[Any, ...]]:
+        records: list[tuple[Any, ...]] = []
+        attributes_columns = list(self.metadata.attributes_schema)
+        for chunk in chunked_doc.chunks:
+            resolved = merge_attribute_values(
+                attributes_spec=self.metadata.attributes_spec,
+                sources=[chunked_doc.attributes, chunk.attributes],
+            )
+            row: list[Any] = [
+                chunk.start_index,
+                chunk.end_index,
+                chunk.char_count,
+                chunk.context,
+            ]
+            row.extend(
+                self._coerce_chunk_layout_attribute_value(col, resolved[col])
+                for col in attributes_columns
+            )
+            records.append(tuple(row))
+        records.sort(key=lambda item: (item[0], item[1]))
+        return records
+
+    def _chunk_layout_records_from_store(
+        self, origin: str
+    ) -> list[tuple[Any, ...]]:
+        attributes_columns = list(self.metadata.attributes_schema)
+        attribute_select = ", ".join(
+            _quote_identifier(col) for col in attributes_columns
+        )
+        if attribute_select:
+            attribute_select = ", " + attribute_select
+        cur = self.con.execute(
+            f"""
+            SELECT
+                e.start_index,
+                e.end_index,
+                e.char_count,
+                e.context
+                {attribute_select}
+            FROM embeddings e
+            WHERE e.origin = %s
+            ORDER BY e.start_index, e.end_index
+            """,
+            [origin],
+        )
+        rows = cur.fetchall()
+        records: list[tuple[Any, ...]] = []
+        for row in rows:
+            start_index = int(row[0])
+            end_index = int(row[1])
+            char_count = int(row[2])
+            context = row[3]
+            attribute_values = [
+                self._coerce_chunk_layout_attribute_value(col, row[4 + idx])
+                for idx, col in enumerate(attributes_columns)
+            ]
+            records.append(
+                (start_index, end_index, char_count, context, *attribute_values)
+            )
+        return records
+
+    def _coerce_chunk_layout_attribute_value(self, column: str, value: Any) -> Any:
+        return coerce_attribute_value_for_output(
+            column,
+            value,
+            self.metadata.attributes_schema[column],
+        )
+
+    def _load_document_snapshot(
+        self, *, origin: str, text: str
+    ) -> ChunkedMarkdownDocument:
+        attribute_columns = list(self.metadata.attributes_schema)
+        attribute_select = ", ".join(
+            _quote_identifier(col) for col in attribute_columns
+        )
+        if attribute_select:
+            attribute_select = ", " + attribute_select
+        cur = self.con.execute(
+            f"""
+            SELECT
+                start_index,
+                end_index,
+                char_count,
+                context
+                {attribute_select}
+            FROM embeddings
+            WHERE origin = %s
+            ORDER BY start_index, end_index
+            """,
+            [origin],
+        )
+        rows = cur.fetchall()
+        if cur.description is None:
+            raise RuntimeError("Failed to load replaced document snapshot.")
+        columns = [desc[0] for desc in cur.description]
+
+        chunks: list[Chunk] = []
+        document_attributes: dict[str, Any] = {}
+        for row in rows:
+            row_dict = dict(zip(columns, row))
+            attributes = {
+                key: row_dict[key] for key in attribute_columns if key in row_dict
+            }
+            for key, value in attributes.items():
+                if key not in document_attributes or document_attributes[key] is None:
+                    document_attributes[key] = value
+            start_index = int(row_dict["start_index"])
+            end_index = int(row_dict["end_index"])
+            chunk_text = _slice_chunk_text(
+                text,
+                start_index=start_index,
+                end_index=end_index,
+            )
+            chunks.append(
+                MarkdownChunk(
+                    start_index=start_index,
+                    end_index=end_index,
+                    text=chunk_text,
+                    char_count=int(row_dict["char_count"]),
+                    context=row_dict.get("context"),
+                    origin=origin,
+                    attributes=attributes or None,
+                )
+            )
+
+        return ChunkedMarkdownDocument(
+            origin=origin,
+            content=text,
+            attributes=document_attributes or None,
+            chunks=chunks,
+        )
 
     def retrieve(
         self,
@@ -315,7 +631,19 @@ class PostgresStore(BaseStore):
         raise NotImplementedError("retrieve not yet implemented for PostgresStore")
 
     def size(self) -> int:
-        raise NotImplementedError("size not yet implemented for PostgresStore")
+        with self._db_lock:
+            result = self.con.execute(
+                "SELECT COUNT(DISTINCT origin) FROM documents"
+            ).fetchone()
+            if result is None:
+                raise RuntimeError("Failed to get size of the store")
+            return result[0]
+
+    def _filterable_columns(self) -> set[str]:
+        filterable_attribute_columns = filterable_attribute_paths(
+            self.metadata.attributes_schema
+        )
+        return FILTERABLE_BASE_COLUMNS | filterable_attribute_columns
 
 
 # --- Helper functions ---
