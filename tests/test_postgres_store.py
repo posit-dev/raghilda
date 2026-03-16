@@ -1,3 +1,14 @@
+# These tests require a running PostgreSQL instance with pgvector.
+# Start one locally with:
+#
+#   docker run -d --name raghilda-postgres \
+#     -e POSTGRES_USER=raghilda \
+#     -e POSTGRES_PASSWORD=raghilda \
+#     -e POSTGRES_DB=raghilda_test \
+#     -p 5432:5432 pgvector/pgvector:pg17
+#
+# Tests are automatically skipped when PostgreSQL is not available.
+
 import pytest
 from tests import helpers as test_helpers
 from raghilda.store import PostgresStore
