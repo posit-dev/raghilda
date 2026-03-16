@@ -10,7 +10,6 @@ import duckdb
 from dataclasses import dataclass, asdict
 import logging
 from pathlib import Path
-from enum import StrEnum
 from ._deoverlap import deoverlap_chunks
 from ._attributes import (
     AttributeFilter,
@@ -31,95 +30,31 @@ from ._store_metadata import (
     EmbeddedAttributesStoreMetadata,
     attributes_schema_from_spec,
 )
+from ._store_helpers import (
+    VSSMethod,
+    IndexType,
+    StoreMarkdownChunk,
+    RetrievedStoreMarkdownChunk,
+    RESERVED_SYSTEM_COLUMNS,
+    FILTERABLE_BASE_COLUMNS,
+    quote_identifier as _quote_identifier,
+    attributes_select_clause as _attributes_select_clause,
+    coerce_index_type as _coerce_index_type,
+    slice_chunk_text as _slice_chunk_text,
+    validate_chunk_against_document as _validate_chunk_against_document,
+    validate_chunk_text_matches_document_content as _validate_chunk_text_matches_document_content,
+    validate_chunk_origin_matches_document_origin as _validate_chunk_origin_matches_document_origin,
+)
 
 
 logger = logging.getLogger(__name__)
 
-_RESERVED_SYSTEM_COLUMNS = {
-    "chunk_id",
-    "context",
-    "embedding",
-    "origin",
-    "text",
-    "start_index",
-    "end_index",
-    "char_count",
-    "metric_name",
-    "metric_value",
-}
+_RESERVED_SYSTEM_COLUMNS = RESERVED_SYSTEM_COLUMNS
+_FILTERABLE_BASE_COLUMNS = FILTERABLE_BASE_COLUMNS
 
-_FILTERABLE_BASE_COLUMNS = {
-    "chunk_id",
-    "origin",
-    "start_index",
-    "end_index",
-    "char_count",
-    "context",
-}
-
-
-@dataclass(repr=False)
-class DuckDBMarkdownChunk(MarkdownChunk):
-    """MarkdownChunk with DuckDB-specific fields for database storage"""
-
-    def __init__(
-        self,
-        text: str,
-        start_index: int,
-        end_index: int,
-        context=None,
-        char_count=None,
-        origin=None,
-        attributes=None,
-    ):
-        if char_count is None:
-            char_count = len(text)
-
-        super().__init__(
-            text=text,
-            start_index=start_index,
-            end_index=end_index,
-            char_count=char_count,
-            context=context,
-            origin=origin,
-            attributes=attributes,
-        )
-
-
-@dataclass(repr=False)
-class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
-    """DuckDBMarkdownChunk with retrieval metrics"""
-
-    def __init__(
-        self,
-        text: str,
-        start_index: int,
-        end_index: int,
-        context=None,
-        char_count=None,
-        origin=None,
-        metrics=None,
-        chunk_ids=None,
-        attributes=None,
-    ):
-        # Initialize DuckDBMarkdownChunk
-        super().__init__(
-            text=text,
-            start_index=start_index,
-            end_index=end_index,
-            context=context,
-            char_count=char_count,
-            origin=origin,
-            attributes=attributes,
-        )
-
-        # Initialize metrics
-        if metrics is None:
-            metrics = []
-        self.metrics = metrics
-        if chunk_ids is None:
-            chunk_ids = []
-        self.chunk_ids = chunk_ids
+# Backward-compatible aliases
+DuckDBMarkdownChunk = StoreMarkdownChunk
+RetrievedDuckDBMarkdownChunk = RetrievedStoreMarkdownChunk
 
 
 @dataclass
@@ -136,17 +71,6 @@ class DuckDBStoreMetadata(EmbeddedAttributesStoreMetadata):
     @property
     def attributes_schema(self) -> dict[str, AttributeType]:
         return attributes_schema_from_spec(self.attributes)
-
-
-class VSSMethod(StrEnum):
-    COSINE_DISTANCE = "cosine_distance"
-    EUCLIDEAN_DISTANCE = "euclidean_distance"
-    NEGATIVE_INNER_PRODUCT = "negative_inner_product"
-
-
-class IndexType(StrEnum):
-    BM25 = "bm25"
-    HNSW = "hnsw"
 
 
 class DuckDBStore(BaseStore):
@@ -1147,15 +1071,6 @@ class DuckDBStore(BaseStore):
         return _FILTERABLE_BASE_COLUMNS | filterable_attribute_columns
 
 
-def _attributes_select_clause(
-    alias: str, attributes_schema: Mapping[str, AttributeType]
-) -> str:
-    if not attributes_schema:
-        return ""
-    parts = [f"{alias}.{_quote_identifier(column)}," for column in attributes_schema]
-    return "\n            " + "\n            ".join(parts) + "\n            "
-
-
 def _duckdb_attribute_column_defs(
     *,
     attributes_schema: Mapping[str, AttributeType],
@@ -1286,14 +1201,6 @@ def _duckdb_append(
     )
 
 
-def _quote_identifier(identifier: str) -> str:
-    """
-    Quotes an identifier for use in SQL queries.
-    """
-    identifier = identifier.replace('"', '""')
-    return f'"{identifier}"'
-
-
 def _vss_method_info(method: VSSMethod) -> tuple[str, str]:
     """
     Returns the duckdb function name and ordering direction given a VSSMethod.
@@ -1308,66 +1215,3 @@ def _vss_method_info(method: VSSMethod) -> tuple[str, str]:
         raise ValueError(f"Unknown method: {method}")
 
     return method_mapping[method]
-
-
-def _coerce_index_type(value: IndexType | str) -> IndexType:
-    if isinstance(value, IndexType):
-        return value
-    try:
-        return IndexType(value)
-    except ValueError as exc:
-        allowed = ", ".join(x.value for x in IndexType)
-        raise ValueError(
-            f"Unknown index type '{value}'. Allowed values: {allowed}"
-        ) from exc
-
-
-def _slice_chunk_text(content: str, *, start_index: int, end_index: int) -> str:
-    if start_index < 0 or end_index < start_index or end_index > len(content):
-        raise ValueError(
-            "Chunk indices must satisfy 0 <= start_index <= end_index <= len(content). "
-            f"Got start_index={start_index}, end_index={end_index}, "
-            f"len(content)={len(content)}."
-        )
-    return content[start_index:end_index]
-
-
-def _validate_chunk_against_document(
-    *, document_origin: str, content: str, chunk: Chunk
-) -> None:
-    _validate_chunk_origin_matches_document_origin(
-        document_origin=document_origin,
-        chunk=chunk,
-    )
-    _validate_chunk_text_matches_document_content(
-        content=content,
-        chunk=chunk,
-    )
-
-
-def _validate_chunk_text_matches_document_content(
-    *, content: str, chunk: Chunk
-) -> None:
-    expected_text = _slice_chunk_text(
-        content,
-        start_index=chunk.start_index,
-        end_index=chunk.end_index,
-    )
-    if chunk.text != expected_text:
-        raise ValueError(
-            "Chunk text must match document.content[start_index:end_index]. "
-            f"Got chunk.text={chunk.text!r}, expected {expected_text!r} "
-            f"for start_index={chunk.start_index}, end_index={chunk.end_index}."
-        )
-
-
-def _validate_chunk_origin_matches_document_origin(
-    *, document_origin: str, chunk: Chunk
-) -> None:
-    if chunk.origin is None:
-        return
-    if chunk.origin != document_origin:
-        raise ValueError(
-            "Chunk origin must be None or match document.origin. "
-            f"Got chunk.origin={chunk.origin!r}, document.origin={document_origin!r}."
-        )
