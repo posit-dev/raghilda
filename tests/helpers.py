@@ -44,3 +44,17 @@ def skip_if_no_cohere_chroma() -> None:
         env_vars=("CO_API_KEY", "COHERE_API_KEY", "CHROMA_COHERE_API_KEY"),
         host="api.cohere.com",
     )
+
+
+def skip_if_no_postgres() -> None:
+    """Skip test if PostgreSQL is not available (start with docker compose up)."""
+    try:
+        import psycopg
+
+        conn = psycopg.connect(
+            "postgresql://raghilda:raghilda@localhost:5432/raghilda_test",
+            connect_timeout=3,
+        )
+        conn.close()
+    except Exception:
+        pytest.skip("PostgreSQL not available (start with: docker compose up -d)")
