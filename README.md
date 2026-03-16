@@ -13,7 +13,7 @@ pip install raghilda
 Or install from GitHub:
 
 ```bash
-pip install git+https://github.com/dfalbel/raghilda.git
+pip install git+https://github.com/posit-dev/raghilda.git
 ```
 
 ## Key Steps
@@ -58,6 +58,7 @@ for chunk in chunks:
 
 ## Links
 
-- [Documentation](https://dfalbel.github.io/raghilda/)
-- [Source Code](https://github.com/dfalbel/raghilda)
-- [Report Issues](https://github.com/dfalbel/raghilda/issues)
+- [Documentation](https://posit-dev.github.io/raghilda/)
+- [Source Code](https://github.com/posit-dev/raghilda)
+- [PyPI](https://pypi.org/project/raghilda/)
+- [Report Issues](https://github.com/posit-dev/raghilda/issues)

@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/dfalbel/raghilda"
+Repository = "https://github.com/posit-dev/raghilda"
+PyPI = "https://pypi.org/project/raghilda/"
 
 [build-system]
 requires = ["uv_build>=0.8.0,<0.9"]
