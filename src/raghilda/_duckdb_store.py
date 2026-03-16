@@ -3,7 +3,7 @@ import json
 import os
 import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
-from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
+from .chunk import Chunk, MarkdownChunk, Metric
 from .document import ChunkedMarkdownDocument, Document
 from typing import Any, Mapping, Optional, Sequence
 import duckdb
@@ -42,8 +42,6 @@ from ._store_helpers import (
     coerce_index_type as _coerce_index_type,
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
-    validate_chunk_text_matches_document_content as _validate_chunk_text_matches_document_content,
-    validate_chunk_origin_matches_document_origin as _validate_chunk_origin_matches_document_origin,
 )
 
 

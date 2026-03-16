@@ -3,8 +3,6 @@ from tests import helpers as test_helpers
 from raghilda.store import PostgresStore
 from raghilda.document import MarkdownDocument
 from raghilda.chunk import MarkdownChunk, RetrievedChunk
-from raghilda._attributes import AttributeFloatVectorType
-from raghilda._store_helpers import RetrievedStoreMarkdownChunk, VSSMethod
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
 
@@ -82,9 +80,7 @@ class TestPostgresStore:
 
     @pytest.fixture
     def store_with_docs(self, store):
-        doc = MarkdownDocument(
-            origin="test", content="This is a test document."
-        )
+        doc = MarkdownDocument(origin="test", content="This is a test document.")
         from raghilda.document import ChunkedMarkdownDocument
 
         chunked = ChunkedMarkdownDocument(
@@ -260,11 +256,16 @@ class TestPostgresStore:
             origin="doc1",
             content="Hello",
             chunks=[
-                _chunk("Hello", 0, 5, attributes={
-                    "tenant": "docs",
-                    "priority": 1,
-                    "is_public": True,
-                })
+                _chunk(
+                    "Hello",
+                    0,
+                    5,
+                    attributes={
+                        "tenant": "docs",
+                        "priority": 1,
+                        "is_public": True,
+                    },
+                )
             ],
         )
         result = s.upsert(doc)
@@ -294,23 +295,17 @@ class TestPostgresStore:
         doc1 = ChunkedMarkdownDocument(
             origin="doc1",
             content="Hello",
-            chunks=[
-                _chunk("Hello", 0, 5, attributes={"tenant": "a"})
-            ],
+            chunks=[_chunk("Hello", 0, 5, attributes={"tenant": "a"})],
         )
         doc2 = ChunkedMarkdownDocument(
             origin="doc2",
             content="World",
-            chunks=[
-                _chunk("World", 0, 5, attributes={"tenant": "b"})
-            ],
+            chunks=[_chunk("World", 0, 5, attributes={"tenant": "b"})],
         )
         s.upsert(doc1)
         s.upsert(doc2)
 
-        chunks = s.retrieve_vss(
-            [1.0], top_k=10, attributes_filter="tenant = 'a'"
-        )
+        chunks = s.retrieve_vss([1.0], top_k=10, attributes_filter="tenant = 'a'")
         assert len(chunks) == 1
         assert chunks[0].origin == "doc1"
 

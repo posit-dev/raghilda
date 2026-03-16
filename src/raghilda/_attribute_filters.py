@@ -532,7 +532,11 @@ def compile_filter_to_sql_postgres(
 def _emit_sql_postgres(node: FilterNode) -> str:
     if isinstance(node, FilterLogical):
         joiner = " AND " if node.operator == "and" else " OR "
-        return "(" + joiner.join(_emit_sql_postgres(child) for child in node.children) + ")"
+        return (
+            "("
+            + joiner.join(_emit_sql_postgres(child) for child in node.children)
+            + ")"
+        )
 
     column = _sql_column_expression_postgres(node.column)
     if node.operator == "in":

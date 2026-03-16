@@ -4,7 +4,7 @@ from ._store import BaseStore, WriteResult
 import json
 import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
-from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
+from .chunk import Chunk, MarkdownChunk, Metric
 from .document import ChunkedMarkdownDocument, Document
 from typing import Any, Mapping, Optional, Sequence
 from dataclasses import dataclass, asdict
@@ -43,7 +43,6 @@ from ._store_helpers import (
 )
 
 import psycopg
-from psycopg.rows import tuple_row
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +126,7 @@ class PostgresStore(BaseStore):
             if row is not None and not overwrite:
                 raise ValueError(f"Database already exists: {dbname}")
             if row is None:
-                admin_con.execute(
-                    f"CREATE DATABASE {_quote_identifier(dbname)}"
-                )
+                admin_con.execute(f"CREATE DATABASE {_quote_identifier(dbname)}")
 
         # Now connect to the target database
         con = psycopg.connect(connection_string, autocommit=False)
@@ -172,9 +169,7 @@ class PostgresStore(BaseStore):
             tail_columns.append(embedding_column_sql)
         tail_columns_sql = ""
         if tail_columns:
-            tail_columns_sql = (
-                ",\n            " + ",\n            ".join(tail_columns)
-            )
+            tail_columns_sql = ",\n            " + ",\n            ".join(tail_columns)
 
         con.execute(
             f"""
@@ -456,6 +451,7 @@ class PostgresStore(BaseStore):
                 value = resolved_chunk_attributes[index][column]
                 # JSONB columns need psycopg Json wrapper
                 from ._attributes import AttributeStructType
+
                 attr_type = self.metadata.attributes_schema[column]
                 if isinstance(attr_type, AttributeStructType) and value is not None:
                     value = psycopg.types.json.Jsonb(value)
@@ -514,9 +510,7 @@ class PostgresStore(BaseStore):
         records.sort(key=lambda item: (item[0], item[1]))
         return records
 
-    def _chunk_layout_records_from_store(
-        self, origin: str
-    ) -> list[tuple[Any, ...]]:
+    def _chunk_layout_records_from_store(self, origin: str) -> list[tuple[Any, ...]]:
         attributes_columns = list(self.metadata.attributes_schema)
         attribute_select = ", ".join(
             _quote_identifier(col) for col in attributes_columns
@@ -700,8 +694,7 @@ class PostgresStore(BaseStore):
         query_vector = "[" + ",".join(str(x) for x in query) + "]"
 
         text_slice_sql = (
-            "substring(doc.text FROM e.start_index + 1 "
-            "FOR e.end_index - e.start_index)"
+            "substring(doc.text FROM e.start_index + 1 FOR e.end_index - e.start_index)"
         )
 
         if compiled_filter is None:
@@ -748,9 +741,7 @@ class PostgresStore(BaseStore):
 
             columns = [desc[0] for desc in cur.description]
 
-        return _rows_to_retrieved_chunks(
-            rows, columns, self.metadata.attributes_schema
-        )
+        return _rows_to_retrieved_chunks(rows, columns, self.metadata.attributes_schema)
 
     def retrieve_fts(
         self,
@@ -770,8 +761,7 @@ class PostgresStore(BaseStore):
             alias="e", attributes_schema=self.metadata.attributes_schema
         )
         text_slice_sql = (
-            "substring(doc.text FROM e.start_index + 1 "
-            "FOR e.end_index - e.start_index)"
+            "substring(doc.text FROM e.start_index + 1 FOR e.end_index - e.start_index)"
         )
 
         sql = f"""
@@ -810,9 +800,7 @@ class PostgresStore(BaseStore):
 
             columns = [desc[0] for desc in cur.description]
 
-        return _rows_to_retrieved_chunks(
-            rows, columns, self.metadata.attributes_schema
-        )
+        return _rows_to_retrieved_chunks(rows, columns, self.metadata.attributes_schema)
 
     def build_index(
         self,
@@ -841,15 +829,9 @@ class PostgresStore(BaseStore):
             self.con.commit()
 
         if IndexType.HNSW in index_types:
-            self.con.execute(
-                "DROP INDEX IF EXISTS store_hnsw_cosine_index"
-            )
-            self.con.execute(
-                "DROP INDEX IF EXISTS store_hnsw_l2_index"
-            )
-            self.con.execute(
-                "DROP INDEX IF EXISTS store_hnsw_ip_index"
-            )
+            self.con.execute("DROP INDEX IF EXISTS store_hnsw_cosine_index")
+            self.con.execute("DROP INDEX IF EXISTS store_hnsw_l2_index")
+            self.con.execute("DROP INDEX IF EXISTS store_hnsw_ip_index")
             self.con.execute(
                 "CREATE INDEX store_hnsw_cosine_index "
                 "ON embeddings USING hnsw (embedding vector_cosine_ops)"
@@ -939,10 +921,7 @@ def _postgres_insert_embeddings(
             "to_tsvector('english', %s)" if c == "search_vector" else "%s"
             for c in columns
         )
-        values = tuple(
-            search_text if c == "search_vector" else row[c]
-            for c in columns
-        )
+        values = tuple(search_text if c == "search_vector" else row[c] for c in columns)
         con.execute(
             f"INSERT INTO embeddings ({column_list}) VALUES ({placeholders})",
             values,

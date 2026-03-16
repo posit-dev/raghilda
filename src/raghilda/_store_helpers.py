@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Mapping
 
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk
 from ._attributes import AttributeType
@@ -157,9 +157,7 @@ def validate_chunk_against_document(
     )
 
 
-def validate_chunk_text_matches_document_content(
-    *, content: str, chunk: Chunk
-) -> None:
+def validate_chunk_text_matches_document_content(*, content: str, chunk: Chunk) -> None:
     expected_text = slice_chunk_text(
         content,
         start_index=chunk.start_index,
@@ -183,69 +181,3 @@ def validate_chunk_origin_matches_document_origin(
             "Chunk origin must be None or match document.origin. "
             f"Got chunk.origin={chunk.origin!r}, document.origin={document_origin!r}."
         )
-
-
-def prepare_chunked_document_rows(
-    chunked_doc: Any,
-    *,
-    metadata: Any,
-    embed_input_type: Any,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Prepare document and chunk rows for insertion.
-
-    Shared between DuckDB and PostgreSQL backends.
-    """
-    from dataclasses import asdict
-    from .chunk import Chunk
-    from .document import ChunkedMarkdownDocument
-    from .embedding import EmbedInputType
-    from ._attributes import merge_attribute_values, AttributeValue
-
-    doc = {
-        "origin": chunked_doc.origin,
-        "text": chunked_doc.content,
-    }
-    chunks = [asdict(chunk) for chunk in chunked_doc.chunks]
-
-    resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
-    for chunk in chunked_doc.chunks:
-        chunk_attributes = getattr(chunk, "attributes", None)
-        resolved_chunk_attributes.append(
-            merge_attribute_values(
-                attributes_spec=metadata.attributes_spec,
-                sources=[chunked_doc.attributes, chunk_attributes],
-            )
-        )
-
-    embedded_chunks = None
-    chunk_texts = [chunk.text for chunk in chunked_doc.chunks]
-    if metadata.embed is not None:
-        embedded_chunks = metadata.embed.embed(chunk_texts, embed_input_type)
-        if len(embedded_chunks) != len(chunks):
-            raise ValueError(
-                "Embedding provider must return exactly one embedding per chunk "
-                f"(got {len(embedded_chunks)} embeddings for {len(chunks)} chunks)"
-            )
-
-    chunk_rows: list[dict[str, Any]] = []
-    for index, chunk_data in enumerate(chunks):
-        row = dict(chunk_data)
-
-        row.pop("attributes", None)
-        row.pop("text", None)
-        row.pop("id", None)
-        row.pop("origin", None)
-        row.pop("chunk_ids", None)
-
-        if embedded_chunks is not None:
-            row["embedding"] = embedded_chunks[index]
-        else:
-            row.pop("embedding", None)
-
-        for column in metadata.attributes_schema:
-            row[column] = resolved_chunk_attributes[index][column]
-
-        row["origin"] = doc["origin"]
-        chunk_rows.append(row)
-
-    return doc, chunk_rows
