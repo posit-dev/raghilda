@@ -383,7 +383,7 @@ class PostgresStore(BaseStore):
                     )
                 else:
                     _postgres_insert(self.con, "documents", [doc_row])
-                _postgres_insert(self.con, "embeddings", chunk_rows)
+                _postgres_insert_embeddings(self.con, chunk_rows)
                 self.con.commit()
             except Exception:
                 try:
@@ -462,6 +462,10 @@ class PostgresStore(BaseStore):
                 row[column] = value
 
             row["origin"] = doc["origin"]
+            # Store chunk text for search_vector computation
+            chunk_text = chunked_doc.chunks[index].text
+            context_text = chunked_doc.chunks[index].context or ""
+            row["_search_text"] = f"{context_text} {chunk_text}".strip()
             chunk_rows.append(row)
 
         return doc, chunk_rows
@@ -628,7 +632,237 @@ class PostgresStore(BaseStore):
         deoverlap: bool = True,
         attributes_filter: Optional[AttributeFilter] = None,
     ) -> Sequence[RetrievedStoreMarkdownChunk]:
-        raise NotImplementedError("retrieve not yet implemented for PostgresStore")
+        """Retrieve the most similar chunks to the given text.
+
+        Combines results from vector similarity search (if embeddings are
+        available) and full-text search, then optionally merges overlapping
+        chunks.
+        """
+        retrieved_chunks: list[RetrievedStoreMarkdownChunk] = []
+        if self.metadata.embed is not None:
+            retrieved_chunks = self.retrieve_vss(
+                text,
+                top_k,
+                attributes_filter=attributes_filter,
+            )
+
+        retrieved_chunks.extend(
+            self.retrieve_fts(
+                text,
+                top_k,
+                attributes_filter=attributes_filter,
+            )
+        )
+
+        # combine chunks by origin and backend chunk id, then merge metrics
+        combined_chunks: dict[
+            tuple[str | None, int | None], RetrievedStoreMarkdownChunk
+        ] = {}
+        for chunk in retrieved_chunks:
+            first_chunk_id = chunk.chunk_ids[0] if chunk.chunk_ids else None
+            key = (chunk.origin, first_chunk_id)
+            if key not in combined_chunks:
+                combined_chunks[key] = chunk
+            else:
+                combined_chunks[key].metrics.extend(chunk.metrics or [])
+
+        chunks = list(combined_chunks.values())
+
+        if deoverlap:
+            chunks = deoverlap_chunks(chunks, key=lambda c: c.origin)
+
+        return chunks
+
+    def retrieve_vss(
+        self,
+        query: str | Sequence[float],
+        top_k: int,
+        *,
+        method: VSSMethod = VSSMethod.COSINE_DISTANCE,
+        attributes_filter: Optional[AttributeFilter] = None,
+    ) -> list[RetrievedStoreMarkdownChunk]:
+        """Retrieve chunks using pgvector similarity search."""
+        if isinstance(query, str):
+            if self.metadata.embed is None:
+                raise ValueError("No embedding function available in the store")
+            query = self.metadata.embed.embed([query], EmbedInputType.QUERY)[0]
+
+        operator, order = _pgvector_method_info(method)
+        allowed_filter_columns = self._filterable_columns()
+        compiled_filter = compile_filter_to_sql_postgres(
+            attributes_filter,
+            allowed_columns=allowed_filter_columns,
+        )
+        where_clause = f"WHERE {compiled_filter}" if compiled_filter else ""
+        attribute_select = _attributes_select_clause(
+            alias="e", attributes_schema=self.metadata.attributes_schema
+        )
+        query_vector = "[" + ",".join(str(x) for x in query) + "]"
+
+        text_slice_sql = (
+            "substring(doc.text FROM e.start_index + 1 "
+            "FOR e.end_index - e.start_index)"
+        )
+
+        if compiled_filter is None:
+            source_sql = f"""
+            (
+                SELECT
+                    *,
+                    embedding {operator} %s::vector AS metric_value
+                FROM embeddings
+                ORDER BY metric_value {order}
+                LIMIT {top_k}
+            ) AS e
+            """
+            metric_value_sql = "e.metric_value"
+        else:
+            source_sql = "embeddings e"
+            metric_value_sql = f"e.embedding {operator} %s::vector"
+
+        sql = f"""
+        SELECT
+            e.chunk_id,
+            doc.origin AS origin,
+            e.start_index,
+            e.end_index,
+            e.char_count,
+            e.context,
+            {attribute_select}
+            {text_slice_sql} AS text,
+            '{method}' AS metric_name,
+            {metric_value_sql} AS metric_value
+        FROM {source_sql}
+        JOIN documents doc ON doc.origin = e.origin
+        {where_clause}
+        ORDER BY metric_value {order}
+        LIMIT {top_k}
+        """
+
+        with self._db_lock:
+            cur = self.con.execute(sql, [query_vector])
+            rows = cur.fetchall()
+
+            if cur.description is None:
+                raise RuntimeError("Failed get result description.")
+
+            columns = [desc[0] for desc in cur.description]
+
+        return _rows_to_retrieved_chunks(
+            rows, columns, self.metadata.attributes_schema
+        )
+
+    def retrieve_fts(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        attributes_filter: Optional[AttributeFilter] = None,
+    ) -> list[RetrievedStoreMarkdownChunk]:
+        """Retrieve chunks using PostgreSQL full-text search (ts_rank)."""
+        allowed_filter_columns = self._filterable_columns()
+        compiled_filter = compile_filter_to_sql_postgres(
+            attributes_filter,
+            allowed_columns=allowed_filter_columns,
+        )
+        where_clause = f"WHERE {compiled_filter}" if compiled_filter else ""
+        attribute_select = _attributes_select_clause(
+            alias="e", attributes_schema=self.metadata.attributes_schema
+        )
+        text_slice_sql = (
+            "substring(doc.text FROM e.start_index + 1 "
+            "FOR e.end_index - e.start_index)"
+        )
+
+        sql = f"""
+        WITH ranked AS (
+            SELECT
+                e.chunk_id,
+                doc.origin AS origin,
+                e.start_index,
+                e.end_index,
+                e.char_count,
+                e.context,
+                {attribute_select}
+                {text_slice_sql} AS text,
+                'fts' AS metric_name,
+                ts_rank(e.search_vector, plainto_tsquery('english', %(query)s)) AS metric_value
+            FROM embeddings e
+            JOIN documents doc ON doc.origin = e.origin
+            {where_clause}
+        )
+        SELECT *
+        FROM ranked
+        WHERE metric_value > 0
+        ORDER BY metric_value DESC
+        LIMIT %(top_k)s
+        """
+
+        with self._db_lock:
+            cur = self.con.execute(
+                sql,
+                {"query": query, "top_k": top_k},
+            )
+            rows = cur.fetchall()
+
+            if cur.description is None:
+                raise RuntimeError("Failed get result description.")
+
+            columns = [desc[0] for desc in cur.description]
+
+        return _rows_to_retrieved_chunks(
+            rows, columns, self.metadata.attributes_schema
+        )
+
+    def build_index(
+        self,
+        type: Optional[IndexType | str | list[IndexType | str]] = None,
+    ):
+        """Build indexes on the embeddings table.
+
+        Parameters
+        ----------
+        type
+            The type of index to build. Can be ``"fts"`` or ``"hnsw"``
+            or a list of those. If None, builds both.
+        """
+        if type is None:
+            index_types = [IndexType.FTS, IndexType.HNSW]
+        elif isinstance(type, (IndexType, str)):
+            index_types = [_coerce_index_type(type)]
+        else:
+            index_types = [_coerce_index_type(item) for item in type]
+
+        if IndexType.FTS in index_types:
+            self.con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embeddings_search_vector "
+                "ON embeddings USING GIN (search_vector)"
+            )
+            self.con.commit()
+
+        if IndexType.HNSW in index_types:
+            self.con.execute(
+                "DROP INDEX IF EXISTS store_hnsw_cosine_index"
+            )
+            self.con.execute(
+                "DROP INDEX IF EXISTS store_hnsw_l2_index"
+            )
+            self.con.execute(
+                "DROP INDEX IF EXISTS store_hnsw_ip_index"
+            )
+            self.con.execute(
+                "CREATE INDEX store_hnsw_cosine_index "
+                "ON embeddings USING hnsw (embedding vector_cosine_ops)"
+            )
+            self.con.execute(
+                "CREATE INDEX store_hnsw_l2_index "
+                "ON embeddings USING hnsw (embedding vector_l2_ops)"
+            )
+            self.con.execute(
+                "CREATE INDEX store_hnsw_ip_index "
+                "ON embeddings USING hnsw (embedding vector_ip_ops)"
+            )
+            self.con.commit()
 
     def size(self) -> int:
         with self._db_lock:
@@ -686,3 +920,67 @@ def _postgres_insert(
         f"INSERT INTO {_quote_identifier(table)} ({column_list}) VALUES ({placeholders})",
         values,
     )
+
+
+def _postgres_insert_embeddings(
+    con: psycopg.Connection,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
+    """Insert embedding rows with computed search_vector from _search_text."""
+    if not rows:
+        return
+    for row in rows:
+        search_text = row.get("_search_text", "")
+        # Build column list excluding _search_text, adding search_vector
+        columns = [c for c in row if c != "_search_text"]
+        columns.append("search_vector")
+        column_list = ", ".join(_quote_identifier(c) for c in columns)
+        placeholders = ", ".join(
+            "to_tsvector('english', %s)" if c == "search_vector" else "%s"
+            for c in columns
+        )
+        values = tuple(
+            search_text if c == "search_vector" else row[c]
+            for c in columns
+        )
+        con.execute(
+            f"INSERT INTO embeddings ({column_list}) VALUES ({placeholders})",
+            values,
+        )
+
+
+def _pgvector_method_info(method: VSSMethod) -> tuple[str, str]:
+    """Returns the pgvector operator and sort order for a VSSMethod."""
+    method_mapping = {
+        VSSMethod.COSINE_DISTANCE: ("<=>", "ASC"),
+        VSSMethod.EUCLIDEAN_DISTANCE: ("<->", "ASC"),
+        VSSMethod.NEGATIVE_INNER_PRODUCT: ("<#>", "ASC"),
+    }
+    if method not in method_mapping:
+        raise ValueError(f"Unknown method: {method}")
+    return method_mapping[method]
+
+
+def _rows_to_retrieved_chunks(
+    rows: list[tuple[Any, ...]],
+    columns: list[str],
+    attributes_schema: Mapping[str, AttributeType],
+) -> list[RetrievedStoreMarkdownChunk]:
+    output: list[RetrievedStoreMarkdownChunk] = []
+    for chunk in rows:
+        chunk_dict = dict(zip(columns, chunk))
+        name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
+        chunk_id = chunk_dict.pop("chunk_id", None)
+        attribute_values: dict[str, AttributeValue] = {}
+        for key, attribute_type in attributes_schema.items():
+            if key in chunk_dict:
+                attribute_values[key] = coerce_attribute_value_for_output(
+                    key,
+                    chunk_dict.pop(key),
+                    attribute_type,
+                )
+        chunk_dict["chunk_ids"] = [] if chunk_id is None else [int(chunk_id)]
+        chunk_dict["metrics"] = [Metric(name, value)]
+        chunk_dict["attributes"] = attribute_values
+        output.append(RetrievedStoreMarkdownChunk(**chunk_dict))
+    return output
