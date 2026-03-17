@@ -35,14 +35,13 @@ from ._store_helpers import (
     RetrievedStoreMarkdownChunk,
     RESERVED_SYSTEM_COLUMNS,
     FILTERABLE_BASE_COLUMNS,
-    quote_identifier as _quote_identifier,
-    attributes_select_clause as _attributes_select_clause,
     coerce_index_type as _coerce_index_type,
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
 )
 
 import psycopg
+from psycopg import sql
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,9 @@ class PostgresStore(BaseStore):
         with psycopg.connect(admin_conn_str, autocommit=True) as admin_con:
             if overwrite:
                 admin_con.execute(
-                    f"DROP DATABASE IF EXISTS {_quote_identifier(dbname)}"
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(
+                        sql.Identifier(dbname)
+                    )
                 )
             # Check if database exists
             row = admin_con.execute(
@@ -126,7 +127,9 @@ class PostgresStore(BaseStore):
             if row is not None and not overwrite:
                 raise ValueError(f"Database already exists: {dbname}")
             if row is None:
-                admin_con.execute(f"CREATE DATABASE {_quote_identifier(dbname)}")
+                admin_con.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname))
+                )
 
         # Now connect to the target database
         con = psycopg.connect(connection_string, autocommit=False)
@@ -149,10 +152,12 @@ class PostgresStore(BaseStore):
         }
 
         if embed is None:
-            embedding_column_sql = None
+            embedding_column_def: Optional[sql.Composable] = None
         else:
             embedding_size = len(embed.embed(["foo"])[0])
-            embedding_column_sql = f"embedding vector({embedding_size})"
+            embedding_column_def = sql.SQL("{} vector({})").format(
+                sql.Identifier("embedding"), sql.Literal(embedding_size)
+            )
 
         embed_config_json = None
         if embed is not None:
@@ -164,15 +169,17 @@ class PostgresStore(BaseStore):
         attribute_column_defs = _postgres_attribute_column_defs(
             attributes_schema=attributes_schema,
         )
-        tail_columns = list(attribute_column_defs)
-        if embedding_column_sql is not None:
-            tail_columns.append(embedding_column_sql)
-        tail_columns_sql = ""
+        tail_columns: list[sql.Composable] = list(attribute_column_defs)
+        if embedding_column_def is not None:
+            tail_columns.append(embedding_column_def)
+        tail_columns_composed = sql.SQL("")
         if tail_columns:
-            tail_columns_sql = ",\n            " + ",\n            ".join(tail_columns)
+            tail_columns_composed = sql.SQL(",\n            ") + sql.SQL(
+                ",\n            "
+            ).join(tail_columns)
 
         con.execute(
-            f"""
+            sql.SQL("""
         CREATE TABLE IF NOT EXISTS metadata (
             name TEXT,
             title TEXT,
@@ -193,7 +200,7 @@ class PostgresStore(BaseStore):
             char_count INTEGER,
             context TEXT,
             search_vector TSVECTOR,
-            PRIMARY KEY (origin, start_index, end_index){tail_columns_sql}
+            PRIMARY KEY (origin, start_index, end_index){}
         );
 
         CREATE OR REPLACE VIEW chunks AS (
@@ -211,7 +218,7 @@ class PostgresStore(BaseStore):
             embeddings e
             ON d.origin = e.origin
         );
-        """
+        """).format(tail_columns_composed)
         )
 
         con.execute(
@@ -512,23 +519,24 @@ class PostgresStore(BaseStore):
 
     def _chunk_layout_records_from_store(self, origin: str) -> list[tuple[Any, ...]]:
         attributes_columns = list(self.metadata.attributes_schema)
-        attribute_select = ", ".join(
-            _quote_identifier(col) for col in attributes_columns
+        attribute_select = sql.SQL(", ").join(
+            sql.Identifier(col) for col in attributes_columns
         )
-        if attribute_select:
-            attribute_select = ", " + attribute_select
+        attribute_select_clause = sql.SQL("")
+        if attributes_columns:
+            attribute_select_clause = sql.SQL(", ") + attribute_select
         cur = self.con.execute(
-            f"""
+            sql.SQL("""
             SELECT
                 e.start_index,
                 e.end_index,
                 e.char_count,
                 e.context
-                {attribute_select}
+                {}
             FROM embeddings e
             WHERE e.origin = %s
             ORDER BY e.start_index, e.end_index
-            """,
+            """).format(attribute_select_clause),
             [origin],
         )
         rows = cur.fetchall()
@@ -558,23 +566,23 @@ class PostgresStore(BaseStore):
         self, *, origin: str, text: str
     ) -> ChunkedMarkdownDocument:
         attribute_columns = list(self.metadata.attributes_schema)
-        attribute_select = ", ".join(
-            _quote_identifier(col) for col in attribute_columns
-        )
-        if attribute_select:
-            attribute_select = ", " + attribute_select
+        attribute_select_clause = sql.SQL("")
+        if attribute_columns:
+            attribute_select_clause = sql.SQL(", ") + sql.SQL(", ").join(
+                sql.Identifier(col) for col in attribute_columns
+            )
         cur = self.con.execute(
-            f"""
+            sql.SQL("""
             SELECT
                 start_index,
                 end_index,
                 char_count,
                 context
-                {attribute_select}
+                {}
             FROM embeddings
             WHERE origin = %s
             ORDER BY start_index, end_index
-            """,
+            """).format(attribute_select_clause),
             [origin],
         )
         rows = cur.fetchall()
@@ -681,24 +689,24 @@ class PostgresStore(BaseStore):
                 raise ValueError("No embedding function available in the store")
             query = self.metadata.embed.embed([query], EmbedInputType.QUERY)[0]
 
-        operator, order = _pgvector_method_info(method)
+        pg_operator, order = _pgvector_method_info(method)
         allowed_filter_columns = self._filterable_columns()
         compiled_filter = compile_filter_to_sql_postgres(
             attributes_filter,
             allowed_columns=allowed_filter_columns,
         )
-        where_clause = f"WHERE {compiled_filter}" if compiled_filter else ""
-        attribute_select = _attributes_select_clause(
+        where_clause = _sql_where_clause(compiled_filter)
+        attribute_select = _sql_attributes_select_clause(
             alias="e", attributes_schema=self.metadata.attributes_schema
         )
         query_vector = "[" + ",".join(str(x) for x in query) + "]"
 
-        text_slice_sql = (
+        text_slice_sql = sql.SQL(
             "substring(doc.text FROM e.start_index + 1 FOR e.end_index - e.start_index)"
         )
 
         if compiled_filter is None:
-            source_sql = f"""
+            source_sql = sql.SQL("""
             (
                 SELECT
                     *,
@@ -707,13 +715,19 @@ class PostgresStore(BaseStore):
                 ORDER BY metric_value {order}
                 LIMIT {top_k}
             ) AS e
-            """
-            metric_value_sql = "e.metric_value"
+            """).format(
+                operator=pg_operator,
+                order=order,
+                top_k=sql.Literal(top_k),
+            )
+            metric_value_sql = sql.SQL("e.metric_value")
         else:
-            source_sql = "embeddings e"
-            metric_value_sql = f"e.embedding {operator} %s::vector"
+            source_sql = sql.SQL("embeddings e")
+            metric_value_sql = sql.SQL("e.embedding ") + pg_operator + sql.SQL(
+                " %s::vector"
+            )
 
-        sql = f"""
+        vss_query = sql.SQL("""
         SELECT
             e.chunk_id,
             doc.origin AS origin,
@@ -723,17 +737,26 @@ class PostgresStore(BaseStore):
             e.context,
             {attribute_select}
             {text_slice_sql} AS text,
-            '{method}' AS metric_name,
+            {method} AS metric_name,
             {metric_value_sql} AS metric_value
         FROM {source_sql}
         JOIN documents doc ON doc.origin = e.origin
         {where_clause}
         ORDER BY metric_value {order}
         LIMIT {top_k}
-        """
+        """).format(
+            attribute_select=attribute_select,
+            text_slice_sql=text_slice_sql,
+            method=sql.Literal(str(method)),
+            metric_value_sql=metric_value_sql,
+            source_sql=source_sql,
+            where_clause=where_clause,
+            order=order,
+            top_k=sql.Literal(top_k),
+        )
 
         with self._db_lock:
-            cur = self.con.execute(sql, [query_vector])
+            cur = self.con.execute(vss_query, [query_vector])
             rows = cur.fetchall()
 
             if cur.description is None:
@@ -756,15 +779,15 @@ class PostgresStore(BaseStore):
             attributes_filter,
             allowed_columns=allowed_filter_columns,
         )
-        where_clause = f"WHERE {compiled_filter}" if compiled_filter else ""
-        attribute_select = _attributes_select_clause(
+        where_clause = _sql_where_clause(compiled_filter)
+        attribute_select = _sql_attributes_select_clause(
             alias="e", attributes_schema=self.metadata.attributes_schema
         )
-        text_slice_sql = (
+        text_slice_sql = sql.SQL(
             "substring(doc.text FROM e.start_index + 1 FOR e.end_index - e.start_index)"
         )
 
-        sql = f"""
+        fts_query = sql.SQL("""
         WITH ranked AS (
             SELECT
                 e.chunk_id,
@@ -786,11 +809,15 @@ class PostgresStore(BaseStore):
         WHERE metric_value > 0
         ORDER BY metric_value DESC
         LIMIT %(top_k)s
-        """
+        """).format(
+            attribute_select=attribute_select,
+            text_slice_sql=text_slice_sql,
+            where_clause=where_clause,
+        )
 
         with self._db_lock:
             cur = self.con.execute(
-                sql,
+                fts_query,
                 {"query": query, "top_k": top_k},
             )
             rows = cur.fetchall()
@@ -865,16 +892,47 @@ class PostgresStore(BaseStore):
 # --- Helper functions ---
 
 
+def _sql_attributes_select_clause(
+    alias: str, attributes_schema: Mapping[str, AttributeType]
+) -> sql.Composable:
+    """Build a sql.Composed fragment for selecting attribute columns."""
+    if not attributes_schema:
+        return sql.SQL("")
+    alias_id = sql.Identifier(alias)
+    parts = [
+        sql.SQL("{}.{},").format(alias_id, sql.Identifier(column))
+        for column in attributes_schema
+    ]
+    return sql.SQL("\n            ").join([sql.SQL("")] + parts) + sql.SQL(
+        "\n            "
+    )
+
+
+def _sql_where_clause(compiled_filter: Optional[str]) -> sql.Composable:
+    """Wrap a compiled filter string in a WHERE clause as sql.Composable.
+
+    The compiled_filter comes from our own filter compiler and contains
+    only safe, internally-generated SQL fragments.
+    """
+    if compiled_filter is None:
+        return sql.SQL("")
+    # compiled_filter is produced by our own _emit_sql_postgres(), not user input
+    return sql.SQL("WHERE ") + sql.SQL(compiled_filter)  # type: ignore[arg-type]
+
+
 def _postgres_attribute_column_defs(
     *,
     attributes_schema: Mapping[str, AttributeType],
-) -> list[str]:
+) -> list[sql.Composable]:
     if not attributes_schema:
         return []
-    lines: list[str] = []
+    lines: list[sql.Composable] = []
     for column, attribute_type in attributes_schema.items():
         sql_type = postgres_sql_type_for_attribute_type(attribute_type)
-        lines.append(f"{_quote_identifier(column)} {sql_type}")
+        lines.append(
+            sql.SQL("{} ").format(sql.Identifier(column))
+            + sql.SQL(sql_type)  # type: ignore[arg-type]
+        )
     return lines
 
 
@@ -894,14 +952,14 @@ def _postgres_insert(
     if not rows:
         return
     columns = list(rows[0])
-    column_list = ", ".join(_quote_identifier(c) for c in columns)
-    placeholders = ", ".join("%s" for _ in columns)
+    column_ids = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
+    placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in columns)
+    query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        sql.Identifier(table), column_ids, placeholders
+    )
     values = [tuple(row[c] for c in columns) for row in rows]
     cur = con.cursor()
-    cur.executemany(
-        f"INSERT INTO {_quote_identifier(table)} ({column_list}) VALUES ({placeholders})",
-        values,
-    )
+    cur.executemany(query, values)
 
 
 def _postgres_insert_embeddings(
@@ -916,24 +974,26 @@ def _postgres_insert_embeddings(
         # Build column list excluding _search_text, adding search_vector
         columns = [c for c in row if c != "_search_text"]
         columns.append("search_vector")
-        column_list = ", ".join(_quote_identifier(c) for c in columns)
-        placeholders = ", ".join(
-            "to_tsvector('english', %s)" if c == "search_vector" else "%s"
+        column_ids = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
+        placeholders = sql.SQL(", ").join(
+            sql.SQL("to_tsvector('english', {})").format(sql.Placeholder())
+            if c == "search_vector"
+            else sql.Placeholder()
             for c in columns
         )
-        values = tuple(search_text if c == "search_vector" else row[c] for c in columns)
-        con.execute(
-            f"INSERT INTO embeddings ({column_list}) VALUES ({placeholders})",
-            values,
+        query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+            sql.Identifier("embeddings"), column_ids, placeholders
         )
+        values = tuple(search_text if c == "search_vector" else row[c] for c in columns)
+        con.execute(query, values)
 
 
-def _pgvector_method_info(method: VSSMethod) -> tuple[str, str]:
-    """Returns the pgvector operator and sort order for a VSSMethod."""
-    method_mapping = {
-        VSSMethod.COSINE_DISTANCE: ("<=>", "ASC"),
-        VSSMethod.EUCLIDEAN_DISTANCE: ("<->", "ASC"),
-        VSSMethod.NEGATIVE_INNER_PRODUCT: ("<#>", "ASC"),
+def _pgvector_method_info(method: VSSMethod) -> tuple[sql.SQL, sql.SQL]:
+    """Returns the pgvector operator and sort order as sql.SQL objects."""
+    method_mapping: dict[VSSMethod, tuple[sql.SQL, sql.SQL]] = {
+        VSSMethod.COSINE_DISTANCE: (sql.SQL("<=>"), sql.SQL("ASC")),
+        VSSMethod.EUCLIDEAN_DISTANCE: (sql.SQL("<->"), sql.SQL("ASC")),
+        VSSMethod.NEGATIVE_INNER_PRODUCT: (sql.SQL("<#>"), sql.SQL("ASC")),
     }
     if method not in method_mapping:
         raise ValueError(f"Unknown method: {method}")
