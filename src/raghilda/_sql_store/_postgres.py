@@ -35,9 +35,9 @@ def _sa_connection_string(connection_string: str) -> str:
     psycopg (v3), we need the ``+psycopg`` driver suffix.
     """
     if connection_string.startswith("postgresql://"):
-        return "postgresql+psycopg://" + connection_string[len("postgresql://"):]
+        return "postgresql+psycopg://" + connection_string[len("postgresql://") :]
     if connection_string.startswith("postgres://"):
-        return "postgresql+psycopg://" + connection_string[len("postgres://"):]
+        return "postgresql+psycopg://" + connection_string[len("postgres://") :]
     return connection_string
 
 
@@ -115,9 +115,7 @@ class PostgresStore(SQLStore):
         with psycopg.connect(admin_conn_str, autocommit=True) as admin_con:
             if overwrite:
                 admin_con.execute(
-                    sql.SQL("DROP DATABASE IF EXISTS {}").format(
-                        sql.Identifier(dbname)
-                    )
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(dbname))
                 )
             row = admin_con.execute(
                 "SELECT 1 FROM pg_database WHERE datname = %s", [dbname]

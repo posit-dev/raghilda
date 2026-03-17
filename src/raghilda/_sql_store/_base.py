@@ -41,6 +41,7 @@ from ..embedding import EmbedInputType
 
 logger = logging.getLogger(__name__)
 
+
 # SA type mapping for attribute types
 class TSVECTOR(sa.types.UserDefinedType[Any]):
     """Represents PostgreSQL's TSVECTOR type for SQLAlchemy."""
@@ -249,9 +250,7 @@ class SQLStore(BaseStore):
                 e = self.embeddings
                 d = self.documents
                 if action == "replaced":
-                    conn.execute(
-                        e.delete().where(e.c.origin == doc_row["origin"])
-                    )
+                    conn.execute(e.delete().where(e.c.origin == doc_row["origin"]))
                     conn.execute(
                         d.update()
                         .where(d.c.origin == doc_row["origin"])
@@ -369,15 +368,17 @@ class SQLStore(BaseStore):
             ]
             for col in attribute_columns:
                 select_cols.append(inner.c[col])
-            select_cols.extend([
-                TextSlice(
-                    d.c.text,
-                    inner.c.start_index + 1,
-                    inner.c.end_index - inner.c.start_index,
-                ).label("text"),
-                sa.literal(str(method)).label("metric_name"),
-                inner.c.metric_value,
-            ])
+            select_cols.extend(
+                [
+                    TextSlice(
+                        d.c.text,
+                        inner.c.start_index + 1,
+                        inner.c.end_index - inner.c.start_index,
+                    ).label("text"),
+                    sa.literal(str(method)).label("metric_name"),
+                    inner.c.metric_value,
+                ]
+            )
             stmt = (
                 sa.select(*select_cols)
                 .select_from(inner.join(d, inner.c.origin == d.c.origin))
@@ -395,11 +396,13 @@ class SQLStore(BaseStore):
             ]
             for col in attribute_columns:
                 select_cols.append(e.c[col])
-            select_cols.extend([
-                text_slice.label("text"),
-                sa.literal(str(method)).label("metric_name"),
-                metric_value.label("metric_value"),
-            ])
+            select_cols.extend(
+                [
+                    text_slice.label("text"),
+                    sa.literal(str(method)).label("metric_name"),
+                    metric_value.label("metric_value"),
+                ]
+            )
             stmt = (
                 sa.select(*select_cols)
                 .select_from(e.join(d, e.c.origin == d.c.origin))
@@ -450,15 +453,16 @@ class SQLStore(BaseStore):
         ]
         for col in attribute_columns:
             ranked_cols.append(e.c[col])
-        ranked_cols.extend([
-            text_slice.label("text"),
-            sa.literal("fts").label("metric_name"),
-            fts_rank.label("metric_value"),
-        ])
+        ranked_cols.extend(
+            [
+                text_slice.label("text"),
+                sa.literal("fts").label("metric_name"),
+                fts_rank.label("metric_value"),
+            ]
+        )
 
-        ranked_stmt = (
-            sa.select(*ranked_cols)
-            .select_from(e.join(d, e.c.origin == d.c.origin))
+        ranked_stmt = sa.select(*ranked_cols).select_from(
+            e.join(d, e.c.origin == d.c.origin)
         )
         if sa_filter is not None:
             ranked_stmt = ranked_stmt.where(sa_filter)
@@ -752,9 +756,7 @@ class SQLStore(BaseStore):
         e = self.embeddings
         for row in rows:
             search_text = row.get("_search_text", "")
-            values: dict[str, Any] = {
-                c: row[c] for c in row if c != "_search_text"
-            }
+            values: dict[str, Any] = {c: row[c] for c in row if c != "_search_text"}
             values["search_vector"] = ToSearchVector(search_text)
             conn.execute(e.insert().values(**values))
 

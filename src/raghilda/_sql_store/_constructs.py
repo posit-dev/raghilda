@@ -30,9 +30,7 @@ class VectorDistance(FunctionElement[Any]):
 
 
 @compiles(VectorDistance, "postgresql")  # type: ignore[misc]
-def _pg_vector_distance(
-    element: VectorDistance, compiler: Any, **kw: Any
-) -> str:
+def _pg_vector_distance(element: VectorDistance, compiler: Any, **kw: Any) -> str:
     col_sql = compiler.process(element.column, **kw)
     op_map = {
         "cosine_distance": "<=>",
