@@ -42,7 +42,7 @@ def _sa_connection_string(connection_string: str) -> str:
 
 
 @dataclass
-class PostgresStoreMetadata(EmbeddedAttributesStoreMetadata):
+class PostgreSQLStoreMetadata(EmbeddedAttributesStoreMetadata):
     name: str
     title: str
     embed: Optional[EmbeddingProvider]
@@ -57,10 +57,10 @@ class PostgresStoreMetadata(EmbeddedAttributesStoreMetadata):
         return attributes_schema_from_spec(self.attributes)
 
 
-class PostgresStore(SQLStore):
+class PostgreSQLStore(SQLStore):
     """A vector store backed by PostgreSQL with pgvector.
 
-    PostgresStore provides vector storage with support for both
+    PostgreSQLStore provides vector storage with support for both
     semantic search (using pgvector embeddings) and full-text search
     (using PostgreSQL tsvector/tsquery). Each store uses a separate
     PostgreSQL database.
@@ -74,7 +74,7 @@ class PostgresStore(SQLStore):
         name: Optional[str] = None,
         title: Optional[str] = None,
         attributes: Optional[AttributesSchemaSpec] = None,
-    ) -> "PostgresStore":
+    ) -> "PostgreSQLStore":
         """Create a new PostgreSQL store.
 
         Parameters
@@ -97,7 +97,7 @@ class PostgresStore(SQLStore):
 
         Returns
         -------
-        PostgresStore
+        PostgreSQLStore
             A newly created store instance.
         """
         import psycopg
@@ -210,17 +210,17 @@ class PostgresStore(SQLStore):
                 )
             )
 
-        metadata = PostgresStoreMetadata(
+        metadata = PostgreSQLStoreMetadata(
             name=name,
             title=title,
             embed=embed,
             attributes=attributes_spec,
         )
 
-        return PostgresStore(engine, metadata, sa_metadata, documents, embeddings)
+        return PostgreSQLStore(engine, metadata, sa_metadata, documents, embeddings)
 
     @staticmethod
-    def connect(connection_string: str) -> "PostgresStore":
+    def connect(connection_string: str) -> "PostgreSQLStore":
         """Connect to an existing PostgreSQL store.
 
         Parameters
@@ -230,7 +230,7 @@ class PostgresStore(SQLStore):
 
         Returns
         -------
-        PostgresStore
+        PostgreSQLStore
             A connected store instance.
         """
         engine = sa.create_engine(_sa_connection_string(connection_string))
@@ -288,11 +288,11 @@ class PostgresStore(SQLStore):
             sa_metadata, attributes_spec, embed_dimension
         )
 
-        metadata = PostgresStoreMetadata(
+        metadata = PostgreSQLStoreMetadata(
             name=store_name,
             title=store_title,
             embed=embed,
             attributes=attributes_spec,
         )
 
-        return PostgresStore(engine, metadata, sa_metadata, documents, embeddings)
+        return PostgreSQLStore(engine, metadata, sa_metadata, documents, embeddings)

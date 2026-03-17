@@ -1,1 +1,1 @@
-from ._postgres import PostgresStore as PostgresStore
+from ._postgres import PostgreSQLStore as PostgreSQLStore

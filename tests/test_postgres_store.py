@@ -11,7 +11,7 @@
 
 import pytest
 from tests import helpers as test_helpers
-from raghilda.store import PostgresStore
+from raghilda.store import PostgreSQLStore
 from raghilda.document import MarkdownDocument
 from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
@@ -65,7 +65,7 @@ def _drop_db(dbname: str) -> None:
         )
 
 
-class TestPostgresStore:
+class TestPostgreSQLStore:
     @pytest.fixture
     def embed(self, request):
         value = getattr(request, "param", None)
@@ -81,7 +81,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = f"raghilda_test_{request.node.name[:40]}"
         _drop_db(dbname)
-        store = PostgresStore.create(
+        store = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=embed,
             overwrite=True,
@@ -134,7 +134,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_skip_unchanged"
         _drop_db(dbname)
-        s = PostgresStore.create(
+        s = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=embed,
             overwrite=True,
@@ -165,7 +165,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_replace"
         _drop_db(dbname)
-        s = PostgresStore.create(
+        s = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=embed,
             overwrite=True,
@@ -213,7 +213,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_vss_slice"
         _drop_db(dbname)
-        s = PostgresStore.create(
+        s = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=embed,
             overwrite=True,
@@ -258,7 +258,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_attrs"
         _drop_db(dbname)
-        s = PostgresStore.create(
+        s = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=CountingEmbedding(),
             overwrite=True,
@@ -299,7 +299,7 @@ class TestPostgresStore:
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_filter"
         _drop_db(dbname)
-        s = PostgresStore.create(
+        s = PostgreSQLStore.create(
             connection_string=_conn_str(dbname),
             embed=CountingEmbedding(),
             overwrite=True,
