@@ -41,6 +41,8 @@ from ._store_helpers import (
 )
 
 import psycopg
+import psycopg.conninfo
+import psycopg.types.json
 from psycopg import sql
 
 logger = logging.getLogger(__name__)
@@ -106,10 +108,10 @@ class PostgresStore(BaseStore):
             A newly created store instance.
         """
         conninfo = psycopg.conninfo.conninfo_to_dict(connection_string)
-        dbname = conninfo.get("dbname", "raghilda")
+        dbname = str(conninfo.get("dbname", "raghilda"))
 
         # Connect to the default 'postgres' database to create/drop the target
-        admin_conninfo = dict(conninfo)
+        admin_conninfo: dict[str, str] = {k: str(v) for k, v in conninfo.items()}
         admin_conninfo["dbname"] = "postgres"
         admin_conn_str = psycopg.conninfo.make_conninfo(**admin_conninfo)
 
