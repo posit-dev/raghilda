@@ -118,9 +118,7 @@ class PostgresStore(BaseStore):
         with psycopg.connect(admin_conn_str, autocommit=True) as admin_con:
             if overwrite:
                 admin_con.execute(
-                    sql.SQL("DROP DATABASE IF EXISTS {}").format(
-                        sql.Identifier(dbname)
-                    )
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(dbname))
                 )
             # Check if database exists
             row = admin_con.execute(
@@ -725,8 +723,8 @@ class PostgresStore(BaseStore):
             metric_value_sql = sql.SQL("e.metric_value")
         else:
             source_sql = sql.SQL("embeddings e")
-            metric_value_sql = sql.SQL("e.embedding ") + pg_operator + sql.SQL(
-                " %s::vector"
+            metric_value_sql = (
+                sql.SQL("e.embedding ") + pg_operator + sql.SQL(" %s::vector")
             )
 
         vss_query = sql.SQL("""
@@ -932,8 +930,7 @@ def _postgres_attribute_column_defs(
     for column, attribute_type in attributes_schema.items():
         sql_type = postgres_sql_type_for_attribute_type(attribute_type)
         lines.append(
-            sql.SQL("{} ").format(sql.Identifier(column))
-            + sql.SQL(sql_type)  # type: ignore[arg-type]
+            sql.SQL("{} ").format(sql.Identifier(column)) + sql.SQL(sql_type)  # type: ignore[arg-type]
         )
     return lines
 
