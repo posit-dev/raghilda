@@ -1,4 +1,4 @@
-"""Custom SQLAlchemy expression types for vector/FTS operations.
+"""PostgreSQL-specific SQLAlchemy types and compiled expressions.
 
 Each construct is a FunctionElement subclass compiled via @compiles for
 the PostgreSQL dialect. Future backends (Redshift, SQLite, etc.) add their
@@ -13,6 +13,15 @@ import sqlalchemy as sa
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.types import Float
+
+
+class TSVECTOR(sa.types.UserDefinedType[Any]):
+    """Represents PostgreSQL's TSVECTOR type for SQLAlchemy."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw: Any) -> str:
+        return "TSVECTOR"
 
 
 class VectorDistance(FunctionElement[Any]):

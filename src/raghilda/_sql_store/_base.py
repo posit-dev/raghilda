@@ -23,7 +23,7 @@ from .._attributes import (
     merge_attribute_values,
 )
 from .._deoverlap import deoverlap_chunks
-from ._constructs import FTSRank, TextSlice, ToSearchVector, VectorDistance
+from ._constructs import TSVECTOR, FTSRank, TextSlice, ToSearchVector, VectorDistance
 from .._store import BaseStore, WriteResult
 from .._store_helpers import (
     FILTERABLE_BASE_COLUMNS,
@@ -40,16 +40,6 @@ from ..document import ChunkedMarkdownDocument, Document
 from ..embedding import EmbedInputType
 
 logger = logging.getLogger(__name__)
-
-
-# SA type mapping for attribute types
-class TSVECTOR(sa.types.UserDefinedType[Any]):
-    """Represents PostgreSQL's TSVECTOR type for SQLAlchemy."""
-
-    cache_ok = True
-
-    def get_col_spec(self, **kw: Any) -> str:
-        return "TSVECTOR"
 
 
 _SA_TYPE_MAP: dict[type, type[sa.types.TypeEngine[Any]]] = {
