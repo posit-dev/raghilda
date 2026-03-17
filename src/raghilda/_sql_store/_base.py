@@ -18,22 +18,18 @@ from .._attributes import (
     AttributeType,
     AttributeValue,
     coerce_attribute_value_for_output,
-    compile_filter_to_sqlalchemy,
-    filterable_attribute_paths,
     merge_attribute_values,
 )
 from .._deoverlap import deoverlap_chunks
-from ._constructs import TSVECTOR, FTSRank, TextSlice, ToSearchVector, VectorDistance
+from ._constructs import TSVECTOR, ToSearchVector
 from .._store import BaseStore, WriteResult
 from .._store_helpers import (
-    FILTERABLE_BASE_COLUMNS,
     RetrievedStoreMarkdownChunk,
-    VSSMethod,
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
 )
 from .._store_metadata import EmbeddedAttributesStoreMetadata
-from ..chunk import Chunk, MarkdownChunk, Metric
+from ..chunk import Chunk, MarkdownChunk
 from ..document import ChunkedMarkdownDocument, Document
 from ..embedding import EmbedInputType
 
@@ -268,20 +264,8 @@ class SQLStore(BaseStore):
         attributes_filter: Optional[AttributeFilter] = None,
     ) -> Sequence[RetrievedStoreMarkdownChunk]:
         """Retrieve chunks combining VSS and FTS."""
-        retrieved_chunks: list[RetrievedStoreMarkdownChunk] = []
-        if self.metadata.embed is not None:
-            retrieved_chunks = self.retrieve_vss(
-                text,
-                top_k,
-                attributes_filter=attributes_filter,
-            )
-
-        retrieved_chunks.extend(
-            self.retrieve_fts(
-                text,
-                top_k,
-                attributes_filter=attributes_filter,
-            )
+        retrieved_chunks = self._retrieve(
+            text, top_k, attributes_filter=attributes_filter
         )
 
         combined_chunks: dict[
@@ -302,173 +286,18 @@ class SQLStore(BaseStore):
 
         return chunks
 
-    def retrieve_vss(
+    def _retrieve(
         self,
-        query: str | Sequence[float],
-        top_k: int,
-        *,
-        method: VSSMethod = VSSMethod.COSINE_DISTANCE,
-        attributes_filter: Optional[AttributeFilter] = None,
-    ) -> list[RetrievedStoreMarkdownChunk]:
-        """Retrieve chunks using vector similarity search."""
-        if isinstance(query, str):
-            if self.metadata.embed is None:
-                raise ValueError("No embedding function available in the store")
-            query = self.metadata.embed.embed([query], EmbedInputType.QUERY)[0]
-
-        e = self.embeddings
-        d = self.documents
-        query_vector = "[" + ",".join(str(x) for x in query) + "]"
-
-        allowed_filter_columns = self._filterable_columns()
-        sa_filter = compile_filter_to_sqlalchemy(
-            attributes_filter,
-            allowed_columns=allowed_filter_columns,
-            table=e,
-        )
-
-        attribute_columns = list(self.metadata.attributes_schema)
-        text_slice = TextSlice(
-            d.c.text, e.c.start_index + 1, e.c.end_index - e.c.start_index
-        )
-        metric_value = VectorDistance(e.c.embedding, query_vector, str(method))
-
-        if sa_filter is None:
-            # Optimization: pre-filter in a subquery when no attribute filter
-            inner = (
-                sa.select(
-                    e,
-                    metric_value.label("metric_value"),
-                )
-                .order_by(sa.literal_column("metric_value").asc())
-                .limit(top_k)
-                .subquery("e")
-            )
-            select_cols: list[Any] = [
-                inner.c.chunk_id,
-                d.c.origin.label("origin"),
-                inner.c.start_index,
-                inner.c.end_index,
-                inner.c.char_count,
-                inner.c.context,
-            ]
-            for col in attribute_columns:
-                select_cols.append(inner.c[col])
-            select_cols.extend(
-                [
-                    TextSlice(
-                        d.c.text,
-                        inner.c.start_index + 1,
-                        inner.c.end_index - inner.c.start_index,
-                    ).label("text"),
-                    sa.literal(str(method)).label("metric_name"),
-                    inner.c.metric_value,
-                ]
-            )
-            stmt = (
-                sa.select(*select_cols)
-                .select_from(inner.join(d, inner.c.origin == d.c.origin))
-                .order_by(inner.c.metric_value.asc())
-                .limit(top_k)
-            )
-        else:
-            select_cols = [
-                e.c.chunk_id,
-                d.c.origin.label("origin"),
-                e.c.start_index,
-                e.c.end_index,
-                e.c.char_count,
-                e.c.context,
-            ]
-            for col in attribute_columns:
-                select_cols.append(e.c[col])
-            select_cols.extend(
-                [
-                    text_slice.label("text"),
-                    sa.literal(str(method)).label("metric_name"),
-                    metric_value.label("metric_value"),
-                ]
-            )
-            stmt = (
-                sa.select(*select_cols)
-                .select_from(e.join(d, e.c.origin == d.c.origin))
-                .where(sa_filter)
-                .order_by(sa.literal_column("metric_value").asc())
-                .limit(top_k)
-            )
-
-        with self.engine.connect() as conn:
-            result = conn.execute(stmt)
-            col_names = list(result.keys())
-            rows = result.fetchall()
-
-        return _rows_to_retrieved_chunks(
-            rows, col_names, self.metadata.attributes_schema
-        )
-
-    def retrieve_fts(
-        self,
-        query: str,
+        text: str,
         top_k: int,
         *,
         attributes_filter: Optional[AttributeFilter] = None,
-    ) -> list[RetrievedStoreMarkdownChunk]:
-        """Retrieve chunks using full-text search."""
-        e = self.embeddings
-        d = self.documents
-        allowed_filter_columns = self._filterable_columns()
-        sa_filter = compile_filter_to_sqlalchemy(
-            attributes_filter,
-            allowed_columns=allowed_filter_columns,
-            table=e,
-        )
-        attribute_columns = list(self.metadata.attributes_schema)
+    ) -> Sequence[RetrievedStoreMarkdownChunk]:
+        """Return raw retrieved chunks (VSS + FTS, deduplicated).
 
-        text_slice = TextSlice(
-            d.c.text, e.c.start_index + 1, e.c.end_index - e.c.start_index
-        )
-        fts_rank = FTSRank(e.c.search_vector, query)
-
-        ranked_cols: list[Any] = [
-            e.c.chunk_id,
-            d.c.origin.label("origin"),
-            e.c.start_index,
-            e.c.end_index,
-            e.c.char_count,
-            e.c.context,
-        ]
-        for col in attribute_columns:
-            ranked_cols.append(e.c[col])
-        ranked_cols.extend(
-            [
-                text_slice.label("text"),
-                sa.literal("fts").label("metric_name"),
-                fts_rank.label("metric_value"),
-            ]
-        )
-
-        ranked_stmt = sa.select(*ranked_cols).select_from(
-            e.join(d, e.c.origin == d.c.origin)
-        )
-        if sa_filter is not None:
-            ranked_stmt = ranked_stmt.where(sa_filter)
-        ranked = ranked_stmt.cte("ranked")
-
-        stmt = (
-            sa.select(ranked)
-            .where(ranked.c.metric_value > 0)
-            .order_by(ranked.c.metric_value.desc())
-            .limit(top_k)
-        )
-
-        with self.engine.connect() as conn:
-            result = conn.execute(stmt)
-            col_names = list(result.keys())
-            rows = result.fetchall()
-
-        return _rows_to_retrieved_chunks(
-            rows, col_names, self.metadata.attributes_schema
-        )
+        Subclasses override this to provide backend-specific retrieval.
+        """
+        raise NotImplementedError("Subclasses must implement _retrieve()")
 
     # -- index / size ---------------------------------------------------------
 
@@ -483,12 +312,6 @@ class SQLStore(BaseStore):
             return int(result)
 
     # -- private helpers ------------------------------------------------------
-
-    def _filterable_columns(self) -> set[str]:
-        filterable_attribute_columns = filterable_attribute_paths(
-            self.metadata.attributes_schema
-        )
-        return FILTERABLE_BASE_COLUMNS | filterable_attribute_columns
 
     def _get_existing_documents_by_origin(
         self, origin: str, conn: sa.Connection
@@ -703,26 +526,3 @@ class SQLStore(BaseStore):
             conn.execute(e.insert().values(**values))
 
 
-def _rows_to_retrieved_chunks(
-    rows: Sequence[Any],
-    columns: list[str] | Sequence[str],
-    attributes_schema: Mapping[str, AttributeType],
-) -> list[RetrievedStoreMarkdownChunk]:
-    output: list[RetrievedStoreMarkdownChunk] = []
-    for chunk in rows:
-        chunk_dict = dict(zip(columns, chunk))
-        name, value = chunk_dict.pop("metric_name"), chunk_dict.pop("metric_value")
-        chunk_id = chunk_dict.pop("chunk_id", None)
-        attribute_values: dict[str, AttributeValue] = {}
-        for key, attribute_type in attributes_schema.items():
-            if key in chunk_dict:
-                attribute_values[key] = coerce_attribute_value_for_output(
-                    key,
-                    chunk_dict.pop(key),
-                    attribute_type,
-                )
-        chunk_dict["chunk_ids"] = [] if chunk_id is None else [int(chunk_id)]
-        chunk_dict["metrics"] = [Metric(name, value)]
-        chunk_dict["attributes"] = attribute_values
-        output.append(RetrievedStoreMarkdownChunk(**chunk_dict))
-    return output
