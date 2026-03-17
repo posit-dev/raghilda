@@ -67,7 +67,7 @@ class FTSRank(FunctionElement[Any]):
 def _pg_fts_rank(element: FTSRank, compiler: Any, **kw: Any) -> str:
     col_sql = compiler.process(element.search_col, **kw)
     escaped = element.query.replace("'", "''")
-    return f"ts_rank({col_sql}, plainto_tsquery('english', '{escaped}'))"
+    return f"ts_rank({col_sql}, plainto_tsquery('{escaped}'))"
 
 
 class ToSearchVector(FunctionElement[Any]):
@@ -84,7 +84,7 @@ class ToSearchVector(FunctionElement[Any]):
 @compiles(ToSearchVector, "postgresql")  # type: ignore[misc]
 def _pg_to_search_vector(element: ToSearchVector, compiler: Any, **kw: Any) -> str:
     escaped = element.text.replace("'", "''")
-    return f"to_tsvector('english', '{escaped}')"
+    return f"to_tsvector('{escaped}')"
 
 
 class TextSlice(FunctionElement[Any]):
