@@ -13,7 +13,7 @@ import pytest
 from tests import helpers as test_helpers
 from raghilda.store import PostgresStore
 from raghilda.document import MarkdownDocument
-from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
 
@@ -57,9 +57,12 @@ def _conn_str(dbname: str) -> str:
 
 def _drop_db(dbname: str) -> None:
     import psycopg
+    from psycopg import sql
 
     with psycopg.connect(f"{_BASE_CONN}/raghilda_test", autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{dbname}"')
+        con.execute(
+            sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(dbname))
+        )
 
 
 class TestPostgresStore:
@@ -114,7 +117,7 @@ class TestPostgresStore:
 
     def test_insert(self, store):
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks = [
+        chunks: list[Chunk] = [
             _chunk("Hello world", 0, 11),
         ]
         from raghilda.document import ChunkedMarkdownDocument
@@ -138,7 +141,7 @@ class TestPostgresStore:
         )
         calls_after_create = embed.calls  # create() probes embedding size
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks = [
+        chunks: list[Chunk] = [
             _chunk("Hello world", 0, 11),
         ]
         from raghilda.document import ChunkedMarkdownDocument
@@ -284,6 +287,7 @@ class TestPostgresStore:
 
         chunks = s.retrieve_vss([1.0], top_k=1)
         assert len(chunks) == 1
+        assert chunks[0].attributes is not None
         assert chunks[0].attributes["tenant"] == "docs"
         assert chunks[0].attributes["priority"] == 1
         assert chunks[0].attributes["is_public"] is True
