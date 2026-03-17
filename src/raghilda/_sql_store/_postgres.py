@@ -18,7 +18,11 @@ from .._attributes import (
     normalize_attributes_spec,
 )
 from ._base import SQLStore, build_tables
-from .._store_helpers import RESERVED_SYSTEM_COLUMNS
+from .._store_helpers import (
+    IndexType,
+    RESERVED_SYSTEM_COLUMNS,
+    coerce_index_type as _coerce_index_type,
+)
 from .._store_metadata import (
     EmbeddedAttributesStoreMetadata,
     attributes_schema_from_spec,
@@ -296,3 +300,47 @@ class PostgreSQLStore(SQLStore):
         )
 
         return PostgreSQLStore(engine, metadata, sa_metadata, documents, embeddings)
+
+    def build_index(
+        self,
+        type: Optional[IndexType | str | list[IndexType | str]] = None,
+    ) -> None:
+        """Build indexes on the embeddings table."""
+        if type is None:
+            index_types = [IndexType.FTS, IndexType.HNSW]
+        elif isinstance(type, (IndexType, str)):
+            index_types = [_coerce_index_type(type)]
+        else:
+            index_types = [_coerce_index_type(item) for item in type]
+
+        with self.engine.begin() as conn:
+            if IndexType.FTS in index_types:
+                conn.execute(
+                    sa.text(
+                        "CREATE INDEX IF NOT EXISTS idx_embeddings_search_vector "
+                        "ON embeddings USING GIN (search_vector)"
+                    )
+                )
+
+            if IndexType.HNSW in index_types:
+                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_cosine_index"))
+                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_l2_index"))
+                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_ip_index"))
+                conn.execute(
+                    sa.text(
+                        "CREATE INDEX store_hnsw_cosine_index "
+                        "ON embeddings USING hnsw (embedding vector_cosine_ops)"
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        "CREATE INDEX store_hnsw_l2_index "
+                        "ON embeddings USING hnsw (embedding vector_l2_ops)"
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        "CREATE INDEX store_hnsw_ip_index "
+                        "ON embeddings USING hnsw (embedding vector_ip_ops)"
+                    )
+                )

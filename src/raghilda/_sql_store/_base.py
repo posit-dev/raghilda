@@ -27,10 +27,8 @@ from ._constructs import TSVECTOR, FTSRank, TextSlice, ToSearchVector, VectorDis
 from .._store import BaseStore, WriteResult
 from .._store_helpers import (
     FILTERABLE_BASE_COLUMNS,
-    IndexType,
     RetrievedStoreMarkdownChunk,
     VSSMethod,
-    coerce_index_type as _coerce_index_type,
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
 )
@@ -173,93 +171,91 @@ class SQLStore(BaseStore):
                 chunk=chunk,
             )
 
-        with self._db_lock:
-            with self.engine.connect() as conn:
-                existing_rows = self._get_existing_documents_by_origin(
-                    document.origin, conn
+        with self._db_lock, self.engine.connect() as conn:
+            existing_rows = self._get_existing_documents_by_origin(
+                document.origin, conn
+            )
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    origin=existing["origin"],
+                    conn=conn,
                 )
-                existing = existing_rows[0] if existing_rows else None
-                if (
-                    skip_if_unchanged
-                    and existing is not None
-                    and existing["text"] == document.content
-                    and self._chunk_layout_matches_existing(
-                        chunked_doc=document,
-                        origin=existing["origin"],
-                        conn=conn,
-                    )
-                ):
-                    current_document = self._load_document_snapshot(
-                        origin=existing["origin"],
-                        text=existing["text"],
-                        conn=conn,
-                    )
-                    return WriteResult(
-                        action="skipped",
-                        document=current_document,
-                    )
-
-        doc_row, chunk_rows = self._prepare_chunked_document_rows(document)
-
-        with self._db_lock:
-            with self.engine.begin() as conn:
-                existing_rows = self._get_existing_documents_by_origin(
-                    document.origin, conn
-                )
-                existing = existing_rows[0] if existing_rows else None
-                if (
-                    skip_if_unchanged
-                    and existing is not None
-                    and existing["text"] == document.content
-                    and self._chunk_layout_matches_existing(
-                        chunked_doc=document,
-                        origin=existing["origin"],
-                        conn=conn,
-                    )
-                ):
-                    current_document = self._load_document_snapshot(
-                        origin=existing["origin"],
-                        text=existing["text"],
-                        conn=conn,
-                    )
-                    return WriteResult(
-                        action="skipped",
-                        document=current_document,
-                    )
-
-                action = "inserted"
-                replaced_document: ChunkedMarkdownDocument | None = None
-                if existing is not None:
-                    action = "replaced"
-                    replaced_document = self._load_document_snapshot(
-                        origin=existing["origin"],
-                        text=existing["text"],
-                        conn=conn,
-                    )
-
-                e = self.embeddings
-                d = self.documents
-                if action == "replaced":
-                    conn.execute(e.delete().where(e.c.origin == doc_row["origin"]))
-                    conn.execute(
-                        d.update()
-                        .where(d.c.origin == doc_row["origin"])
-                        .values(text=doc_row["text"])
-                    )
-                else:
-                    conn.execute(d.insert().values(**doc_row))
-                self._insert_embedding_rows(conn, chunk_rows)
-
+            ):
                 current_document = self._load_document_snapshot(
-                    origin=str(doc_row["origin"]),
-                    text=document.content,
+                    origin=existing["origin"],
+                    text=existing["text"],
                     conn=conn,
                 )
                 return WriteResult(
-                    action=action,
+                    action="skipped",
                     document=current_document,
-                    replaced_document=replaced_document,
                 )
+
+        doc_row, chunk_rows = self._prepare_chunked_document_rows(document)
+
+        with self._db_lock, self.engine.begin() as conn:
+            existing_rows = self._get_existing_documents_by_origin(
+                document.origin, conn
+            )
+            existing = existing_rows[0] if existing_rows else None
+            if (
+                skip_if_unchanged
+                and existing is not None
+                and existing["text"] == document.content
+                and self._chunk_layout_matches_existing(
+                    chunked_doc=document,
+                    origin=existing["origin"],
+                    conn=conn,
+                )
+            ):
+                current_document = self._load_document_snapshot(
+                    origin=existing["origin"],
+                    text=existing["text"],
+                    conn=conn,
+                )
+                return WriteResult(
+                    action="skipped",
+                    document=current_document,
+                )
+
+            action = "inserted"
+            replaced_document: ChunkedMarkdownDocument | None = None
+            if existing is not None:
+                action = "replaced"
+                replaced_document = self._load_document_snapshot(
+                    origin=existing["origin"],
+                    text=existing["text"],
+                    conn=conn,
+                )
+
+            e = self.embeddings
+            d = self.documents
+            if action == "replaced":
+                conn.execute(e.delete().where(e.c.origin == doc_row["origin"]))
+                conn.execute(
+                    d.update()
+                    .where(d.c.origin == doc_row["origin"])
+                    .values(text=doc_row["text"])
+                )
+            else:
+                conn.execute(d.insert().values(**doc_row))
+            self._insert_embedding_rows(conn, chunk_rows)
+
+            current_document = self._load_document_snapshot(
+                origin=str(doc_row["origin"]),
+                text=document.content,
+                conn=conn,
+            )
+            return WriteResult(
+                action=action,
+                document=current_document,
+                replaced_document=replaced_document,
+            )
 
     # -- retrieval ------------------------------------------------------------
 
@@ -475,50 +471,6 @@ class SQLStore(BaseStore):
         )
 
     # -- index / size ---------------------------------------------------------
-
-    def build_index(
-        self,
-        type: Optional[IndexType | str | list[IndexType | str]] = None,
-    ) -> None:
-        """Build indexes on the embeddings table."""
-        if type is None:
-            index_types = [IndexType.FTS, IndexType.HNSW]
-        elif isinstance(type, (IndexType, str)):
-            index_types = [_coerce_index_type(type)]
-        else:
-            index_types = [_coerce_index_type(item) for item in type]
-
-        with self.engine.begin() as conn:
-            if IndexType.FTS in index_types:
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX IF NOT EXISTS idx_embeddings_search_vector "
-                        "ON embeddings USING GIN (search_vector)"
-                    )
-                )
-
-            if IndexType.HNSW in index_types:
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_cosine_index"))
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_l2_index"))
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_ip_index"))
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_cosine_index "
-                        "ON embeddings USING hnsw (embedding vector_cosine_ops)"
-                    )
-                )
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_l2_index "
-                        "ON embeddings USING hnsw (embedding vector_l2_ops)"
-                    )
-                )
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_ip_index "
-                        "ON embeddings USING hnsw (embedding vector_ip_ops)"
-                    )
-                )
 
     def size(self) -> int:
         """Count distinct documents."""
