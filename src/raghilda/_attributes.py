@@ -8,6 +8,7 @@ from ._attribute_filters import (
     compile_filter_to_openai_filters,
     compile_filter_to_sql,
     compile_filter_to_sql_postgres,
+    compile_filter_to_sqlalchemy,
 )
 from ._attribute_schema import (
     AttributeFilter,
@@ -60,6 +61,7 @@ __all__ = [
     "compile_filter_to_openai_filters",
     "compile_filter_to_sql",
     "compile_filter_to_sql_postgres",
+    "compile_filter_to_sqlalchemy",
     "duckdb_sql_type_for_attribute_type",
     "filterable_attribute_paths",
     "merge_attribute_values",

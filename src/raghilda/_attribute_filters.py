@@ -566,6 +566,84 @@ def _emit_sql_postgres(node: FilterNode) -> str:
     return f"{column} {op_map[node.operator]} {_sql_literal_scalar(value)}"
 
 
+def compile_filter_to_sqlalchemy(
+    attributes_filter: Optional[AttributeFilter],
+    *,
+    allowed_columns: Optional[Iterable[str]] = None,
+    table: Any = None,
+) -> Any:
+    """Compile filter to a SQLAlchemy ClauseElement.
+
+    Parameters
+    ----------
+    attributes_filter
+        The filter to compile.
+    allowed_columns
+        Set of allowed column names for validation.
+    table
+        A SQLAlchemy Table (or alias) whose columns are used for building
+        expressions. Required if attributes_filter is not None.
+
+    Returns
+    -------
+    A SQLAlchemy ClauseElement, or None if no filter was specified.
+    """
+    node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
+    if node is None:
+        return None
+    return _emit_sqlalchemy(node, table)
+
+
+def _emit_sqlalchemy(node: FilterNode, table: Any) -> Any:
+    import sqlalchemy as sa
+
+    if isinstance(node, FilterLogical):
+        children = [_emit_sqlalchemy(child, table) for child in node.children]
+        if node.operator == "and":
+            return sa.and_(*children)
+        return sa.or_(*children)
+
+    column = _sa_column_expression(node.column, table)
+    if node.operator == "in":
+        values = cast(list[AttributeScalar], node.value)
+        return column.in_(values)
+    if node.operator == "nin":
+        values = cast(list[AttributeScalar], node.value)
+        return ~column.in_(values)
+
+    value = cast(AttributeFilterValue, node.value)
+    if value is None and node.operator == "eq":
+        return column.is_(None)
+    if value is None and node.operator == "ne":
+        return column.isnot(None)
+
+    op_map = {
+        "eq": "__eq__",
+        "ne": "__ne__",
+        "gt": "__gt__",
+        "gte": "__ge__",
+        "lt": "__lt__",
+        "lte": "__le__",
+    }
+    assert value is not None
+    return getattr(column, op_map[node.operator])(value)
+
+
+def _sa_column_expression(column: str, table: Any) -> Any:
+    """Build a SQLAlchemy column expression, handling JSONB path access."""
+    parts = column.split(".")
+    col = table.c[parts[0]]
+    if len(parts) == 1:
+        return col
+    # JSONB path: column["key"].astext for the final key
+    for i, field in enumerate(parts[1:]):
+        if i < len(parts) - 2:
+            col = col[field]
+        else:
+            col = col[field].astext
+    return col
+
+
 def _sql_column_expression_postgres(column: str) -> str:
     """Build a SQL column expression for PostgreSQL.
 

@@ -89,7 +89,7 @@ class TestPostgresStore:
             title="Test PostgreSQL Store",
         )
         yield store
-        store.con.close()
+        store.close()
         _drop_db(dbname)
 
     @pytest.fixture
@@ -157,7 +157,7 @@ class TestPostgresStore:
         assert r2.action == "skipped"
         assert embed.calls == calls_after_create + 1  # no extra embed call
 
-        s.con.close()
+        s.close()
         _drop_db(dbname)
 
     def test_insert_same_origin_replaces_when_content_changes(self, store):
@@ -195,7 +195,7 @@ class TestPostgresStore:
         assert r2.replaced_document.content == "Hello world"
         assert s.size() == 1
 
-        s.con.close()
+        s.close()
         _drop_db(dbname)
 
     @pytest.mark.parametrize("embed", ["openai"], indirect=True)
@@ -234,7 +234,7 @@ class TestPostgresStore:
         assert chunks[0].start_index == 3
         assert chunks[0].end_index == 6
 
-        s.con.close()
+        s.close()
         _drop_db(dbname)
 
     def test_retrieve_fts(self, store_with_docs):
@@ -292,7 +292,7 @@ class TestPostgresStore:
         assert chunks[0].attributes["priority"] == 1
         assert chunks[0].attributes["is_public"] is True
 
-        s.con.close()
+        s.close()
         _drop_db(dbname)
 
     def test_insert_and_retrieve_with_attributes_filter(self):
@@ -324,5 +324,5 @@ class TestPostgresStore:
         assert len(chunks) == 1
         assert chunks[0].origin == "doc1"
 
-        s.con.close()
+        s.close()
         _drop_db(dbname)
