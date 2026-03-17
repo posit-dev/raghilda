@@ -9,7 +9,7 @@ from typing import Optional
 
 import sqlalchemy as sa
 
-from ._attributes import (
+from .._attributes import (
     AttributeSpec,
     AttributeType,
     AttributesSchemaSpec,
@@ -17,13 +17,13 @@ from ._attributes import (
     attributes_spec_to_json_dict,
     normalize_attributes_spec,
 )
-from ._sql_store import SQLStore, build_tables
-from ._store_helpers import RESERVED_SYSTEM_COLUMNS
-from ._store_metadata import (
+from ._base import SQLStore, build_tables
+from .._store_helpers import RESERVED_SYSTEM_COLUMNS
+from .._store_metadata import (
     EmbeddedAttributesStoreMetadata,
     attributes_schema_from_spec,
 )
-from .embedding import EmbeddingProvider, embedding_from_config
+from ..embedding import EmbeddingProvider, embedding_from_config
 
 logger = logging.getLogger(__name__)
 

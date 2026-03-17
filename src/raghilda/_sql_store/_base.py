@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional, Sequence
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 
-from ._attributes import (
+from .._attributes import (
     AttributeFilter,
     AttributeSpec,
     AttributeStructType,
@@ -22,10 +22,10 @@ from ._attributes import (
     filterable_attribute_paths,
     merge_attribute_values,
 )
-from ._deoverlap import deoverlap_chunks
-from ._sql_constructs import FTSRank, TextSlice, ToSearchVector, VectorDistance
-from ._store import BaseStore, WriteResult
-from ._store_helpers import (
+from .._deoverlap import deoverlap_chunks
+from ._constructs import FTSRank, TextSlice, ToSearchVector, VectorDistance
+from .._store import BaseStore, WriteResult
+from .._store_helpers import (
     FILTERABLE_BASE_COLUMNS,
     IndexType,
     RetrievedStoreMarkdownChunk,
@@ -34,10 +34,10 @@ from ._store_helpers import (
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
 )
-from ._store_metadata import EmbeddedAttributesStoreMetadata
-from .chunk import Chunk, MarkdownChunk, Metric
-from .document import ChunkedMarkdownDocument, Document
-from .embedding import EmbedInputType
+from .._store_metadata import EmbeddedAttributesStoreMetadata
+from ..chunk import Chunk, MarkdownChunk, Metric
+from ..document import ChunkedMarkdownDocument, Document
+from ..embedding import EmbedInputType
 
 logger = logging.getLogger(__name__)
 

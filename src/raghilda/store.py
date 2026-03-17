@@ -2,7 +2,7 @@ from ._store import BaseStore, WriteResult
 from ._duckdb_store import DuckDBStore
 from ._openai_store import OpenAIStore
 from ._chroma_store import ChromaDBStore
-from ._postgres_store import PostgresStore
+from ._sql_store import PostgresStore
 
 __all__ = [
     "BaseStore",
