@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import asdict
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import sqlalchemy as sa
@@ -212,7 +211,7 @@ class SQLStore(BaseStore):
                     document=current_document,
                 )
 
-        doc_row, chunk_rows = self._prepare_chunked_document_rows(document)
+        doc_row, chunk_rows, search_texts = self._prepare_chunked_document_rows(document)
 
         with self._db_lock, self.engine.begin() as conn:
             existing_rows = self._get_existing_documents_by_origin(
@@ -260,7 +259,7 @@ class SQLStore(BaseStore):
                 )
             else:
                 conn.execute(d.insert().values(**doc_row))
-            self._insert_embedding_rows(conn, chunk_rows)
+            self._insert_embedding_rows(conn, chunk_rows, search_texts)
 
             current_document = self._load_document_snapshot(
                 origin=str(doc_row["origin"]),
@@ -475,12 +474,11 @@ class SQLStore(BaseStore):
     def _prepare_chunked_document_rows(
         self,
         chunked_doc: ChunkedMarkdownDocument,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
         doc = {
             "origin": chunked_doc.origin,
             "text": chunked_doc.content,
         }
-        chunks = [asdict(chunk) for chunk in chunked_doc.chunks]
 
         resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
         for chunk in chunked_doc.chunks:
@@ -498,45 +496,46 @@ class SQLStore(BaseStore):
             embedded_chunks = self.metadata.embed.embed(
                 chunk_texts, EmbedInputType.DOCUMENT
             )
-            if len(embedded_chunks) != len(chunks):
+            if len(embedded_chunks) != len(chunked_doc.chunks):
                 raise ValueError(
                     "Embedding provider must return exactly one embedding per chunk "
-                    f"(got {len(embedded_chunks)} embeddings for {len(chunks)} chunks)"
+                    f"(got {len(embedded_chunks)} embeddings for "
+                    f"{len(chunked_doc.chunks)} chunks)"
                 )
 
         chunk_rows: list[dict[str, Any]] = []
-        for index, chunk_data in enumerate(chunks):
-            row = dict(chunk_data)
-
-            row.pop("attributes", None)
-            row.pop("text", None)
-            row.pop("id", None)
-            row.pop("origin", None)
-            row.pop("chunk_ids", None)
+        search_texts: list[str] = []
+        for index, chunk in enumerate(chunked_doc.chunks):
+            row: dict[str, Any] = {
+                "origin": doc["origin"],
+                "start_index": chunk.start_index,
+                "end_index": chunk.end_index,
+                "char_count": chunk.char_count,
+                "context": chunk.context,
+            }
 
             if embedded_chunks is not None:
                 row["embedding"] = embedded_chunks[index]
-            else:
-                row.pop("embedding", None)
 
             for column in self.metadata.attributes_schema:
                 row[column] = resolved_chunk_attributes[index][column]
 
-            row["origin"] = doc["origin"]
-            chunk_text = chunked_doc.chunks[index].text
-            context_text = chunked_doc.chunks[index].context or ""
-            row["_search_text"] = f"{context_text} {chunk_text}".strip()
             chunk_rows.append(row)
 
-        return doc, chunk_rows
+            context_text = chunk.context or ""
+            search_texts.append(f"{context_text} {chunk.text}".strip())
+
+        return doc, chunk_rows, search_texts
 
     def _insert_embedding_rows(
-        self, conn: sa.Connection, rows: Sequence[Mapping[str, Any]]
+        self,
+        conn: sa.Connection,
+        rows: Sequence[Mapping[str, Any]],
+        search_texts: Sequence[str],
     ) -> None:
-        """Insert embedding rows, computing search_vector from _search_text."""
+        """Insert embedding rows, computing search_vector from search texts."""
         e = self.embeddings
-        for row in rows:
-            search_text = row.get("_search_text", "")
-            values: dict[str, Any] = {c: row[c] for c in row if c != "_search_text"}
+        for row, search_text in zip(rows, search_texts):
+            values = dict(row)
             values["search_vector"] = ToSearchVector(search_text)
             conn.execute(e.insert().values(**values))
