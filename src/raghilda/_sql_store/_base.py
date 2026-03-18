@@ -524,5 +524,3 @@ class SQLStore(BaseStore):
             values: dict[str, Any] = {c: row[c] for c in row if c != "_search_text"}
             values["search_vector"] = ToSearchVector(search_text)
             conn.execute(e.insert().values(**values))
-
-
