@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from .._attributes import (
     AttributeFilter,
     AttributeSpec,
+    AttributeStructType,
     AttributeType,
     AttributeValue,
     AttributesSchemaSpec,
@@ -22,7 +23,9 @@ from .._attributes import (
     filterable_attribute_paths,
     normalize_attributes_spec,
 )
-from ._base import SQLStore, build_tables
+from pgvector.sqlalchemy import Vector
+
+from ._base import SQLStore, _sa_column_type, build_tables
 from ._constructs import FTSRank, TextSlice, VectorDistance
 from .._store_helpers import (
     FILTERABLE_BASE_COLUMNS,
@@ -53,6 +56,17 @@ def _sa_connection_string(connection_string: str) -> str:
     if connection_string.startswith("postgres://"):
         return "postgresql+psycopg://" + connection_string[len("postgres://") :]
     return connection_string
+
+
+def _pg_column_type(attribute_type: AttributeType) -> sa.types.TypeEngine[Any]:
+    """Return the SQLAlchemy column type for an attribute type (PostgreSQL)."""
+    if isinstance(attribute_type, AttributeStructType):
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        return JSONB()
+    if hasattr(attribute_type, "dimension"):
+        return Vector(attribute_type.dimension)  # type: ignore[arg-type]
+    return _sa_column_type(attribute_type)
 
 
 @dataclass
@@ -173,7 +187,13 @@ class PostgreSQLStore(SQLStore):
         # Build SA table objects
         sa_metadata = sa.MetaData()
         documents, embeddings = build_tables(
-            sa_metadata, attributes_spec, embed_dimension
+            sa_metadata,
+            attributes_spec,
+            embed_dimension,
+            column_type_resolver=_pg_column_type,
+            embedding_column_type=(
+                Vector(embed_dimension) if embed_dimension is not None else None
+            ),
         )
 
         # Create all tables via SA DDL
@@ -299,7 +319,13 @@ class PostgreSQLStore(SQLStore):
             embed_dimension = len(embed.embed(["foo"])[0])
 
         documents, embeddings = build_tables(
-            sa_metadata, attributes_spec, embed_dimension
+            sa_metadata,
+            attributes_spec,
+            embed_dimension,
+            column_type_resolver=_pg_column_type,
+            embedding_column_type=(
+                Vector(embed_dimension) if embed_dimension is not None else None
+            ),
         )
 
         metadata = PostgreSQLStoreMetadata(

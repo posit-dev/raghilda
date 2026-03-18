@@ -6,10 +6,9 @@ import json
 import logging
 import threading
 from dataclasses import asdict
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
 
 from .._attributes import (
     AttributeFilter,
@@ -36,6 +35,9 @@ from ..embedding import EmbedInputType
 logger = logging.getLogger(__name__)
 
 
+ColumnTypeResolver = Callable[[AttributeType], sa.types.TypeEngine[Any]]
+"""Callable that maps an AttributeType to a SQLAlchemy column type."""
+
 _SA_TYPE_MAP: dict[type, type[sa.types.TypeEngine[Any]]] = {
     str: sa.Text,
     int: sa.Integer,
@@ -45,14 +47,12 @@ _SA_TYPE_MAP: dict[type, type[sa.types.TypeEngine[Any]]] = {
 
 
 def _sa_column_type(attribute_type: AttributeType) -> sa.types.TypeEngine[Any]:
-    """Return the SQLAlchemy column type for an attribute type."""
-    if isinstance(attribute_type, AttributeStructType):
-        from sqlalchemy.dialects.postgresql import JSONB
+    """Return the SQLAlchemy column type for a *scalar* attribute type.
 
-        return JSONB()
-    if hasattr(attribute_type, "dimension"):
-        # AttributeFloatVectorType
-        return Vector(attribute_type.dimension)  # type: ignore[arg-type]
+    This base resolver handles str / int / float / bool only.
+    Backend subclasses extend it for dialect-specific types
+    (JSONB, pgvector Vector, etc.).
+    """
     sa_type_class = _SA_TYPE_MAP.get(attribute_type)  # type: ignore[arg-type]
     if sa_type_class is None:
         raise ValueError(f"Unsupported attribute type: {attribute_type}")
@@ -63,8 +63,20 @@ def build_tables(
     sa_metadata: sa.MetaData,
     attributes_spec: Mapping[str, AttributeSpec],
     embed_dimension: int | None,
+    *,
+    column_type_resolver: ColumnTypeResolver = _sa_column_type,
+    embedding_column_type: sa.types.TypeEngine[Any] | None = None,
 ) -> tuple[sa.Table, sa.Table]:
     """Build the documents and embeddings Table objects.
+
+    Parameters
+    ----------
+    column_type_resolver
+        Callable that maps an ``AttributeType`` to a SA column type.
+        Defaults to the base scalar resolver.
+    embedding_column_type
+        SA type for the embedding column. Required when
+        *embed_dimension* is not None.
 
     Returns (documents_table, embeddings_table).
     """
@@ -91,11 +103,15 @@ def build_tables(
 
     # Attribute columns
     for col_name, spec in attributes_spec.items():
-        cols.append(sa.Column(col_name, _sa_column_type(spec.attribute_type)))
+        cols.append(sa.Column(col_name, column_type_resolver(spec.attribute_type)))
 
     # Embedding column
     if embed_dimension is not None:
-        cols.append(sa.Column("embedding", Vector(embed_dimension)))
+        if embedding_column_type is None:
+            raise ValueError(
+                "embedding_column_type is required when embed_dimension is not None"
+            )
+        cols.append(sa.Column("embedding", embedding_column_type))
 
     # Primary key constraint
     cols.append(
