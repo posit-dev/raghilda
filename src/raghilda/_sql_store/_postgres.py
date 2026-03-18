@@ -233,6 +233,7 @@ class PostgreSQLStore(SQLStore):
             sa.Column("name", sa.Text),
             sa.Column("title", sa.Text),
             sa.Column("embed_config", sa.Text),
+            sa.Column("embed_dimension", sa.Integer),
             sa.Column("attributes_schema_json", sa.Text),
             extend_existing=True,
         )
@@ -244,6 +245,7 @@ class PostgreSQLStore(SQLStore):
                     name=name,
                     title=title,
                     embed_config=embed_config_json,
+                    embed_dimension=embed_dimension,
                     attributes_schema_json=attributes_schema_json,
                 )
             )
@@ -286,6 +288,7 @@ class PostgreSQLStore(SQLStore):
             sa.Column("name", sa.Text),
             sa.Column("title", sa.Text),
             sa.Column("embed_config", sa.Text),
+            sa.Column("embed_dimension", sa.Integer),
             sa.Column("attributes_schema_json", sa.Text),
         )
 
@@ -295,6 +298,7 @@ class PostgreSQLStore(SQLStore):
                     meta_table.c.name,
                     meta_table.c.title,
                     meta_table.c.embed_config,
+                    meta_table.c.embed_dimension,
                     meta_table.c.attributes_schema_json,
                 )
             ).fetchone()
@@ -302,7 +306,13 @@ class PostgreSQLStore(SQLStore):
         if row is None:
             raise ValueError("No metadata found in the database")
 
-        store_name, store_title, embed_config_json, attributes_schema_json = row
+        (
+            store_name,
+            store_title,
+            embed_config_json,
+            embed_dimension,
+            attributes_schema_json,
+        ) = row
 
         embed: EmbeddingProvider | None = None
         if embed_config_json is not None:
@@ -317,10 +327,6 @@ class PostgreSQLStore(SQLStore):
         attributes_spec = attributes_spec_from_json_dict(
             json.loads(attributes_schema_json),
         )
-
-        embed_dimension: int | None = None
-        if embed is not None:
-            embed_dimension = len(embed.embed(["foo"])[0])
 
         documents, embeddings = build_tables(
             sa_metadata,
