@@ -360,6 +360,46 @@ class TestPostgreSQLStore:
         s.close()
         _drop_db(dbname)
 
+    def test_struct_attributes_stored_as_objects_not_strings(self):
+        """Struct attributes must be stored as JSONB objects, not JSON strings.
+
+        If the store pre-serializes dicts with json.dumps(), SQLAlchemy's
+        psycopg adapter stores a quoted JSON string instead of an object.
+        This breaks JSONB path access and changes the retrieved type from
+        dict to str.
+        """
+        test_helpers.skip_if_no_postgres()
+        dbname = "raghilda_test_struct"
+        _drop_db(dbname)
+        s = PostgreSQLStore.create(
+            connection_string=_conn_str(dbname),
+            embed=CountingEmbedding(),
+            overwrite=True,
+            attributes={"meta": {"author": str}},
+        )
+        from raghilda.document import ChunkedMarkdownDocument
+
+        doc = ChunkedMarkdownDocument(
+            origin="doc1",
+            content="Hello",
+            chunks=[
+                _chunk("Hello", 0, 5, attributes={"meta": {"author": "Alice"}}),
+            ],
+        )
+        s.upsert(doc)
+
+        chunks = s.retrieve_vss([1.0], top_k=1)
+        assert len(chunks) == 1
+        meta = chunks[0].attributes["meta"]
+        assert isinstance(meta, dict), (
+            f"Expected dict but got {type(meta).__name__}: {meta!r} — "
+            "struct was likely pre-serialized with json.dumps()"
+        )
+        assert meta["author"] == "Alice"
+
+        s.close()
+        _drop_db(dbname)
+
     def test_insert_and_retrieve_with_attributes_filter(self):
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_filter"

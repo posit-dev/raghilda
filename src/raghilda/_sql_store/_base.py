@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from dataclasses import asdict
@@ -13,7 +12,6 @@ import sqlalchemy as sa
 from .._attributes import (
     AttributeFilter,
     AttributeSpec,
-    AttributeStructType,
     AttributeType,
     AttributeValue,
     coerce_attribute_value_for_output,
@@ -522,11 +520,7 @@ class SQLStore(BaseStore):
                 row.pop("embedding", None)
 
             for column in self.metadata.attributes_schema:
-                value = resolved_chunk_attributes[index][column]
-                attr_type = self.metadata.attributes_schema[column]
-                if isinstance(attr_type, AttributeStructType) and value is not None:
-                    value = json.dumps(value)
-                row[column] = value
+                row[column] = resolved_chunk_attributes[index][column]
 
             row["origin"] = doc["origin"]
             chunk_text = chunked_doc.chunks[index].text
