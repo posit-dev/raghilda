@@ -9,12 +9,31 @@
 #
 # Tests are automatically skipped when PostgreSQL is not available.
 
+import subprocess
+import sys
+
 import pytest
 from tests import helpers as test_helpers
 from raghilda.store import PostgreSQLStore
 from raghilda.document import MarkdownDocument
 from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
+
+
+def test_import_without_sqlalchemy():
+    """Importing PostgreSQLStore without sqlalchemy gives a helpful error."""
+    code = (
+        "import sys; "
+        "sys.modules['sqlalchemy'] = None; "
+        "from raghilda.store import PostgreSQLStore"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "raghilda[postgres]" in result.stderr
 
 
 _BASE_CONN = "postgresql://raghilda:raghilda@localhost:5432"
