@@ -568,7 +568,6 @@ def duckdb_sql_type_for_attribute_type(attribute_type: AttributeType) -> str:
     raise ValueError(f"Unsupported attribute type: {attribute_type}")
 
 
-
 def merge_attribute_values(
     *,
     attributes_spec: Mapping[str, AttributeSpec],

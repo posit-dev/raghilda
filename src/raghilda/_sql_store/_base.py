@@ -193,7 +193,9 @@ class SQLStore(BaseStore):
             if skip_if_unchanged and skipped is not None:
                 return skipped
 
-        doc_row, chunk_rows, search_texts = self._prepare_chunked_document_rows(document)
+        doc_row, chunk_rows, search_texts = self._prepare_chunked_document_rows(
+            document
+        )
 
         with self._db_lock, self.engine.begin() as conn:
             skipped = self._check_skip_unchanged(document, conn)
