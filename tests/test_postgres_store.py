@@ -261,6 +261,52 @@ class TestPostgreSQLStore:
         assert len(chunks) > 0
         assert all(isinstance(c, RetrievedChunk) for c in chunks)
 
+    def test_retrieve_does_not_collapse_chunks_from_same_origin(self):
+        """Multiple chunks from same origin must not merge into one result.
+
+        If chunk_id has no server-side default, all chunk_ids are NULL and
+        the (origin, first_chunk_id) dedup key collapses every chunk from
+        the same document into a single result.
+        """
+        embed = CountingEmbedding()
+        test_helpers.skip_if_no_postgres()
+        dbname = "raghilda_test_no_collapse"
+        _drop_db(dbname)
+        s = PostgreSQLStore.create(
+            connection_string=_conn_str(dbname),
+            embed=embed,
+            overwrite=True,
+        )
+        from raghilda.document import ChunkedMarkdownDocument
+
+        doc = ChunkedMarkdownDocument(
+            origin="doc1",
+            content="alpha bravo charlie",
+            chunks=[
+                _chunk("alpha", 0, 5),
+                _chunk(" bravo", 5, 11),
+                _chunk(" charlie", 11, 19),
+            ],
+        )
+        s.upsert(doc)
+
+        # retrieve() combines VSS + FTS. When both return the same chunk,
+        # dedup keys on (origin, first_chunk_id). If chunk_ids are NULL,
+        # all chunks collapse into (origin, None) — a single result.
+        vss_chunks = s.retrieve_vss([1.0], top_k=3)
+        fts_chunks = s.retrieve_fts("alpha bravo charlie", top_k=3)
+        assert len(vss_chunks) == 3
+        assert len(fts_chunks) == 3
+
+        chunks = s.retrieve("alpha bravo charlie", top_k=3, deoverlap=False)
+        assert len(chunks) == 3, (
+            f"Expected 3 distinct chunks but got {len(chunks)} — "
+            "chunk_ids may be NULL causing dedup collapse"
+        )
+
+        s.close()
+        _drop_db(dbname)
+
     def test_size(self, store):
         assert store.size() == 0
         from raghilda.document import ChunkedMarkdownDocument
