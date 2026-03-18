@@ -14,12 +14,14 @@ from .._attributes import (
     AttributeType,
     AttributeValue,
     coerce_attribute_value_for_output,
+    filterable_attribute_paths,
     merge_attribute_values,
 )
 from .._deoverlap import deoverlap_chunks
 from ._constructs import TSVECTOR, ToSearchVector
 from .._store import BaseStore, WriteResult
 from .._store_helpers import (
+    FILTERABLE_BASE_COLUMNS,
     RetrievedStoreMarkdownChunk,
     slice_chunk_text as _slice_chunk_text,
     validate_chunk_against_document as _validate_chunk_against_document,
@@ -329,6 +331,12 @@ class SQLStore(BaseStore):
             if result is None:
                 raise RuntimeError("Failed to get size of the store")
             return int(result)
+
+    def _filterable_columns(self) -> set[str]:
+        """Return the set of columns that may appear in attribute filters."""
+        return FILTERABLE_BASE_COLUMNS | filterable_attribute_paths(
+            self.metadata.attributes_schema
+        )
 
     # -- private helpers ------------------------------------------------------
 

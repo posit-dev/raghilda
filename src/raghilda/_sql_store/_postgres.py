@@ -20,7 +20,6 @@ from .._attributes import (
     attributes_spec_to_json_dict,
     coerce_attribute_value_for_output,
     compile_filter_to_sqlalchemy,
-    filterable_attribute_paths,
     normalize_attributes_spec,
 )
 from pgvector.sqlalchemy import Vector
@@ -28,7 +27,6 @@ from pgvector.sqlalchemy import Vector
 from ._base import SQLStore, _sa_column_type, build_tables
 from ._constructs import FTSRank, TextSlice, VectorDistance
 from .._store_helpers import (
-    FILTERABLE_BASE_COLUMNS,
     IndexType,
     RESERVED_SYSTEM_COLUMNS,
     RetrievedStoreMarkdownChunk,
@@ -430,12 +428,22 @@ class PostgreSQLStore(SQLStore):
             return cols
 
         if sa_filter is None:
-            # Optimization: pre-filter in a subquery when no attribute filter
+            # Optimization: pre-filter in a subquery when no attribute filter.
+            # Select only the columns we need — excludes the large embedding
+            # vector and search_vector tsvector columns.
+            inner_cols: list[Any] = [
+                e.c.chunk_id,
+                e.c.origin,
+                e.c.start_index,
+                e.c.end_index,
+                e.c.char_count,
+                e.c.context,
+            ]
+            for col in attribute_columns:
+                inner_cols.append(e.c[col])
+            inner_cols.append(metric_value.label("metric_value"))
             inner = (
-                sa.select(
-                    e,
-                    metric_value.label("metric_value"),
-                )
+                sa.select(*inner_cols)
                 .order_by(sa.literal_column("metric_value").asc())
                 .limit(top_k)
                 .subquery("e")
@@ -527,14 +535,6 @@ class PostgreSQLStore(SQLStore):
         return _rows_to_retrieved_chunks(
             rows, col_names, self.metadata.attributes_schema
         )
-
-    # -- private helpers (PostgreSQL-specific) ---------------------------------
-
-    def _filterable_columns(self) -> set[str]:
-        filterable_attribute_columns = filterable_attribute_paths(
-            self.metadata.attributes_schema
-        )
-        return FILTERABLE_BASE_COLUMNS | filterable_attribute_columns
 
     def build_index(
         self,
