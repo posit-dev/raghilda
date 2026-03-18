@@ -555,12 +555,18 @@ def _emit_sqlalchemy(node: FilterNode, table: Any) -> Any:
             return sa.and_(*children)
         return sa.or_(*children)
 
+    is_jsonb_path = "." in node.column
     column = _sa_column_expression(node.column, table)
+
     if node.operator == "in":
         values = cast(list[AttributeScalar], node.value)
+        if is_jsonb_path and values and not isinstance(values[0], str):
+            column = _sa_cast_for_jsonb(column, values[0], sa)
         return column.in_(values)
     if node.operator == "nin":
         values = cast(list[AttributeScalar], node.value)
+        if is_jsonb_path and values and not isinstance(values[0], str):
+            column = _sa_cast_for_jsonb(column, values[0], sa)
         return ~column.in_(values)
 
     value = cast(AttributeFilterValue, node.value)
@@ -568,6 +574,10 @@ def _emit_sqlalchemy(node: FilterNode, table: Any) -> Any:
         return column.is_(None)
     if value is None and node.operator == "ne":
         return column.isnot(None)
+
+    assert value is not None
+    if is_jsonb_path and not isinstance(value, str):
+        column = _sa_cast_for_jsonb(column, value, sa)
 
     op_map = {
         "eq": "__eq__",
@@ -577,8 +587,24 @@ def _emit_sqlalchemy(node: FilterNode, table: Any) -> Any:
         "lt": "__lt__",
         "lte": "__le__",
     }
-    assert value is not None
     return getattr(column, op_map[node.operator])(value)
+
+
+def _sa_cast_for_jsonb(column: Any, value: Any, sa: Any) -> Any:
+    """Cast a JSONB .astext (TEXT) column to match the comparison value type.
+
+    PostgreSQL's ->> operator returns TEXT, so comparing against int/float/bool
+    fails without an explicit cast.
+    """
+    _CAST_MAP: dict[type, Any] = {
+        int: sa.Integer,
+        float: sa.Float,
+        bool: sa.Boolean,
+    }
+    sa_type = _CAST_MAP.get(type(value))
+    if sa_type is not None:
+        return column.cast(sa_type())
+    return column
 
 
 def _sa_column_expression(column: str, table: Any) -> Any:

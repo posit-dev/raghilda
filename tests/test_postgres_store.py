@@ -400,6 +400,68 @@ class TestPostgreSQLStore:
         s.close()
         _drop_db(dbname)
 
+    def test_filter_on_nested_non_string_attribute(self):
+        """Filtering nested struct fields with non-string types must work.
+
+        JSONB ->> returns TEXT, so comparisons like priority >= 2 or
+        is_public = TRUE fail unless the expression is cast to the
+        appropriate type.
+        """
+        test_helpers.skip_if_no_postgres()
+        dbname = "raghilda_test_nested_filter"
+        _drop_db(dbname)
+        s = PostgreSQLStore.create(
+            connection_string=_conn_str(dbname),
+            embed=CountingEmbedding(),
+            overwrite=True,
+            attributes={"details": {"priority": int, "is_public": bool}},
+        )
+        from raghilda.document import ChunkedMarkdownDocument
+
+        doc1 = ChunkedMarkdownDocument(
+            origin="doc1",
+            content="Hello",
+            chunks=[
+                _chunk(
+                    "Hello",
+                    0,
+                    5,
+                    attributes={"details": {"priority": 1, "is_public": True}},
+                )
+            ],
+        )
+        doc2 = ChunkedMarkdownDocument(
+            origin="doc2",
+            content="World",
+            chunks=[
+                _chunk(
+                    "World",
+                    0,
+                    5,
+                    attributes={"details": {"priority": 3, "is_public": False}},
+                )
+            ],
+        )
+        s.upsert(doc1)
+        s.upsert(doc2)
+
+        # Integer comparison on nested field
+        chunks = s.retrieve_vss(
+            [1.0], top_k=10, attributes_filter="details.priority >= 2"
+        )
+        assert len(chunks) == 1
+        assert chunks[0].origin == "doc2"
+
+        # Boolean comparison on nested field
+        chunks = s.retrieve_vss(
+            [1.0], top_k=10, attributes_filter="details.is_public = true"
+        )
+        assert len(chunks) == 1
+        assert chunks[0].origin == "doc1"
+
+        s.close()
+        _drop_db(dbname)
+
     def test_insert_and_retrieve_with_attributes_filter(self):
         test_helpers.skip_if_no_postgres()
         dbname = "raghilda_test_filter"
