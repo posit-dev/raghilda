@@ -422,7 +422,8 @@ class PostgreSQLStore(SQLStore):
                         src.c.end_index - src.c.start_index,
                     ).label("text"),
                     sa.literal(str(method)).label("metric_name"),
-                    src.c.metric_value if hasattr(src.c, "metric_value")
+                    src.c.metric_value
+                    if hasattr(src.c, "metric_value")
                     else metric_value.label("metric_value"),
                 ]
             )
@@ -572,9 +573,7 @@ class PostgreSQLStore(SQLStore):
                     ),
                 }
                 for idx_name, ops in _HNSW_OPS.values():
-                    conn.execute(
-                        sa.text(f"DROP INDEX IF EXISTS {idx_name}")
-                    )
+                    conn.execute(sa.text(f"DROP INDEX IF EXISTS {idx_name}"))
                 for idx_name, ops in _HNSW_OPS.values():
                     conn.execute(
                         sa.text(

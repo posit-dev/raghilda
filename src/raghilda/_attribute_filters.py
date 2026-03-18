@@ -620,5 +620,3 @@ def _sa_column_expression(column: str, table: Any) -> Any:
         else:
             col = col[field].astext
     return col
-
-
