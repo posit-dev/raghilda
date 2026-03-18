@@ -82,7 +82,11 @@ class PostgreSQLStoreMetadata(EmbeddedAttributesStoreMetadata):
 
     @property
     def attributes_schema(self) -> dict[str, AttributeType]:
-        return attributes_schema_from_spec(self.attributes)
+        try:
+            return self._attributes_schema_cache
+        except AttributeError:
+            self._attributes_schema_cache = attributes_schema_from_spec(self.attributes)
+            return self._attributes_schema_cache
 
 
 class PostgreSQLStore(SQLStore):
@@ -391,10 +395,32 @@ class PostgreSQLStore(SQLStore):
         )
 
         attribute_columns = list(self.metadata.attributes_schema)
-        text_slice = TextSlice(
-            d.c.text, e.c.start_index + 1, e.c.end_index - e.c.start_index
-        )
         metric_value = VectorDistance(e.c.embedding, query_vector, str(method))
+
+        def _build_select_cols(src: Any) -> list[Any]:
+            cols: list[Any] = [
+                src.c.chunk_id,
+                d.c.origin.label("origin"),
+                src.c.start_index,
+                src.c.end_index,
+                src.c.char_count,
+                src.c.context,
+            ]
+            for col in attribute_columns:
+                cols.append(src.c[col])
+            cols.extend(
+                [
+                    TextSlice(
+                        d.c.text,
+                        src.c.start_index + 1,
+                        src.c.end_index - src.c.start_index,
+                    ).label("text"),
+                    sa.literal(str(method)).label("metric_name"),
+                    src.c.metric_value if hasattr(src.c, "metric_value")
+                    else metric_value.label("metric_value"),
+                ]
+            )
+            return cols
 
         if sa_filter is None:
             # Optimization: pre-filter in a subquery when no attribute filter
@@ -407,53 +433,15 @@ class PostgreSQLStore(SQLStore):
                 .limit(top_k)
                 .subquery("e")
             )
-            select_cols: list[Any] = [
-                inner.c.chunk_id,
-                d.c.origin.label("origin"),
-                inner.c.start_index,
-                inner.c.end_index,
-                inner.c.char_count,
-                inner.c.context,
-            ]
-            for col in attribute_columns:
-                select_cols.append(inner.c[col])
-            select_cols.extend(
-                [
-                    TextSlice(
-                        d.c.text,
-                        inner.c.start_index + 1,
-                        inner.c.end_index - inner.c.start_index,
-                    ).label("text"),
-                    sa.literal(str(method)).label("metric_name"),
-                    inner.c.metric_value,
-                ]
-            )
             stmt = (
-                sa.select(*select_cols)
+                sa.select(*_build_select_cols(inner))
                 .select_from(inner.join(d, inner.c.origin == d.c.origin))
                 .order_by(inner.c.metric_value.asc())
                 .limit(top_k)
             )
         else:
-            select_cols = [
-                e.c.chunk_id,
-                d.c.origin.label("origin"),
-                e.c.start_index,
-                e.c.end_index,
-                e.c.char_count,
-                e.c.context,
-            ]
-            for col in attribute_columns:
-                select_cols.append(e.c[col])
-            select_cols.extend(
-                [
-                    text_slice.label("text"),
-                    sa.literal(str(method)).label("metric_name"),
-                    metric_value.label("metric_value"),
-                ]
-            )
             stmt = (
-                sa.select(*select_cols)
+                sa.select(*_build_select_cols(e))
                 .select_from(e.join(d, e.c.origin == d.c.origin))
                 .where(sa_filter)
                 .order_by(sa.literal_column("metric_value").asc())
@@ -563,27 +551,31 @@ class PostgreSQLStore(SQLStore):
                 )
 
             if IndexType.HNSW in index_types:
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_cosine_index"))
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_l2_index"))
-                conn.execute(sa.text("DROP INDEX IF EXISTS store_hnsw_ip_index"))
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_cosine_index "
-                        "ON embeddings USING hnsw (embedding vector_cosine_ops)"
+                _HNSW_OPS = {
+                    VSSMethod.COSINE_DISTANCE: (
+                        "store_hnsw_cosine_index",
+                        "vector_cosine_ops",
+                    ),
+                    VSSMethod.EUCLIDEAN_DISTANCE: (
+                        "store_hnsw_l2_index",
+                        "vector_l2_ops",
+                    ),
+                    VSSMethod.NEGATIVE_INNER_PRODUCT: (
+                        "store_hnsw_ip_index",
+                        "vector_ip_ops",
+                    ),
+                }
+                for idx_name, ops in _HNSW_OPS.values():
+                    conn.execute(
+                        sa.text(f"DROP INDEX IF EXISTS {idx_name}")
                     )
-                )
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_l2_index "
-                        "ON embeddings USING hnsw (embedding vector_l2_ops)"
+                for idx_name, ops in _HNSW_OPS.values():
+                    conn.execute(
+                        sa.text(
+                            f"CREATE INDEX {idx_name} "
+                            f"ON embeddings USING hnsw (embedding {ops})"
+                        )
                     )
-                )
-                conn.execute(
-                    sa.text(
-                        "CREATE INDEX store_hnsw_ip_index "
-                        "ON embeddings USING hnsw (embedding vector_ip_ops)"
-                    )
-                )
 
 
 def _rows_to_retrieved_chunks(

@@ -568,21 +568,6 @@ def duckdb_sql_type_for_attribute_type(attribute_type: AttributeType) -> str:
     raise ValueError(f"Unsupported attribute type: {attribute_type}")
 
 
-def postgres_sql_type_for_attribute_type(attribute_type: AttributeType) -> str:
-    if attribute_type is str:
-        return "TEXT"
-    if attribute_type is int:
-        return "INTEGER"
-    if attribute_type is float:
-        return "DOUBLE PRECISION"
-    if attribute_type is bool:
-        return "BOOLEAN"
-    if isinstance(attribute_type, AttributeFloatVectorType):
-        return f"vector({attribute_type.dimension})"
-    if isinstance(attribute_type, AttributeStructType):
-        return "JSONB"
-    raise ValueError(f"Unsupported attribute type: {attribute_type}")
-
 
 def merge_attribute_values(
     *,

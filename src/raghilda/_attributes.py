@@ -7,7 +7,6 @@ from ._attribute_filters import (
     compile_filter_to_chroma_where,
     compile_filter_to_openai_filters,
     compile_filter_to_sql,
-    compile_filter_to_sql_postgres,
     compile_filter_to_sqlalchemy,
 )
 from ._attribute_schema import (
@@ -33,7 +32,6 @@ from ._attribute_schema import (
     merge_attribute_values,
     normalize_attributes_schema,
     normalize_attributes_spec,
-    postgres_sql_type_for_attribute_type,
 )
 
 __all__ = [
@@ -60,12 +58,10 @@ __all__ = [
     "compile_filter_to_chroma_where",
     "compile_filter_to_openai_filters",
     "compile_filter_to_sql",
-    "compile_filter_to_sql_postgres",
     "compile_filter_to_sqlalchemy",
     "duckdb_sql_type_for_attribute_type",
     "filterable_attribute_paths",
     "merge_attribute_values",
     "normalize_attributes_schema",
     "normalize_attributes_spec",
-    "postgres_sql_type_for_attribute_type",
 ]
