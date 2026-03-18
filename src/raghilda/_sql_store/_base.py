@@ -189,56 +189,21 @@ class SQLStore(BaseStore):
             )
 
         with self._db_lock, self.engine.connect() as conn:
-            existing_rows = self._get_existing_documents_by_origin(
-                document.origin, conn
-            )
-            existing = existing_rows[0] if existing_rows else None
-            if (
-                skip_if_unchanged
-                and existing is not None
-                and existing["text"] == document.content
-                and self._chunk_layout_matches_existing(
-                    chunked_doc=document,
-                    origin=existing["origin"],
-                    conn=conn,
-                )
-            ):
-                current_document = self._load_document_snapshot(
-                    origin=existing["origin"],
-                    text=existing["text"],
-                    conn=conn,
-                )
-                return WriteResult(
-                    action="skipped",
-                    document=current_document,
-                )
+            skipped = self._check_skip_unchanged(document, conn)
+            if skip_if_unchanged and skipped is not None:
+                return skipped
 
         doc_row, chunk_rows, search_texts = self._prepare_chunked_document_rows(document)
 
         with self._db_lock, self.engine.begin() as conn:
+            skipped = self._check_skip_unchanged(document, conn)
+            if skip_if_unchanged and skipped is not None:
+                return skipped
+
             existing_rows = self._get_existing_documents_by_origin(
                 document.origin, conn
             )
             existing = existing_rows[0] if existing_rows else None
-            if (
-                skip_if_unchanged
-                and existing is not None
-                and existing["text"] == document.content
-                and self._chunk_layout_matches_existing(
-                    chunked_doc=document,
-                    origin=existing["origin"],
-                    conn=conn,
-                )
-            ):
-                current_document = self._load_document_snapshot(
-                    origin=existing["origin"],
-                    text=existing["text"],
-                    conn=conn,
-                )
-                return WriteResult(
-                    action="skipped",
-                    document=current_document,
-                )
 
             action = "inserted"
             replaced_document: ChunkedMarkdownDocument | None = None
@@ -340,15 +305,36 @@ class SQLStore(BaseStore):
 
     # -- private helpers ------------------------------------------------------
 
+    def _check_skip_unchanged(
+        self,
+        document: ChunkedMarkdownDocument,
+        conn: sa.Connection,
+    ) -> WriteResult[ChunkedMarkdownDocument] | None:
+        """Return a "skipped" WriteResult if the document is unchanged, else None."""
+        existing_rows = self._get_existing_documents_by_origin(document.origin, conn)
+        existing = existing_rows[0] if existing_rows else None
+        if (
+            existing is not None
+            and existing["text"] == document.content
+            and self._chunk_layout_matches_existing(
+                chunked_doc=document,
+                origin=existing["origin"],
+                conn=conn,
+            )
+        ):
+            current_document = self._load_document_snapshot(
+                origin=existing["origin"],
+                text=existing["text"],
+                conn=conn,
+            )
+            return WriteResult(action="skipped", document=current_document)
+        return None
+
     def _get_existing_documents_by_origin(
         self, origin: str, conn: sa.Connection
     ) -> list[dict[str, str]]:
         d = self.documents
-        stmt = (
-            sa.select(d.c.origin, d.c.text)
-            .where(d.c.origin == origin)
-            .order_by(d.c.origin)
-        )
+        stmt = sa.select(d.c.origin, d.c.text).where(d.c.origin == origin)
         rows = conn.execute(stmt).fetchall()
         return [{"origin": row[0], "text": row[1]} for row in rows]
 

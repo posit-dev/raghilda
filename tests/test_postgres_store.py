@@ -15,8 +15,8 @@ import sys
 import pytest
 from tests import helpers as test_helpers
 from raghilda.store import PostgreSQLStore
-from raghilda.document import MarkdownDocument
-from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk
+from raghilda.document import ChunkedMarkdownDocument, MarkdownDocument
+from raghilda.chunk import MarkdownChunk, RetrievedChunk
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
 
@@ -114,7 +114,6 @@ class TestPostgreSQLStore:
     @pytest.fixture
     def store_with_docs(self, store):
         doc = MarkdownDocument(origin="test", content="This is a test document.")
-        from raghilda.document import ChunkedMarkdownDocument
 
         chunked = ChunkedMarkdownDocument(
             origin=doc.origin,
@@ -136,10 +135,9 @@ class TestPostgreSQLStore:
 
     def test_insert(self, store):
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks: list[Chunk] = [
+        chunks: list[MarkdownChunk] = [
             _chunk("Hello world", 0, 11),
         ]
-        from raghilda.document import ChunkedMarkdownDocument
 
         chunked = ChunkedMarkdownDocument(
             origin=doc.origin, content=doc.content, chunks=chunks
@@ -160,10 +158,9 @@ class TestPostgreSQLStore:
         )
         calls_after_create = embed.calls  # create() probes embedding size
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks: list[Chunk] = [
+        chunks: list[MarkdownChunk] = [
             _chunk("Hello world", 0, 11),
         ]
-        from raghilda.document import ChunkedMarkdownDocument
 
         chunked = ChunkedMarkdownDocument(
             origin=doc.origin, content=doc.content, chunks=chunks
@@ -189,7 +186,6 @@ class TestPostgreSQLStore:
             embed=embed,
             overwrite=True,
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc1 = ChunkedMarkdownDocument(
             origin="doc1",
@@ -237,7 +233,6 @@ class TestPostgreSQLStore:
             embed=embed,
             overwrite=True,
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc = ChunkedMarkdownDocument(
             origin="doc1",
@@ -277,7 +272,6 @@ class TestPostgreSQLStore:
             embed=embed,
             overwrite=True,
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc = ChunkedMarkdownDocument(
             origin="doc1",
@@ -309,7 +303,6 @@ class TestPostgreSQLStore:
 
     def test_size(self, store):
         assert store.size() == 0
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc = ChunkedMarkdownDocument(
             origin="doc1",
@@ -329,7 +322,6 @@ class TestPostgreSQLStore:
             overwrite=True,
             attributes={"tenant": str, "priority": int, "is_public": bool},
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc = ChunkedMarkdownDocument(
             origin="doc1",
@@ -377,7 +369,6 @@ class TestPostgreSQLStore:
             overwrite=True,
             attributes={"meta": {"author": str}},
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc = ChunkedMarkdownDocument(
             origin="doc1",
@@ -416,7 +407,6 @@ class TestPostgreSQLStore:
             overwrite=True,
             attributes={"details": {"priority": int, "is_public": bool}},
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc1 = ChunkedMarkdownDocument(
             origin="doc1",
@@ -472,7 +462,6 @@ class TestPostgreSQLStore:
             overwrite=True,
             attributes={"tenant": str},
         )
-        from raghilda.document import ChunkedMarkdownDocument
 
         doc1 = ChunkedMarkdownDocument(
             origin="doc1",

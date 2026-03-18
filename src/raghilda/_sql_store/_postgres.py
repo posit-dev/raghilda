@@ -11,6 +11,7 @@ import sqlalchemy as sa
 
 from .._attributes import (
     AttributeFilter,
+    AttributeFloatVectorType,
     AttributeSpec,
     AttributeStructType,
     AttributeType,
@@ -62,7 +63,7 @@ def _pg_column_type(attribute_type: AttributeType) -> sa.types.TypeEngine[Any]:
         from sqlalchemy.dialects.postgresql import JSONB
 
         return JSONB()
-    if hasattr(attribute_type, "dimension"):
+    if isinstance(attribute_type, AttributeFloatVectorType):
         return Vector(attribute_type.dimension)  # type: ignore[arg-type]
     return _sa_column_type(attribute_type)
 
@@ -85,6 +86,20 @@ class PostgreSQLStoreMetadata(EmbeddedAttributesStoreMetadata):
         except AttributeError:
             self._attributes_schema_cache = attributes_schema_from_spec(self.attributes)
             return self._attributes_schema_cache
+
+
+def _build_metadata_table(sa_metadata: sa.MetaData) -> sa.Table:
+    """Build the metadata table definition."""
+    return sa.Table(
+        "metadata",
+        sa_metadata,
+        sa.Column("name", sa.Text),
+        sa.Column("title", sa.Text),
+        sa.Column("embed_config", sa.Text),
+        sa.Column("embed_dimension", sa.Integer),
+        sa.Column("attributes_schema_json", sa.Text),
+        extend_existing=True,
+    )
 
 
 class PostgreSQLStore(SQLStore):
@@ -224,17 +239,7 @@ class PostgreSQLStore(SQLStore):
             )
 
         # Insert metadata row
-        # We use the metadata table created by SA
-        meta_table = sa.Table(
-            "metadata",
-            sa_metadata,
-            sa.Column("name", sa.Text),
-            sa.Column("title", sa.Text),
-            sa.Column("embed_config", sa.Text),
-            sa.Column("embed_dimension", sa.Integer),
-            sa.Column("attributes_schema_json", sa.Text),
-            extend_existing=True,
-        )
+        meta_table = _build_metadata_table(sa_metadata)
         meta_table.create(engine, checkfirst=True)
 
         with engine.begin() as conn:
@@ -280,15 +285,7 @@ class PostgreSQLStore(SQLStore):
 
         # Read metadata
         sa_metadata = sa.MetaData()
-        meta_table = sa.Table(
-            "metadata",
-            sa_metadata,
-            sa.Column("name", sa.Text),
-            sa.Column("title", sa.Text),
-            sa.Column("embed_config", sa.Text),
-            sa.Column("embed_dimension", sa.Integer),
-            sa.Column("attributes_schema_json", sa.Text),
-        )
+        meta_table = _build_metadata_table(sa_metadata)
 
         with engine.connect() as conn:
             row = conn.execute(
