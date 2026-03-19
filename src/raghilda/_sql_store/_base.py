@@ -313,6 +313,7 @@ class SQLStore(BaseStore):
         conn: sa.Connection,
     ) -> WriteResult[ChunkedMarkdownDocument] | None:
         """Return a "skipped" WriteResult if the document is unchanged, else None."""
+        assert isinstance(document.origin, str)
         existing_rows = self._get_existing_documents_by_origin(document.origin, conn)
         existing = existing_rows[0] if existing_rows else None
         if (

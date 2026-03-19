@@ -16,7 +16,7 @@ import pytest
 from tests import helpers as test_helpers
 from raghilda.store import PostgreSQLStore
 from raghilda.document import ChunkedMarkdownDocument, MarkdownDocument
-from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
 
@@ -135,7 +135,7 @@ class TestPostgreSQLStore:
 
     def test_insert(self, store):
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks: list[MarkdownChunk] = [
+        chunks: list[Chunk] = [
             _chunk("Hello world", 0, 11),
         ]
 
@@ -158,7 +158,7 @@ class TestPostgreSQLStore:
         )
         calls_after_create = embed.calls  # create() probes embedding size
         doc = MarkdownDocument(origin="doc1", content="Hello world")
-        chunks: list[MarkdownChunk] = [
+        chunks: list[Chunk] = [
             _chunk("Hello world", 0, 11),
         ]
 
@@ -381,6 +381,7 @@ class TestPostgreSQLStore:
 
         chunks = s.retrieve_vss([1.0], top_k=1)
         assert len(chunks) == 1
+        assert chunks[0].attributes is not None
         meta = chunks[0].attributes["meta"]
         assert isinstance(meta, dict), (
             f"Expected dict but got {type(meta).__name__}: {meta!r} — "
