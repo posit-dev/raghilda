@@ -64,6 +64,13 @@ def _postgres_attribute_column_defs(
 
 
 class VSSMethod(StrEnum):
+    """Distance method for pgvector similarity search.
+
+    Since this is a :class:`~enum.StrEnum`, you can pass string values
+    directly (e.g. ``"cosine_distance"``) wherever a ``VSSMethod`` is
+    expected.
+    """
+
     COSINE_DISTANCE = "cosine_distance"
     L2_DISTANCE = "l2_distance"
     INNER_PRODUCT = "inner_product"
@@ -309,6 +316,22 @@ class PostgreSQLStore(BaseStore):
         *,
         skip_if_unchanged: bool = True,
     ) -> WriteResult[ChunkedMarkdownDocument]:
+        """Upsert a document into the store.
+
+        The document must be a
+        :py:class:`~raghilda.document.ChunkedMarkdownDocument`.
+        Use :py:class:`~raghilda.chunker.MarkdownChunker` to chunk a
+        :py:class:`~raghilda.document.MarkdownDocument` before upserting.
+
+        Parameters
+        ----------
+        document
+            The chunked document to upsert.
+        skip_if_unchanged
+            If True (default), skip the write when the existing document
+            for the same origin already has identical content. This avoids
+            re-computing embeddings.
+        """
         if not isinstance(document, ChunkedMarkdownDocument):
             raise NotImplementedError(
                 f"Upsert not implemented for type {type(document)}"
@@ -562,6 +585,11 @@ class PostgreSQLStore(BaseStore):
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using pgvector similarity search.
 
+        Uses pgvector distance operators for nearest-neighbor search.
+        For best performance, ensure an HNSW index exists for the chosen
+        distance method (created automatically for cosine distance, or
+        via :meth:`build_index` for others).
+
         Parameters
         ----------
         query
@@ -571,11 +599,20 @@ class PostgreSQLStore(BaseStore):
             The maximum number of chunks to return.
         method
             The distance method to use. Defaults to cosine distance.
+            Can be a :class:`VSSMethod` enum or a string like
+            ``"cosine_distance"``, ``"l2_distance"``, or
+            ``"inner_product"``.
 
         Returns
         -------
         list[RetrievedChunk]
             The most similar chunks with distance metrics.
+
+        Raises
+        ------
+        ValueError
+            If ``query`` is a string but no embedding provider is
+            configured.
         """
         if method is None:
             method = VSSMethod.COSINE_DISTANCE
@@ -660,6 +697,13 @@ class PostgreSQLStore(BaseStore):
         self.con.commit()
 
     def size(self) -> int:
+        """Count the number of documents in the store.
+
+        Returns
+        -------
+        int
+            The number of documents (not chunks) in the store.
+        """
         with self.con.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM documents")
             row = cur.fetchone()
