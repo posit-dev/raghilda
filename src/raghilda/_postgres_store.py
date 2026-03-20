@@ -124,6 +124,7 @@ class PostgreSQLStore(BaseStore):
         title: Optional[str] = None,
         attributes: Optional[AttributesSchemaSpec] = None,
         vss_index: Optional[VSSMethod] = VSSMethod.COSINE_DISTANCE,
+        schema: str = "raghilda",
     ) -> "PostgreSQLStore":
         """Create a new PostgreSQL store.
 
@@ -144,6 +145,10 @@ class PostgreSQLStore(BaseStore):
             The distance method to build an HNSW index for. Defaults to
             cosine distance. Set to ``None`` to skip creating a VSS index.
             Ignored when ``embed`` is ``None``.
+        schema
+            PostgreSQL schema to create the store tables in. Defaults to
+            ``"raghilda"``. The schema is created if it does not exist and
+            the connection's ``search_path`` is set to use it.
 
         Returns
         -------
@@ -199,6 +204,13 @@ class PostgreSQLStore(BaseStore):
                     "pgvector extension is not available in this PostgreSQL installation. "
                     "Install pgvector: https://github.com/pgvector/pgvector"
                 )
+
+            cur.execute(
+                "CREATE SCHEMA IF NOT EXISTS %s;" % psycopg2.extensions.quote_ident(schema, con)
+            )
+            cur.execute(
+                "SET search_path TO %s, public;" % psycopg2.extensions.quote_ident(schema, con)
+            )
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -264,7 +276,10 @@ class PostgreSQLStore(BaseStore):
         return PostgreSQLStore(con, metadata)
 
     @staticmethod
-    def connect(con: psycopg2.extensions.connection) -> "PostgreSQLStore":
+    def connect(
+        con: psycopg2.extensions.connection,
+        schema: str = "raghilda",
+    ) -> "PostgreSQLStore":
         """Connect to an existing PostgreSQL store.
 
         Parameters
@@ -272,6 +287,9 @@ class PostgreSQLStore(BaseStore):
         con
             An open psycopg2 connection to a PostgreSQL database
             that already contains a raghilda store.
+        schema
+            PostgreSQL schema where the store tables live. Defaults to
+            ``"raghilda"``.
 
         Returns
         -------
@@ -279,6 +297,9 @@ class PostgreSQLStore(BaseStore):
             A connected store instance.
         """
         with con.cursor() as cur:
+            cur.execute(
+                "SET search_path TO %s, public;" % psycopg2.extensions.quote_ident(schema, con)
+            )
             try:
                 cur.execute(
                     "SELECT name, title, embed_config, attributes_schema_json FROM metadata"

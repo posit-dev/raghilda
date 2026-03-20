@@ -31,9 +31,11 @@ def pg_con():
         pytest.skip("PostgreSQL not available at localhost:5432")
     con.autocommit = True
     with con.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS embeddings;")
-        cur.execute("DROP TABLE IF EXISTS documents;")
-        cur.execute("DROP TABLE IF EXISTS metadata;")
+        cur.execute("DROP SCHEMA IF EXISTS raghilda CASCADE;")
+        # Clean up legacy tables from public schema
+        cur.execute("DROP TABLE IF EXISTS public.embeddings;")
+        cur.execute("DROP TABLE IF EXISTS public.documents;")
+        cur.execute("DROP TABLE IF EXISTS public.metadata;")
     con.autocommit = False
     yield con
     con.close()
