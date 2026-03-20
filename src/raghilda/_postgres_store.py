@@ -191,7 +191,14 @@ class PostgreSQLStore(BaseStore):
             )
 
         with con.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            try:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            except psycopg2.errors.UndefinedFile:
+                con.rollback()
+                raise RuntimeError(
+                    "pgvector extension is not available in this PostgreSQL installation. "
+                    "Install pgvector: https://github.com/pgvector/pgvector"
+                )
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
