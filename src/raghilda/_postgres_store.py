@@ -150,7 +150,7 @@ class PostgreSQLStore(BaseStore):
         name: Optional[str] = None,
         title: Optional[str] = None,
         attributes: Optional[AttributesSchemaSpec] = None,
-        vss_index: Optional[VSSMethod] = VSSMethod.COSINE_DISTANCE,
+        vss_index: Optional[str] = "cosine_distance",
         schema: str = "raghilda",
         overwrite: bool = False,
     ) -> "PostgreSQLStore":
@@ -760,7 +760,7 @@ class PostgreSQLStore(BaseStore):
         query: str | Sequence[float],
         top_k: int = 3,
         *,
-        method: Optional[VSSMethod] = None,
+        method: Optional[str] = None,
         attributes_filter: Optional[AttributeFilter] = None,
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using pgvector similarity search.
@@ -779,8 +779,7 @@ class PostgreSQLStore(BaseStore):
             The maximum number of chunks to return.
         method
             The distance method to use. Defaults to cosine distance.
-            Can be a :class:`VSSMethod` enum or a string like
-            ``"cosine_distance"``, ``"l2_distance"``, or
+            One of ``"cosine_distance"``, ``"l2_distance"``, or
             ``"inner_product"``.
         attributes_filter
             Optional filter to scope retrieval using attribute columns.
@@ -869,7 +868,7 @@ class PostgreSQLStore(BaseStore):
 
         return chunks
 
-    def build_index(self, method: VSSMethod) -> None:
+    def build_index(self, method: str) -> None:
         """Build an HNSW index on the embedding column for the given distance method.
 
         A cosine distance index is created by default when calling
