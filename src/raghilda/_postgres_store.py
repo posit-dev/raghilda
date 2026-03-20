@@ -2,9 +2,9 @@ from ._store import BaseStore, WriteResult
 import json
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
-from .chunk import RetrievedChunk, Metric
+from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
 from ._deoverlap import deoverlap_chunks
-from typing import Mapping, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 from enum import StrEnum
 import psycopg2
 import logging
@@ -225,14 +225,15 @@ class PostgreSQLStore(BaseStore):
             )
 
         with con.cursor() as cur:
-            try:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-            except psycopg2.errors.UndefinedFile:
-                con.rollback()
-                raise RuntimeError(
-                    "pgvector extension is not available in this PostgreSQL installation. "
-                    "Install pgvector: https://github.com/pgvector/pgvector"
-                )
+            if embed is not None:
+                try:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                except psycopg2.errors.UndefinedFile:
+                    con.rollback()
+                    raise RuntimeError(
+                        "pgvector extension is not available in this PostgreSQL installation. "
+                        "Install pgvector: https://github.com/pgvector/pgvector"
+                    )
 
             schema_id = psycopg2.extensions.quote_ident(schema, con)
 
@@ -429,7 +430,11 @@ class PostgreSQLStore(BaseStore):
             and existing is not None
             and existing[0] == document.content
         ):
-            return WriteResult(action="skipped", document=document)
+            current_document = self._load_document_snapshot(
+                origin=document.origin,
+                text=existing[0],
+            )
+            return WriteResult(action="skipped", document=current_document)
 
         # Compute embeddings outside the transaction
         embed = self._metadata.get("embed")
@@ -453,9 +458,13 @@ class PostgreSQLStore(BaseStore):
         # Write to the database
         with self.con.cursor() as cur:
             action = "inserted"
-            replaced_document = None
+            replaced_document: ChunkedMarkdownDocument | None = None
             if existing is not None:
                 action = "replaced"
+                replaced_document = self._load_document_snapshot(
+                    origin=document.origin,
+                    text=existing[0],
+                )
                 cur.execute(
                     f"DELETE FROM {self._schema}.embeddings WHERE origin = %s",
                     [document.origin],
@@ -517,6 +526,68 @@ class PostgreSQLStore(BaseStore):
             action=action,
             document=document,
             replaced_document=replaced_document,
+        )
+
+    def _load_document_snapshot(
+        self, *, origin: str, text: str
+    ) -> ChunkedMarkdownDocument:
+        attributes_spec = self._metadata.get("attributes", {})
+        attribute_columns = list(attributes_spec)
+        attribute_select = ""
+        if attribute_columns:
+            cols = ", ".join(f'"{col}"' for col in attribute_columns)
+            attribute_select = ", " + cols
+
+        with self.con.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    start_index,
+                    end_index,
+                    char_count,
+                    context
+                    {attribute_select}
+                FROM {self._schema}.embeddings
+                WHERE origin = %s
+                ORDER BY start_index, end_index
+                """,
+                [origin],
+            )
+            rows = cur.fetchall()
+            if cur.description is None:
+                raise RuntimeError("Failed to load document snapshot.")
+            columns = [desc[0] for desc in cur.description]
+
+        chunks: list[Chunk] = []
+        document_attributes: dict[str, Any] = {}
+        for row in rows:
+            row_dict = dict(zip(columns, row))
+            attributes = {
+                key: row_dict[key] for key in attribute_columns if key in row_dict
+            }
+            for key, value in attributes.items():
+                if key not in document_attributes or document_attributes[key] is None:
+                    document_attributes[key] = value
+            start_index = int(row_dict["start_index"])
+            end_index = int(row_dict["end_index"])
+            chunk_text = text[start_index:end_index]
+            chunks.append(
+                MarkdownChunk(
+                    start_index=start_index,
+                    end_index=end_index,
+                    text=chunk_text,
+                    char_count=int(row_dict["char_count"]),
+                    context=row_dict.get("context"),
+                    origin=origin,
+                    attributes=attributes or None,
+                )
+            )
+
+        return ChunkedMarkdownDocument(
+            origin=origin,
+            content=text,
+            chunks=chunks,
+            attributes=document_attributes or None,
         )
 
     def retrieve(
@@ -683,6 +754,8 @@ class PostgreSQLStore(BaseStore):
         """
         if method is None:
             method = VSSMethod.COSINE_DISTANCE
+        else:
+            method = VSSMethod(method)
 
         embed = self._metadata.get("embed")
         if isinstance(query, str):
