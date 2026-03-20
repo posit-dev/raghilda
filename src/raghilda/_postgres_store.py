@@ -178,7 +178,9 @@ class PostgreSQLStore(BaseStore):
             tail_columns.append(embedding_column_sql.lstrip(", "))
         tail_columns_sql = ""
         if tail_columns:
-            tail_columns_sql = ",\n                    " + ",\n                    ".join(tail_columns)
+            tail_columns_sql = (
+                ",\n                    " + ",\n                    ".join(tail_columns)
+            )
 
         with con.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
@@ -473,7 +475,16 @@ class PostgreSQLStore(BaseStore):
 
         chunks: list[RetrievedChunk] = []
         for row in rows:
-            origin, start_index, end_index, char_count, context, chunk_id, chunk_text, rank = row
+            (
+                origin,
+                start_index,
+                end_index,
+                char_count,
+                context,
+                chunk_id,
+                chunk_text,
+                rank,
+            ) = row
             chunks.append(
                 RetrievedChunk(
                     text=chunk_text,
@@ -548,7 +559,16 @@ class PostgreSQLStore(BaseStore):
 
         chunks: list[RetrievedChunk] = []
         for row in rows:
-            origin, start_index, end_index, char_count, context, chunk_id, chunk_text, distance = row
+            (
+                origin,
+                start_index,
+                end_index,
+                char_count,
+                context,
+                chunk_id,
+                chunk_text,
+                distance,
+            ) = row
             chunks.append(
                 RetrievedChunk(
                     text=chunk_text,
@@ -591,4 +611,3 @@ class PostgreSQLStore(BaseStore):
             cur.execute("SELECT COUNT(*) FROM documents")
             row = cur.fetchone()
         return row[0] if row else 0
-

@@ -225,7 +225,7 @@ def test_upsert_with_attributes(pg_con):
     assert result.action == "inserted"
 
     with pg_con.cursor() as cur:
-        cur.execute('SELECT tenant, priority FROM embeddings ORDER BY start_index;')
+        cur.execute("SELECT tenant, priority FROM embeddings ORDER BY start_index;")
         rows = cur.fetchall()
         assert len(rows) == len(doc.chunks)
         for row in rows:
