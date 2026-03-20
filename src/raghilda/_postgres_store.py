@@ -126,6 +126,7 @@ class PostgreSQLStore(BaseStore):
         attributes: Optional[AttributesSchemaSpec] = None,
         vss_index: Optional[VSSMethod] = VSSMethod.COSINE_DISTANCE,
         schema: str = "raghilda",
+        overwrite: bool = False,
     ) -> "PostgreSQLStore":
         """Create a new PostgreSQL store.
 
@@ -149,11 +150,21 @@ class PostgreSQLStore(BaseStore):
         schema
             PostgreSQL schema to create the store tables in. Defaults to
             ``"raghilda"``. The schema is created if it does not exist.
+        overwrite
+            If False (default), raise an error when the schema already
+            contains store tables. Set to True to drop the existing
+            store and recreate it.
 
         Returns
         -------
         PostgreSQLStore
             A newly created store instance.
+
+        Raises
+        ------
+        ValueError
+            If ``overwrite`` is False and the schema already contains
+            a store.
         """
         if name is None:
             name = "raghilda_db"
@@ -206,6 +217,20 @@ class PostgreSQLStore(BaseStore):
                 )
 
             schema_id = psycopg2.extensions.quote_ident(schema, con)
+
+            # Check if the store already exists
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_name = 'metadata'",
+                [schema],
+            )
+            if cur.fetchone() is not None:
+                if not overwrite:
+                    raise ValueError(
+                        f"A store already exists in schema {schema!r}. "
+                        "Use overwrite=True to replace it."
+                    )
+                cur.execute("DROP SCHEMA %s CASCADE;" % schema_id)
 
             cur.execute(
                 "CREATE SCHEMA IF NOT EXISTS %s;" % schema_id

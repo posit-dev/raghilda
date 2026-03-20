@@ -134,6 +134,26 @@ def test_create_store_no_embed(pg_con):
         assert "embedding" not in columns
 
 
+def test_create_store_raises_if_exists(pg_con):
+    PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    with pytest.raises(ValueError, match="already exists"):
+        PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+
+
+def test_create_store_overwrite(pg_con):
+    store1 = PostgreSQLStore.create(
+        con=pg_con, embed=FakeEmbedding(), name="old_store"
+    )
+    store1.upsert(_make_chunked_doc(origin="doc1"))
+    assert store1.size() == 1
+
+    store2 = PostgreSQLStore.create(
+        con=pg_con, embed=FakeEmbedding(), name="new_store", overwrite=True
+    )
+    assert store2._metadata["name"] == "new_store"
+    assert store2.size() == 0
+
+
 def test_connect_recovers_metadata(pg_con):
     PostgreSQLStore.create(
         con=pg_con,
