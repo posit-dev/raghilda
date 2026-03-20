@@ -1,11 +1,58 @@
 from ._store import BaseStore
 import json
-from .embedding import EmbeddingProvider, embedding_from_config
-from typing import Optional
+from .embedding import EmbeddingProvider
+from typing import Mapping, Optional
 import psycopg2
 import logging
+from ._attributes import (
+    AttributeFloatVectorType,
+    AttributeStructType,
+    AttributeType,
+    AttributesSchemaSpec,
+    attributes_spec_to_json_dict,
+    normalize_attributes_spec,
+)
 
 logger = logging.getLogger(__name__)
+
+_RESERVED_SYSTEM_COLUMNS = {
+    "chunk_id",
+    "context",
+    "embedding",
+    "origin",
+    "text",
+    "start_index",
+    "end_index",
+    "char_count",
+}
+
+
+def _postgres_sql_type_for_attribute_type(attribute_type: AttributeType) -> str:
+    if attribute_type is str:
+        return "VARCHAR"
+    if attribute_type is int:
+        return "INTEGER"
+    if attribute_type is float:
+        return "DOUBLE PRECISION"
+    if attribute_type is bool:
+        return "BOOLEAN"
+    if isinstance(attribute_type, AttributeFloatVectorType):
+        return f"vector({attribute_type.dimension})"
+    if isinstance(attribute_type, AttributeStructType):
+        return "JSONB"
+    raise ValueError(f"Unsupported attribute type: {attribute_type}")
+
+
+def _postgres_attribute_column_defs(
+    *, attributes_schema: Mapping[str, AttributeType]
+) -> list[str]:
+    if not attributes_schema:
+        return []
+    lines: list[str] = []
+    for column, attribute_type in attributes_schema.items():
+        sql_type = _postgres_sql_type_for_attribute_type(attribute_type)
+        lines.append(f'"{column}" {sql_type}')
+    return lines
 
 
 class PostgreSQLStore(BaseStore):
@@ -23,6 +70,7 @@ class PostgreSQLStore(BaseStore):
         embed: Optional[EmbeddingProvider],
         name: Optional[str] = None,
         title: Optional[str] = None,
+        attributes: Optional[AttributesSchemaSpec] = None,
     ) -> "PostgreSQLStore":
         """Create a new PostgreSQL store.
 
@@ -37,6 +85,8 @@ class PostgreSQLStore(BaseStore):
             Internal name for the store.
         title
             Human-readable title for the store.
+        attributes
+            Optional schema for user-defined attribute columns stored per chunk.
 
         Returns
         -------
@@ -49,6 +99,14 @@ class PostgreSQLStore(BaseStore):
         if title is None:
             title = "Raghilda PostgreSQL Store"
 
+        attributes_spec = normalize_attributes_spec(
+            attributes=attributes,
+            reserved_columns=_RESERVED_SYSTEM_COLUMNS,
+        )
+        attributes_schema = {
+            key: spec.attribute_type for key, spec in attributes_spec.items()
+        }
+
         if embed is None:
             embedding_column_sql = ""
         else:
@@ -59,6 +117,20 @@ class PostgreSQLStore(BaseStore):
         if embed is not None:
             embed_config_json = json.dumps(embed.get_config())
 
+        attributes_schema_json = json.dumps(
+            attributes_spec_to_json_dict(attributes_spec)
+        )
+
+        attribute_column_defs = _postgres_attribute_column_defs(
+            attributes_schema=attributes_schema,
+        )
+        tail_columns = list(attribute_column_defs)
+        if embedding_column_sql:
+            tail_columns.append(embedding_column_sql.lstrip(", "))
+        tail_columns_sql = ""
+        if tail_columns:
+            tail_columns_sql = ",\n                    " + ",\n                    ".join(tail_columns)
+
         with con.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
@@ -66,7 +138,8 @@ class PostgreSQLStore(BaseStore):
                 CREATE TABLE IF NOT EXISTS metadata (
                     name VARCHAR,
                     title VARCHAR,
-                    embed_config VARCHAR
+                    embed_config VARCHAR,
+                    attributes_schema_json VARCHAR
                 );
             """)
 
@@ -86,16 +159,16 @@ class PostgreSQLStore(BaseStore):
                     char_count INTEGER,
                     context VARCHAR,
                     PRIMARY KEY (origin, start_index, end_index)
-                    {embedding_column_sql}
+                    {tail_columns_sql}
                 );
             """)
 
             cur.execute(
                 """
-                INSERT INTO metadata (name, title, embed_config)
-                VALUES (%s, %s, %s)
+                INSERT INTO metadata (name, title, embed_config, attributes_schema_json)
+                VALUES (%s, %s, %s, %s)
                 """,
-                [name, title, embed_config_json],
+                [name, title, embed_config_json, attributes_schema_json],
             )
 
         con.commit()
@@ -104,18 +177,19 @@ class PostgreSQLStore(BaseStore):
             "name": name,
             "title": title,
             "embed": embed,
+            "attributes": attributes_spec,
         }
 
         return PostgreSQLStore(con, metadata)
 
     @staticmethod
-    def connect(con: psycopg2.extensions.connection) -> "PostgreSQLStore":
+    def connect(con: psycopg2.extensions.connection) -> "PostgreSQLStore":  # noqa: ARG004
         raise NotImplementedError("connect is not yet implemented")
 
-    def upsert(self, document, *, skip_if_unchanged=True):
+    def upsert(self, document, *, skip_if_unchanged=True):  # noqa: ARG002
         raise NotImplementedError("upsert is not yet implemented")
 
-    def retrieve(self, text, top_k, *args, **kwargs):
+    def retrieve(self, text, top_k, *args, **kwargs):  # noqa: ARG002
         raise NotImplementedError("retrieve is not yet implemented")
 
     def size(self):

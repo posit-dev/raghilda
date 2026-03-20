@@ -68,6 +68,49 @@ def test_create_store(pg_con):
         assert "embedding" in columns
 
 
+def test_create_store_with_attributes(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": str, "priority": int, "score": float, "active": bool},
+    )
+    assert "tenant" in store._metadata["attributes"]
+    assert "priority" in store._metadata["attributes"]
+
+    with pg_con.cursor() as cur:
+        cur.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'embeddings'
+            ORDER BY ordinal_position;
+        """)
+        columns = {r[0]: r[1] for r in cur.fetchall()}
+        assert columns["tenant"] == "character varying"
+        assert columns["priority"] == "integer"
+        assert columns["score"] == "double precision"
+        assert columns["active"] == "boolean"
+        assert "embedding" in columns
+
+
+def test_create_store_with_struct_attribute(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"meta": {"key": str, "value": int}},
+    )
+    assert "meta" in store._metadata["attributes"]
+
+    with pg_con.cursor() as cur:
+        cur.execute("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'embeddings' AND column_name = 'meta';
+        """)
+        row = cur.fetchone()
+        assert row is not None
+        assert row[1] == "jsonb"
+
+
 def test_create_store_no_embed(pg_con):
     store = PostgreSQLStore.create(
         con=pg_con,
