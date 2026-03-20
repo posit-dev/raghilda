@@ -19,15 +19,25 @@ class EmbeddingNVIDIA(EmbeddingProvider):
     NVIDIA's embedding API is compatible with the OpenAI client library. It supports
     differentiated query vs document embeddings via the `input_type` parameter.
 
+    Browse available models and get API keys at
+    [NVIDIA NIM](https://build.nvidia.com/nvidia).
+
+    NVIDIA also provides Docker images for self-hosting NIM models. When running a
+    model locally or on your own infrastructure, set the `base_url` parameter to
+    point to your self-hosted endpoint (e.g., `"http://localhost:8000/v1"`).
+
     Parameters
     ----------
     model
         The NVIDIA embedding model to use. Default is "nvidia/llama-nemotron-embed-1b-v2".
     base_url
         The base URL for the NVIDIA API. Default is "https://integrate.api.nvidia.com/v1".
+        Change this to point to a self-hosted NIM container
+        (e.g., `"http://localhost:8000/v1"`).
     api_key
         The API key for authenticating with NVIDIA. If None, it will use the
-        NVIDIA_API_KEY environment variable if set.
+        NVIDIA_API_KEY environment variable if set. Not required when using a
+        self-hosted NIM container.
     batch_size
         The number of texts to process in each batch when calling the API.
     truncate
@@ -40,7 +50,14 @@ class EmbeddingNVIDIA(EmbeddingProvider):
     #| eval: false
     from raghilda.embedding import EmbeddingNVIDIA, EmbedInputType
 
+    # Using NVIDIA's hosted API
     provider = EmbeddingNVIDIA(model="nvidia/llama-nemotron-embed-1b-v2")
+
+    # Or using a self-hosted NIM container
+    provider = EmbeddingNVIDIA(
+        model="nvidia/llama-nemotron-embed-1b-v2",
+        base_url="http://localhost:8000/v1",
+    )
 
     # Embed documents for indexing
     doc_embeddings = provider.embed(
