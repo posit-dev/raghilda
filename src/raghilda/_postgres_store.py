@@ -586,6 +586,9 @@ class PostgreSQLStore(BaseStore):
             """)
         self.con.commit()
 
-    def size(self):
-        raise NotImplementedError("size is not yet implemented")
+    def size(self) -> int:
+        with self.con.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM documents")
+            row = cur.fetchone()
+        return row[0] if row else 0
 

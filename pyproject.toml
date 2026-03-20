@@ -31,7 +31,7 @@ test = ["pyright>=1.1.405", "pytest>=8.4.1", "ruff>=0.12.11", "chonkie>=1.0.0", 
 examples = ["chatlas>=0.2.0", "python-dotenv>=1.0.0"]
 chromadb = ["chromadb>=1.0.0"]
 sentence-transformers = ["sentence-transformers>=3.0.0"]
-postgres = ["psycopg2"]
+postgres = ["psycopg2-binary"]
 
 [dependency-groups]
 dev = [

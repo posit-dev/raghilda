@@ -357,3 +357,18 @@ def test_retrieve_vss_no_embed_raises(pg_con):
 
     with pytest.raises(ValueError, match="No embedding function available"):
         store.retrieve_vss("test", top_k=3)
+
+
+def test_size(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    assert store.size() == 0
+
+    store.upsert(_make_chunked_doc(origin="doc1"))
+    assert store.size() == 1
+
+    store.upsert(_make_chunked_doc(origin="doc2", content="# Other\n\nAnother doc."))
+    assert store.size() == 2
+
+    # Replacing a doc shouldn't change the count
+    store.upsert(_make_chunked_doc(origin="doc1", content="# Hello\n\nUpdated."))
+    assert store.size() == 2
