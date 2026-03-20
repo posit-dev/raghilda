@@ -4,10 +4,12 @@ from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
 from .chunk import RetrievedChunk, Metric
 from ._deoverlap import deoverlap_chunks
-from typing import Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence, Union
 from enum import StrEnum
 import psycopg2
 import logging
+
+ConnectionLike = Union[str, psycopg2.extensions.connection]
 from ._attributes import (
     AttributeFloatVectorType,
     AttributeStructType,
@@ -96,6 +98,12 @@ class VSSMethod(StrEnum):
         }[self]
 
 
+def _resolve_connection(con: ConnectionLike) -> psycopg2.extensions.connection:
+    if isinstance(con, str):
+        return psycopg2.connect(con)
+    return con
+
+
 class PostgreSQLStore(BaseStore):
     """A store backed by a PostgreSQL database with pgvector.
 
@@ -119,9 +127,14 @@ class PostgreSQLStore(BaseStore):
         self._metadata = metadata
         self._schema = psycopg2.extensions.quote_ident(schema, con)
 
+    def close(self) -> None:
+        """Close the store's database connection."""
+        if self.con and not self.con.closed:
+            self.con.close()
+
     @staticmethod
     def create(
-        con: psycopg2.extensions.connection,
+        con: ConnectionLike,
         embed: Optional[EmbeddingProvider],
         name: Optional[str] = None,
         title: Optional[str] = None,
@@ -135,7 +148,8 @@ class PostgreSQLStore(BaseStore):
         Parameters
         ----------
         con
-            An open psycopg connection to a PostgreSQL database.
+            A PostgreSQL connection string (e.g.
+            ``"postgresql://user:pass@localhost/mydb"``).
         embed
             Embedding provider for generating vector embeddings.
             If None, only full-text search will be available.
@@ -168,6 +182,8 @@ class PostgreSQLStore(BaseStore):
             If ``overwrite`` is False and the schema already contains
             a store.
         """
+        con = _resolve_connection(con)
+
         if name is None:
             name = "raghilda_db"
 
@@ -301,7 +317,7 @@ class PostgreSQLStore(BaseStore):
 
     @staticmethod
     def connect(
-        con: psycopg2.extensions.connection,
+        con: ConnectionLike,
         schema: str = "raghilda",
     ) -> "PostgreSQLStore":
         """Connect to an existing PostgreSQL store.
@@ -309,8 +325,8 @@ class PostgreSQLStore(BaseStore):
         Parameters
         ----------
         con
-            An open psycopg2 connection to a PostgreSQL database
-            that already contains a raghilda store.
+            A PostgreSQL connection string (e.g.
+            ``"postgresql://user:pass@localhost/mydb"``).
         schema
             PostgreSQL schema where the store tables live. Defaults to
             ``"raghilda"``.
@@ -320,6 +336,7 @@ class PostgreSQLStore(BaseStore):
         PostgreSQLStore
             A connected store instance.
         """
+        con = _resolve_connection(con)
         schema_id = psycopg2.extensions.quote_ident(schema, con)
         with con.cursor() as cur:
             try:
