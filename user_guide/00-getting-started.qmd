@@ -37,7 +37,7 @@ store = DuckDBStore.create(
 )
 ```
 
-raghilda supports multiple embedding providers (OpenAI, Cohere) and storage backends (DuckDB, ChromaDB, OpenAI Vector Stores). See the [API Reference](/reference/index.qmd) for all options.
+raghilda supports multiple embedding providers (OpenAI, Cohere) and storage backends (DuckDB, ChromaDB, OpenAI Vector Stores, PostgreSQL). See the [API Reference](/reference/index.qmd) for all options.
 
 ## Finding Documents
 
