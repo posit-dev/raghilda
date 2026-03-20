@@ -3,6 +3,8 @@ import psycopg2
 from raghilda._postgres_store import PostgreSQLStore
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
 from raghilda.embedding import register_embedding_provider
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
 
 
 POSTGRES_URL = "postgresql://raghilda:raghilda@localhost:5432/raghilda"
@@ -162,3 +164,50 @@ def test_connect_no_embed(pg_con):
 def test_connect_no_metadata(pg_con):
     with pytest.raises(ValueError, match="No metadata found"):
         PostgreSQLStore.connect(pg_con)
+
+
+def _make_chunked_doc(origin="doc1", content="# Hello\n\nThis is a test document."):
+    doc = MarkdownDocument(content=content, origin=origin)
+    chunker = MarkdownChunker(chunk_size=500)
+    return chunker.chunk(doc)
+
+
+def test_upsert_insert(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc = _make_chunked_doc()
+    result = store.upsert(doc)
+    assert result.action == "inserted"
+
+    with pg_con.cursor() as cur:
+        cur.execute("SELECT origin, text FROM documents;")
+        row = cur.fetchone()
+        assert row[0] == "doc1"
+        assert row[1] == doc.content
+
+        cur.execute("SELECT origin, start_index, end_index FROM embeddings;")
+        rows = cur.fetchall()
+        assert len(rows) == len(doc.chunks)
+
+
+def test_upsert_skip_unchanged(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc = _make_chunked_doc()
+    store.upsert(doc)
+
+    result = store.upsert(doc)
+    assert result.action == "skipped"
+
+
+def test_upsert_replace(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc1 = _make_chunked_doc(content="# Hello\n\nOriginal content.")
+    store.upsert(doc1)
+
+    doc2 = _make_chunked_doc(content="# Hello\n\nUpdated content.")
+    result = store.upsert(doc2)
+    assert result.action == "replaced"
+
+    with pg_con.cursor() as cur:
+        cur.execute("SELECT text FROM documents WHERE origin = %s;", ["doc1"])
+        row = cur.fetchone()
+        assert row[0] == doc2.content

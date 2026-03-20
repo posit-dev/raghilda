@@ -1,6 +1,7 @@
-from ._store import BaseStore
+from ._store import BaseStore, WriteResult
 import json
-from .embedding import EmbeddingProvider, embedding_from_config
+from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
+from .document import Document, ChunkedMarkdownDocument
 from typing import Mapping, Optional
 import psycopg2
 import logging
@@ -237,8 +238,96 @@ class PostgreSQLStore(BaseStore):
 
         return PostgreSQLStore(con, metadata)
 
-    def upsert(self, document, *, skip_if_unchanged=True):  # noqa: ARG002
-        raise NotImplementedError("upsert is not yet implemented")
+    def upsert(
+        self,
+        document: Document,
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult[ChunkedMarkdownDocument]:
+        if not isinstance(document, ChunkedMarkdownDocument):
+            raise NotImplementedError(
+                f"Upsert not implemented for type {type(document)}"
+            )
+        if not isinstance(document.origin, str) or not document.origin:
+            raise ValueError("document.origin must be a non-empty string for upsert().")
+        if len(document.chunks) == 0:
+            raise ValueError("Document must contain at least one chunk.")
+
+        # Check if we can skip early
+        with self.con.cursor() as cur:
+            cur.execute(
+                "SELECT text FROM documents WHERE origin = %s",
+                [document.origin],
+            )
+            existing = cur.fetchone()
+
+        if (
+            skip_if_unchanged
+            and existing is not None
+            and existing[0] == document.content
+        ):
+            return WriteResult(action="skipped", document=document)
+
+        # Compute embeddings outside the transaction
+        embed = self._metadata.get("embed")
+        embeddings = None
+        if embed is not None:
+            chunk_texts = [chunk.text for chunk in document.chunks]
+            embeddings = embed.embed(chunk_texts, EmbedInputType.DOCUMENT)
+
+        # Write to the database
+        with self.con.cursor() as cur:
+            action = "inserted"
+            replaced_document = None
+            if existing is not None:
+                action = "replaced"
+                cur.execute(
+                    "DELETE FROM embeddings WHERE origin = %s",
+                    [document.origin],
+                )
+                cur.execute(
+                    "UPDATE documents SET text = %s WHERE origin = %s",
+                    [document.content, document.origin],
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO documents (origin, text) VALUES (%s, %s)",
+                    [document.origin, document.content],
+                )
+
+            for i, chunk in enumerate(document.chunks):
+                columns = [
+                    "origin",
+                    "start_index",
+                    "end_index",
+                    "char_count",
+                    "context",
+                ]
+                values: list = [
+                    document.origin,
+                    chunk.start_index,
+                    chunk.end_index,
+                    len(chunk.text),
+                    chunk.context,
+                ]
+                if embeddings is not None:
+                    columns.append("embedding")
+                    values.append(str(embeddings[i]))
+
+                placeholders = ", ".join(["%s"] * len(values))
+                columns_sql = ", ".join(columns)
+                cur.execute(
+                    f"INSERT INTO embeddings ({columns_sql}) VALUES ({placeholders})",
+                    values,
+                )
+
+        self.con.commit()
+
+        return WriteResult(
+            action=action,
+            document=document,
+            replaced_document=replaced_document,
+        )
 
     def retrieve(self, text, top_k, *args, **kwargs):  # noqa: ARG002
         raise NotImplementedError("retrieve is not yet implemented")
