@@ -457,6 +457,37 @@ def test_retrieve_with_attributes_filter(pg_con):
     assert all(r.origin == "rust" for r in results)
 
 
+def test_retrieve_with_struct_attribute_filter(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"meta": {"category": str, "level": int}},
+    )
+    doc1 = _make_chunked_doc(
+        origin="python",
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    doc1.attributes = {"meta": {"category": "tutorial", "level": 1}}
+    doc2 = _make_chunked_doc(
+        origin="rust",
+        content="# Rust\n\nRust is a systems programming language focused on safety.",
+    )
+    doc2.attributes = {"meta": {"category": "reference", "level": 3}}
+    store.upsert(doc1)
+    store.upsert(doc2)
+
+    # Filter on nested struct field
+    results = store.retrieve_fts(
+        "programming", top_k=5, attributes_filter="meta.category = 'tutorial'"
+    )
+    assert all(r.origin == "python" for r in results)
+
+    results = store.retrieve_vss(
+        "programming", top_k=5, attributes_filter="meta.category = 'reference'"
+    )
+    assert all(r.origin == "rust" for r in results)
+
+
 def test_retrieve_no_embed_uses_fts_only(pg_con):
     store = PostgreSQLStore.create(con=pg_con, embed=None)
     doc = _make_chunked_doc(

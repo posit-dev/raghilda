@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Iterable, Mapping, Optional, cast
+from typing import Any, Callable, Iterable, Mapping, Optional, cast
 
 from ._attribute_schema import AttributeFilter, AttributeFilterValue, AttributeScalar
 
@@ -27,11 +27,13 @@ def compile_filter_to_sql(
     attributes_filter: Optional[AttributeFilter],
     *,
     allowed_columns: Optional[Iterable[str]] = None,
+    column_expr: Optional[Callable[[str], str]] = None,
 ) -> Optional[str]:
     node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
     if node is None:
         return None
-    return _emit_sql(node)
+    col_fn = column_expr or _sql_column_expression
+    return _emit_sql(node, column_expr=col_fn)
 
 
 def compile_filter_to_chroma_where(
@@ -407,12 +409,18 @@ def _tokenize_filter(text: str) -> list[_Token]:
     return tokens
 
 
-def _emit_sql(node: FilterNode) -> str:
+def _emit_sql(node: FilterNode, *, column_expr: Callable[[str], str]) -> str:
     if isinstance(node, FilterLogical):
         joiner = " AND " if node.operator == "and" else " OR "
-        return "(" + joiner.join(_emit_sql(child) for child in node.children) + ")"
+        return (
+            "("
+            + joiner.join(
+                _emit_sql(child, column_expr=column_expr) for child in node.children
+            )
+            + ")"
+        )
 
-    column = _sql_column_expression(node.column)
+    column = column_expr(node.column)
     if node.operator == "in":
         values = cast(list[AttributeScalar], node.value)
         values_sql = ", ".join(_sql_literal_scalar(value) for value in values)
@@ -515,4 +523,21 @@ def _sql_column_expression(column: str) -> str:
     for field in parts[1:]:
         escaped = field.replace("'", "''")
         expr = f"struct_extract({expr}, '{escaped}')"
+    return expr
+
+
+def pg_column_expression(column: str) -> str:
+    """Column expression emitter for PostgreSQL JSONB struct attributes.
+
+    For simple columns returns a quoted identifier. For dotted paths
+    like ``meta.key``, uses the ``->>`` operator to extract the value
+    as text from a JSONB column.
+    """
+    parts = column.split(".")
+    if len(parts) == 1:
+        return _quote_identifier(parts[0])
+    expr = _quote_identifier(parts[0])
+    for field in parts[1:]:
+        escaped = field.replace("'", "''")
+        expr = f"{expr}->>'{escaped}'"
     return expr

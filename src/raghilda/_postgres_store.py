@@ -22,7 +22,7 @@ from ._attributes import (
     normalize_attributes_spec,
 )
 from ._attribute_schema import AttributeFilter, filterable_attribute_paths
-from ._attribute_filters import compile_filter_to_sql
+from ._attribute_filters import compile_filter_to_sql, pg_column_expression
 
 logger = logging.getLogger(__name__)
 
@@ -702,6 +702,7 @@ class PostgreSQLStore(BaseStore):
         compiled_filter = compile_filter_to_sql(
             attributes_filter,
             allowed_columns=self._filterable_columns(),
+            column_expr=pg_column_expression,
         )
         where_clause = "WHERE e.fts_search_vector @@ plainto_tsquery('simple', %s)"
         if compiled_filter:
@@ -815,6 +816,7 @@ class PostgreSQLStore(BaseStore):
         compiled_filter = compile_filter_to_sql(
             attributes_filter,
             allowed_columns=self._filterable_columns(),
+            column_expr=pg_column_expression,
         )
         where_clause = ""
         if compiled_filter:
