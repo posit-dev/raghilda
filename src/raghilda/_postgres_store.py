@@ -9,9 +9,11 @@ from ._attributes import (
     AttributeFloatVectorType,
     AttributeStructType,
     AttributeType,
+    AttributeValue,
     AttributesSchemaSpec,
     attributes_spec_from_json_dict,
     attributes_spec_to_json_dict,
+    merge_attribute_values,
     normalize_attributes_spec,
 )
 
@@ -275,6 +277,18 @@ class PostgreSQLStore(BaseStore):
             chunk_texts = [chunk.text for chunk in document.chunks]
             embeddings = embed.embed(chunk_texts, EmbedInputType.DOCUMENT)
 
+        # Resolve attributes for each chunk
+        attributes_spec = self._metadata.get("attributes", {})
+        resolved_chunk_attributes: list[dict[str, AttributeValue]] = []
+        for chunk in document.chunks:
+            chunk_attributes = getattr(chunk, "attributes", None)
+            resolved_chunk_attributes.append(
+                merge_attribute_values(
+                    attributes_spec=attributes_spec,
+                    sources=[document.attributes, chunk_attributes],
+                )
+            )
+
         # Write to the database
         with self.con.cursor() as cur:
             action = "inserted"
@@ -313,6 +327,13 @@ class PostgreSQLStore(BaseStore):
                 if embeddings is not None:
                     columns.append("embedding")
                     values.append(str(embeddings[i]))
+
+                for attr_name in attributes_spec:
+                    columns.append(f'"{attr_name}"')
+                    attr_val = resolved_chunk_attributes[i][attr_name]
+                    if isinstance(attr_val, (dict, list)):
+                        attr_val = json.dumps(attr_val)
+                    values.append(attr_val)
 
                 placeholders = ", ".join(["%s"] * len(values))
                 columns_sql = ", ".join(columns)

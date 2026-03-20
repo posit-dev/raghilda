@@ -211,3 +211,78 @@ def test_upsert_replace(pg_con):
         cur.execute("SELECT text FROM documents WHERE origin = %s;", ["doc1"])
         row = cur.fetchone()
         assert row[0] == doc2.content
+
+
+def test_upsert_with_attributes(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": str, "priority": int},
+    )
+    doc = _make_chunked_doc()
+    doc.attributes = {"tenant": "acme", "priority": 5}
+    result = store.upsert(doc)
+    assert result.action == "inserted"
+
+    with pg_con.cursor() as cur:
+        cur.execute('SELECT tenant, priority FROM embeddings ORDER BY start_index;')
+        rows = cur.fetchall()
+        assert len(rows) == len(doc.chunks)
+        for row in rows:
+            assert row[0] == "acme"
+            assert row[1] == 5
+
+
+def test_upsert_with_undeclared_attribute(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": str},
+    )
+    doc = _make_chunked_doc()
+    doc.attributes = {"tenant": "acme", "unknown": "value"}
+    with pytest.raises(ValueError, match="Unknown attribute key 'unknown'"):
+        store.upsert(doc)
+
+
+def test_upsert_with_missing_required_attribute(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": str},
+    )
+    doc = _make_chunked_doc()
+    with pytest.raises(ValueError, match="Missing required attribute 'tenant'"):
+        store.upsert(doc)
+
+
+def test_upsert_with_wrong_attribute_type(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"priority": int},
+    )
+    doc = _make_chunked_doc()
+    doc.attributes = {"priority": "not_an_int"}
+    with pytest.raises(ValueError, match="expected int"):
+        store.upsert(doc)
+
+
+def test_upsert_with_optional_attribute(pg_con):
+    from typing import Optional
+
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": Optional[str]},
+    )
+    doc = _make_chunked_doc()
+    # No attributes set — should use default None
+    result = store.upsert(doc)
+    assert result.action == "inserted"
+
+    with pg_con.cursor() as cur:
+        cur.execute("SELECT tenant FROM embeddings;")
+        rows = cur.fetchall()
+        for row in rows:
+            assert row[0] is None
