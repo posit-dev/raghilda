@@ -3,6 +3,7 @@ import json
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
 from .chunk import RetrievedChunk, Metric
+from ._deoverlap import deoverlap_chunks
 from typing import Mapping, Optional, Sequence
 from enum import StrEnum
 import psycopg2
@@ -432,6 +433,8 @@ class PostgreSQLStore(BaseStore):
         self,
         text: str,
         top_k: int = 3,
+        *,
+        deoverlap: bool = True,
     ) -> list[RetrievedChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -446,7 +449,12 @@ class PostgreSQLStore(BaseStore):
         top_k
             The maximum number of chunks to return from each retrieval
             method (VSS and FTS). Because results from both methods are
-            combined, the final count may differ from ``top_k``.
+            combined before deoverlapping, the final count may differ
+            from ``top_k``.
+        deoverlap
+            If True (default), merge overlapping chunks from the same
+            document. Overlapping chunks are identified by their
+            ``start_index`` and ``end_index`` positions.
 
         Returns
         -------
@@ -469,7 +477,12 @@ class PostgreSQLStore(BaseStore):
             else:
                 combined[key].metrics.extend(chunk.metrics or [])
 
-        return list(combined.values())
+        chunks = list(combined.values())
+
+        if deoverlap:
+            chunks = deoverlap_chunks(chunks, key=lambda c: c.origin)
+
+        return chunks
 
     def retrieve_fts(
         self,
