@@ -141,9 +141,7 @@ def test_create_store_raises_if_exists(pg_con):
 
 
 def test_create_store_overwrite(pg_con):
-    store1 = PostgreSQLStore.create(
-        con=pg_con, embed=FakeEmbedding(), name="old_store"
-    )
+    store1 = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding(), name="old_store")
     store1.upsert(_make_chunked_doc(origin="doc1"))
     assert store1.size() == 1
 
@@ -247,7 +245,9 @@ def test_upsert_with_attributes(pg_con):
     assert result.action == "inserted"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT tenant, priority FROM raghilda.embeddings ORDER BY start_index;")
+        cur.execute(
+            "SELECT tenant, priority FROM raghilda.embeddings ORDER BY start_index;"
+        )
         rows = cur.fetchall()
         assert len(rows) == len(doc.chunks)
         for row in rows:

@@ -112,7 +112,9 @@ class PostgreSQLStore(BaseStore):
       indexes for other distance methods (L2, inner product).
     """
 
-    def __init__(self, con: psycopg2.extensions.connection, metadata: dict, schema: str):
+    def __init__(
+        self, con: psycopg2.extensions.connection, metadata: dict, schema: str
+    ):
         self.con = con
         self._metadata = metadata
         self._schema = psycopg2.extensions.quote_ident(schema, con)
@@ -232,9 +234,7 @@ class PostgreSQLStore(BaseStore):
                     )
                 cur.execute("DROP SCHEMA %s CASCADE;" % schema_id)
 
-            cur.execute(
-                "CREATE SCHEMA IF NOT EXISTS %s;" % schema_id
-            )
+            cur.execute("CREATE SCHEMA IF NOT EXISTS %s;" % schema_id)
 
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {schema_id}.metadata (
