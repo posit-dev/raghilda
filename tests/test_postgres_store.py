@@ -52,7 +52,7 @@ def test_create_store(pg_con):
     assert store._metadata["title"] == "Test Store"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT name, title, embed_config FROM metadata;")
+        cur.execute("SELECT name, title, embed_config FROM raghilda.metadata;")
         row = cur.fetchone()
         assert row[0] == "test_store"
         assert row[1] == "Test Store"
@@ -61,7 +61,7 @@ def test_create_store(pg_con):
         cur.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'embeddings'
+            WHERE table_schema = 'raghilda' AND table_name = 'embeddings'
             ORDER BY ordinal_position;
         """)
         columns = {r[0]: r[1] for r in cur.fetchall()}
@@ -87,7 +87,7 @@ def test_create_store_with_attributes(pg_con):
         cur.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'embeddings'
+            WHERE table_schema = 'raghilda' AND table_name = 'embeddings'
             ORDER BY ordinal_position;
         """)
         columns = {r[0]: r[1] for r in cur.fetchall()}
@@ -110,7 +110,7 @@ def test_create_store_with_struct_attribute(pg_con):
         cur.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'embeddings' AND column_name = 'meta';
+            WHERE table_schema = 'raghilda' AND table_name = 'embeddings' AND column_name = 'meta';
         """)
         row = cur.fetchone()
         assert row is not None
@@ -128,7 +128,7 @@ def test_create_store_no_embed(pg_con):
         cur.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = 'embeddings';
+            WHERE table_schema = 'raghilda' AND table_name = 'embeddings';
         """)
         columns = {r[0] for r in cur.fetchall()}
         assert "embedding" not in columns
@@ -181,12 +181,12 @@ def test_upsert_insert(pg_con):
     assert result.action == "inserted"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT origin, text FROM documents;")
+        cur.execute("SELECT origin, text FROM raghilda.documents;")
         row = cur.fetchone()
         assert row[0] == "doc1"
         assert row[1] == doc.content
 
-        cur.execute("SELECT origin, start_index, end_index FROM embeddings;")
+        cur.execute("SELECT origin, start_index, end_index FROM raghilda.embeddings;")
         rows = cur.fetchall()
         assert len(rows) == len(doc.chunks)
 
@@ -210,7 +210,7 @@ def test_upsert_replace(pg_con):
     assert result.action == "replaced"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT text FROM documents WHERE origin = %s;", ["doc1"])
+        cur.execute("SELECT text FROM raghilda.documents WHERE origin = %s;", ["doc1"])
         row = cur.fetchone()
         assert row[0] == doc2.content
 
@@ -227,7 +227,7 @@ def test_upsert_with_attributes(pg_con):
     assert result.action == "inserted"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT tenant, priority FROM embeddings ORDER BY start_index;")
+        cur.execute("SELECT tenant, priority FROM raghilda.embeddings ORDER BY start_index;")
         rows = cur.fetchall()
         assert len(rows) == len(doc.chunks)
         for row in rows:
@@ -284,7 +284,7 @@ def test_upsert_with_optional_attribute(pg_con):
     assert result.action == "inserted"
 
     with pg_con.cursor() as cur:
-        cur.execute("SELECT tenant FROM embeddings;")
+        cur.execute("SELECT tenant FROM raghilda.embeddings;")
         rows = cur.fetchall()
         for row in rows:
             assert row[0] is None

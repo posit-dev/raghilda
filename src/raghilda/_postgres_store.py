@@ -112,9 +112,10 @@ class PostgreSQLStore(BaseStore):
       indexes for other distance methods (L2, inner product).
     """
 
-    def __init__(self, con: psycopg2.extensions.connection, metadata: dict):
+    def __init__(self, con: psycopg2.extensions.connection, metadata: dict, schema: str):
         self.con = con
         self._metadata = metadata
+        self._schema = psycopg2.extensions.quote_ident(schema, con)
 
     @staticmethod
     def create(
@@ -147,8 +148,7 @@ class PostgreSQLStore(BaseStore):
             Ignored when ``embed`` is ``None``.
         schema
             PostgreSQL schema to create the store tables in. Defaults to
-            ``"raghilda"``. The schema is created if it does not exist and
-            the connection's ``search_path`` is set to use it.
+            ``"raghilda"``. The schema is created if it does not exist.
 
         Returns
         -------
@@ -205,15 +205,14 @@ class PostgreSQLStore(BaseStore):
                     "Install pgvector: https://github.com/pgvector/pgvector"
                 )
 
+            schema_id = psycopg2.extensions.quote_ident(schema, con)
+
             cur.execute(
-                "CREATE SCHEMA IF NOT EXISTS %s;" % psycopg2.extensions.quote_ident(schema, con)
-            )
-            cur.execute(
-                "SET search_path TO %s, public;" % psycopg2.extensions.quote_ident(schema, con)
+                "CREATE SCHEMA IF NOT EXISTS %s;" % schema_id
             )
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS metadata (
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema_id}.metadata (
                     name VARCHAR,
                     title VARCHAR,
                     embed_config VARCHAR,
@@ -221,16 +220,16 @@ class PostgreSQLStore(BaseStore):
                 );
             """)
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS documents (
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {schema_id}.documents (
                     origin VARCHAR PRIMARY KEY,
                     text VARCHAR
                 );
             """)
 
             cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS embeddings (
-                    origin VARCHAR NOT NULL REFERENCES documents (origin),
+                CREATE TABLE IF NOT EXISTS {schema_id}.embeddings (
+                    origin VARCHAR NOT NULL REFERENCES {schema_id}.documents (origin),
                     chunk_id SERIAL,
                     start_index INTEGER,
                     end_index INTEGER,
@@ -242,9 +241,9 @@ class PostgreSQLStore(BaseStore):
                 );
             """)
 
-            cur.execute("""
+            cur.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_embeddings_fts
-                ON embeddings USING GIN (fts_search_vector);
+                ON {schema_id}.embeddings USING GIN (fts_search_vector);
             """)
 
             if embed is not None and vss_index is not None:
@@ -253,12 +252,12 @@ class PostgreSQLStore(BaseStore):
                 index_name = f"idx_embeddings_vss_{vss_index.value}"
                 cur.execute(f"""
                     CREATE INDEX IF NOT EXISTS {index_name}
-                    ON embeddings USING hnsw (embedding {ops_class});
+                    ON {schema_id}.embeddings USING hnsw (embedding {ops_class});
                 """)
 
             cur.execute(
-                """
-                INSERT INTO metadata (name, title, embed_config, attributes_schema_json)
+                f"""
+                INSERT INTO {schema_id}.metadata (name, title, embed_config, attributes_schema_json)
                 VALUES (%s, %s, %s, %s)
                 """,
                 [name, title, embed_config_json, attributes_schema_json],
@@ -273,7 +272,7 @@ class PostgreSQLStore(BaseStore):
             "attributes": attributes_spec,
         }
 
-        return PostgreSQLStore(con, metadata)
+        return PostgreSQLStore(con, metadata, schema)
 
     @staticmethod
     def connect(
@@ -296,13 +295,11 @@ class PostgreSQLStore(BaseStore):
         PostgreSQLStore
             A connected store instance.
         """
+        schema_id = psycopg2.extensions.quote_ident(schema, con)
         with con.cursor() as cur:
-            cur.execute(
-                "SET search_path TO %s, public;" % psycopg2.extensions.quote_ident(schema, con)
-            )
             try:
                 cur.execute(
-                    "SELECT name, title, embed_config, attributes_schema_json FROM metadata"
+                    f"SELECT name, title, embed_config, attributes_schema_json FROM {schema_id}.metadata"
                 )
                 row = cur.fetchone()
             except psycopg2.errors.UndefinedTable:
@@ -336,7 +333,7 @@ class PostgreSQLStore(BaseStore):
             "attributes": attributes_spec,
         }
 
-        return PostgreSQLStore(con, metadata)
+        return PostgreSQLStore(con, metadata, schema)
 
     def upsert(
         self,
@@ -380,7 +377,7 @@ class PostgreSQLStore(BaseStore):
         # Check if we can skip early
         with self.con.cursor() as cur:
             cur.execute(
-                "SELECT text FROM documents WHERE origin = %s",
+                f"SELECT text FROM {self._schema}.documents WHERE origin = %s",
                 [document.origin],
             )
             existing = cur.fetchone()
@@ -418,16 +415,16 @@ class PostgreSQLStore(BaseStore):
             if existing is not None:
                 action = "replaced"
                 cur.execute(
-                    "DELETE FROM embeddings WHERE origin = %s",
+                    f"DELETE FROM {self._schema}.embeddings WHERE origin = %s",
                     [document.origin],
                 )
                 cur.execute(
-                    "UPDATE documents SET text = %s WHERE origin = %s",
+                    f"UPDATE {self._schema}.documents SET text = %s WHERE origin = %s",
                     [document.content, document.origin],
                 )
             else:
                 cur.execute(
-                    "INSERT INTO documents (origin, text) VALUES (%s, %s)",
+                    f"INSERT INTO {self._schema}.documents (origin, text) VALUES (%s, %s)",
                     [document.origin, document.content],
                 )
 
@@ -468,7 +465,7 @@ class PostgreSQLStore(BaseStore):
                 placeholders_sql = ", ".join(placeholders)
                 columns_sql = ", ".join(columns)
                 cur.execute(
-                    f"INSERT INTO embeddings ({columns_sql}) VALUES ({placeholders_sql})",
+                    f"INSERT INTO {self._schema}.embeddings ({columns_sql}) VALUES ({placeholders_sql})",
                     values,
                 )
 
@@ -557,7 +554,7 @@ class PostgreSQLStore(BaseStore):
         list[RetrievedChunk]
             The matching chunks ranked by ts_rank score.
         """
-        sql = """
+        sql = f"""
             SELECT
                 d.origin,
                 e.start_index,
@@ -567,8 +564,8 @@ class PostgreSQLStore(BaseStore):
                 e.chunk_id,
                 SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index) AS chunk_text,
                 ts_rank(e.fts_search_vector, plainto_tsquery('simple', %s)) AS rank
-            FROM embeddings e
-            JOIN documents d USING (origin)
+            FROM {self._schema}.embeddings e
+            JOIN {self._schema}.documents d USING (origin)
             WHERE e.fts_search_vector @@ plainto_tsquery('simple', %s)
             ORDER BY rank DESC
             LIMIT %s
@@ -666,8 +663,8 @@ class PostgreSQLStore(BaseStore):
                 e.chunk_id,
                 SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index) AS chunk_text,
                 (e.embedding {operator} %s::vector) AS distance
-            FROM embeddings e
-            JOIN documents d USING (origin)
+            FROM {self._schema}.embeddings e
+            JOIN {self._schema}.documents d USING (origin)
             ORDER BY distance ASC
             LIMIT %s
         """
@@ -720,7 +717,7 @@ class PostgreSQLStore(BaseStore):
         with self.con.cursor() as cur:
             cur.execute(f"""
                 CREATE INDEX IF NOT EXISTS {index_name}
-                ON embeddings USING hnsw (embedding {ops_class});
+                ON {self._schema}.embeddings USING hnsw (embedding {ops_class});
             """)
         self.con.commit()
 
@@ -733,6 +730,6 @@ class PostgreSQLStore(BaseStore):
             The number of documents (not chunks) in the store.
         """
         with self.con.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM documents")
+            cur.execute(f"SELECT COUNT(*) FROM {self._schema}.documents")
             row = cur.fetchone()
         return row[0] if row else 0
