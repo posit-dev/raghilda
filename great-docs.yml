@@ -73,6 +73,7 @@ reference:
       - name: store.DuckDBStore
       - name: store.ChromaDBStore
       - name: store.OpenAIStore
+      - name: store.PostgreSQLStore
 
   - title: Embedding
     desc: Embedding providers for generating vector representations
