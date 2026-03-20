@@ -21,8 +21,19 @@ from ._attributes import (
     merge_attribute_values,
     normalize_attributes_spec,
 )
+from ._attribute_schema import AttributeFilter, filterable_attribute_paths
+from ._attribute_filters import compile_filter_to_sql
 
 logger = logging.getLogger(__name__)
+
+_FILTERABLE_BASE_COLUMNS = {
+    "chunk_id",
+    "origin",
+    "start_index",
+    "end_index",
+    "char_count",
+    "context",
+}
 
 _RESERVED_SYSTEM_COLUMNS = {
     "chunk_id",
@@ -590,12 +601,20 @@ class PostgreSQLStore(BaseStore):
             attributes=document_attributes or None,
         )
 
+    def _filterable_columns(self) -> set[str]:
+        attributes_spec = self._metadata.get("attributes", {})
+        attributes_schema = {
+            key: spec.attribute_type for key, spec in attributes_spec.items()
+        }
+        return _FILTERABLE_BASE_COLUMNS | filterable_attribute_paths(attributes_schema)
+
     def retrieve(
         self,
         text: str,
         top_k: int = 3,
         *,
         deoverlap: bool = True,
+        attributes_filter: Optional[AttributeFilter] = None,
     ) -> list[RetrievedChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -616,6 +635,10 @@ class PostgreSQLStore(BaseStore):
             If True (default), merge overlapping chunks from the same
             document. Overlapping chunks are identified by their
             ``start_index`` and ``end_index`` positions.
+        attributes_filter
+            Optional filter to scope retrieval using attribute columns.
+            Can be a SQL-like string or a dict AST.
+            Example string: ``"tenant = 'docs' AND priority >= 2"``.
 
         Returns
         -------
@@ -624,9 +647,13 @@ class PostgreSQLStore(BaseStore):
         """
         retrieved_chunks: list[RetrievedChunk] = []
         if self._metadata.get("embed") is not None:
-            retrieved_chunks = self.retrieve_vss(text, top_k)
+            retrieved_chunks = self.retrieve_vss(
+                text, top_k, attributes_filter=attributes_filter
+            )
 
-        retrieved_chunks.extend(self.retrieve_fts(text, top_k))
+        retrieved_chunks.extend(
+            self.retrieve_fts(text, top_k, attributes_filter=attributes_filter)
+        )
 
         # Deduplicate by (origin, chunk_id), merging metrics
         combined: dict[tuple[str | None, int | None], RetrievedChunk] = {}
@@ -649,6 +676,8 @@ class PostgreSQLStore(BaseStore):
         self,
         text: str,
         top_k: int = 3,
+        *,
+        attributes_filter: Optional[AttributeFilter] = None,
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using PostgreSQL full-text search.
 
@@ -661,12 +690,23 @@ class PostgreSQLStore(BaseStore):
             The query text to search for.
         top_k
             The maximum number of chunks to return.
+        attributes_filter
+            Optional filter to scope retrieval using attribute columns.
+            Can be a SQL-like string or a dict AST.
 
         Returns
         -------
         list[RetrievedChunk]
             The matching chunks ranked by ts_rank score.
         """
+        compiled_filter = compile_filter_to_sql(
+            attributes_filter,
+            allowed_columns=self._filterable_columns(),
+        )
+        where_clause = "WHERE e.fts_search_vector @@ plainto_tsquery('simple', %s)"
+        if compiled_filter:
+            where_clause += f" AND ({compiled_filter})"
+
         sql = f"""
             SELECT
                 d.origin,
@@ -679,7 +719,7 @@ class PostgreSQLStore(BaseStore):
                 ts_rank(e.fts_search_vector, plainto_tsquery('simple', %s)) AS rank
             FROM {self._schema}.embeddings e
             JOIN {self._schema}.documents d USING (origin)
-            WHERE e.fts_search_vector @@ plainto_tsquery('simple', %s)
+            {where_clause}
             ORDER BY rank DESC
             LIMIT %s
         """
@@ -720,6 +760,7 @@ class PostgreSQLStore(BaseStore):
         top_k: int = 3,
         *,
         method: Optional[VSSMethod] = None,
+        attributes_filter: Optional[AttributeFilter] = None,
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using pgvector similarity search.
 
@@ -740,6 +781,9 @@ class PostgreSQLStore(BaseStore):
             Can be a :class:`VSSMethod` enum or a string like
             ``"cosine_distance"``, ``"l2_distance"``, or
             ``"inner_product"``.
+        attributes_filter
+            Optional filter to scope retrieval using attribute columns.
+            Can be a SQL-like string or a dict AST.
 
         Returns
         -------
@@ -768,6 +812,14 @@ class PostgreSQLStore(BaseStore):
 
         query_literal = "[" + ",".join(str(x) for x in query) + "]"
 
+        compiled_filter = compile_filter_to_sql(
+            attributes_filter,
+            allowed_columns=self._filterable_columns(),
+        )
+        where_clause = ""
+        if compiled_filter:
+            where_clause = f"WHERE {compiled_filter}"
+
         sql = f"""
             SELECT
                 d.origin,
@@ -780,6 +832,7 @@ class PostgreSQLStore(BaseStore):
                 (e.embedding {operator} %s::vector) AS distance
             FROM {self._schema}.embeddings e
             JOIN {self._schema}.documents d USING (origin)
+            {where_clause}
             ORDER BY distance ASC
             LIMIT %s
         """

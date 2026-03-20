@@ -411,6 +411,52 @@ def test_retrieve_combines_vss_and_fts(pg_con):
     assert "ts_rank" in metric_names
 
 
+def test_retrieve_with_attributes_filter(pg_con):
+    store = PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        attributes={"tenant": str},
+    )
+    doc1 = _make_chunked_doc(
+        origin="python",
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    doc1.attributes = {"tenant": "docs"}
+    doc2 = _make_chunked_doc(
+        origin="rust",
+        content="# Rust\n\nRust is a systems programming language focused on safety.",
+    )
+    doc2.attributes = {"tenant": "blog"}
+    store.upsert(doc1)
+    store.upsert(doc2)
+
+    # FTS with filter
+    results = store.retrieve_fts(
+        "programming", top_k=5, attributes_filter="tenant = 'docs'"
+    )
+    assert all(r.origin == "python" for r in results)
+
+    # VSS with filter
+    results = store.retrieve_vss(
+        "programming", top_k=5, attributes_filter="tenant = 'blog'"
+    )
+    assert all(r.origin == "rust" for r in results)
+
+    # Combined retrieve with filter
+    results = store.retrieve(
+        "programming", top_k=5, attributes_filter="tenant = 'docs'"
+    )
+    assert all(r.origin == "python" for r in results)
+
+    # Dict AST filter
+    results = store.retrieve_fts(
+        "programming",
+        top_k=5,
+        attributes_filter={"type": "eq", "key": "tenant", "value": "blog"},
+    )
+    assert all(r.origin == "rust" for r in results)
+
+
 def test_retrieve_no_embed_uses_fts_only(pg_con):
     store = PostgreSQLStore.create(con=pg_con, embed=None)
     doc = _make_chunked_doc(
