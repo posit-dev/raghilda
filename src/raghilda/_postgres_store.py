@@ -70,19 +70,38 @@ class VSSMethod(StrEnum):
     @property
     def pg_operator(self) -> str:
         return {
-            "cosine_distance": "<=>",
-            "l2_distance": "<->",
-            "inner_product": "<#>",
-        }[self.value]
+            VSSMethod.COSINE_DISTANCE: "<=>",
+            VSSMethod.L2_DISTANCE: "<->",
+            VSSMethod.INNER_PRODUCT: "<#>",
+        }[self]
 
     @property
     def metric_name(self) -> str:
         return self.value
 
+    @property
+    def pg_ops_class(self) -> str:
+        return {
+            VSSMethod.COSINE_DISTANCE: "vector_cosine_ops",
+            VSSMethod.L2_DISTANCE: "vector_l2_ops",
+            VSSMethod.INNER_PRODUCT: "vector_ip_ops",
+        }[self]
+
 
 class PostgreSQLStore(BaseStore):
-    """
-    A store backed by a PostgreSQL database.
+    """A store backed by a PostgreSQL database with pgvector.
+
+    Uses PostgreSQL for storage with two retrieval methods:
+
+    - **Full-text search** via :meth:`retrieve_fts`: uses PostgreSQL's
+      built-in ``tsvector``/``tsquery`` with ``ts_rank`` for ranking.
+      A pre-computed ``tsvector`` column with a GIN index is created
+      automatically.
+    - **Vector similarity search** via :meth:`retrieve_vss`: uses
+      pgvector for nearest-neighbor search over embeddings. An HNSW
+      index for cosine distance is created automatically when an
+      embedding provider is given. Use :meth:`build_index` to add
+      indexes for other distance methods (L2, inner product).
     """
 
     def __init__(self, con: psycopg2.extensions.connection, metadata: dict):
@@ -96,6 +115,7 @@ class PostgreSQLStore(BaseStore):
         name: Optional[str] = None,
         title: Optional[str] = None,
         attributes: Optional[AttributesSchemaSpec] = None,
+        vss_index: Optional[VSSMethod] = VSSMethod.COSINE_DISTANCE,
     ) -> "PostgreSQLStore":
         """Create a new PostgreSQL store.
 
@@ -112,6 +132,10 @@ class PostgreSQLStore(BaseStore):
             Human-readable title for the store.
         attributes
             Optional schema for user-defined attribute columns stored per chunk.
+        vss_index
+            The distance method to build an HNSW index for. Defaults to
+            cosine distance. Set to ``None`` to skip creating a VSS index.
+            Ignored when ``embed`` is ``None``.
 
         Returns
         -------
@@ -193,6 +217,15 @@ class PostgreSQLStore(BaseStore):
                 CREATE INDEX IF NOT EXISTS idx_embeddings_fts
                 ON embeddings USING GIN (fts_search_vector);
             """)
+
+            if embed is not None and vss_index is not None:
+                vss_index = VSSMethod(vss_index)
+                ops_class = vss_index.pg_ops_class
+                index_name = f"idx_embeddings_vss_{vss_index.value}"
+                cur.execute(f"""
+                    CREATE INDEX IF NOT EXISTS {index_name}
+                    ON embeddings USING hnsw (embedding {ops_class});
+                """)
 
             cur.execute(
                 """
@@ -530,6 +563,28 @@ class PostgreSQLStore(BaseStore):
             )
 
         return chunks
+
+    def build_index(self, method: VSSMethod) -> None:
+        """Build an HNSW index on the embedding column for the given distance method.
+
+        A cosine distance index is created by default when calling
+        :meth:`create` with an embedding provider. Use this method to
+        add indexes for other distance methods.
+
+        Parameters
+        ----------
+        method
+            The distance method to index for.
+        """
+        method = VSSMethod(method)
+        ops_class = method.pg_ops_class
+        index_name = f"idx_embeddings_vss_{method.value}"
+        with self.con.cursor() as cur:
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON embeddings USING hnsw (embedding {ops_class});
+            """)
+        self.con.commit()
 
     def size(self):
         raise NotImplementedError("size is not yet implemented")
