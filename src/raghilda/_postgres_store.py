@@ -3,7 +3,8 @@ import json
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
 from .chunk import RetrievedChunk, Metric
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
+from enum import StrEnum
 import psycopg2
 import logging
 from ._attributes import (
@@ -59,6 +60,24 @@ def _postgres_attribute_column_defs(
         sql_type = _postgres_sql_type_for_attribute_type(attribute_type)
         lines.append(f'"{column}" {sql_type}')
     return lines
+
+
+class VSSMethod(StrEnum):
+    COSINE_DISTANCE = "cosine_distance"
+    L2_DISTANCE = "l2_distance"
+    INNER_PRODUCT = "inner_product"
+
+    @property
+    def pg_operator(self) -> str:
+        return {
+            "cosine_distance": "<=>",
+            "l2_distance": "<->",
+            "inner_product": "<#>",
+        }[self.value]
+
+    @property
+    def metric_name(self) -> str:
+        return self.value
 
 
 class PostgreSQLStore(BaseStore):
@@ -431,6 +450,81 @@ class PostgreSQLStore(BaseStore):
                     context=context,
                     origin=origin,
                     metrics=[Metric(name="ts_rank", value=float(rank))],
+                    chunk_ids=[chunk_id],
+                )
+            )
+
+        return chunks
+
+    def retrieve_vss(
+        self,
+        query: str | Sequence[float],
+        top_k: int = 3,
+        *,
+        method: Optional[VSSMethod] = None,
+    ) -> list[RetrievedChunk]:
+        """Retrieve chunks using pgvector similarity search.
+
+        Parameters
+        ----------
+        query
+            The query text or embedding vector. If a string is provided,
+            it will be embedded using the store's embedding provider.
+        top_k
+            The maximum number of chunks to return.
+        method
+            The distance method to use. Defaults to cosine distance.
+
+        Returns
+        -------
+        list[RetrievedChunk]
+            The most similar chunks with distance metrics.
+        """
+        if method is None:
+            method = VSSMethod.COSINE_DISTANCE
+
+        embed = self._metadata.get("embed")
+        if isinstance(query, str):
+            if embed is None:
+                raise ValueError("No embedding function available in the store")
+            query = embed.embed([query], EmbedInputType.QUERY)[0]
+
+        operator = method.pg_operator
+        metric_name = method.metric_name
+
+        query_literal = "[" + ",".join(str(x) for x in query) + "]"
+
+        sql = f"""
+            SELECT
+                d.origin,
+                e.start_index,
+                e.end_index,
+                e.char_count,
+                e.context,
+                e.chunk_id,
+                SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index) AS chunk_text,
+                (e.embedding {operator} %s::vector) AS distance
+            FROM embeddings e
+            JOIN documents d USING (origin)
+            ORDER BY distance ASC
+            LIMIT %s
+        """
+        with self.con.cursor() as cur:
+            cur.execute(sql, [query_literal, top_k])
+            rows = cur.fetchall()
+
+        chunks: list[RetrievedChunk] = []
+        for row in rows:
+            origin, start_index, end_index, char_count, context, chunk_id, chunk_text, distance = row
+            chunks.append(
+                RetrievedChunk(
+                    text=chunk_text,
+                    start_index=start_index,
+                    end_index=end_index,
+                    char_count=char_count,
+                    context=context,
+                    origin=origin,
+                    metrics=[Metric(name=metric_name, value=float(distance))],
                     chunk_ids=[chunk_id],
                 )
             )

@@ -319,3 +319,41 @@ def test_retrieve_fts_no_match(pg_con):
 
     results = store.retrieve_fts("quantum physics", top_k=5)
     assert len(results) == 0
+
+
+def test_retrieve_vss(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc1 = _make_chunked_doc(
+        origin="python",
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    doc2 = _make_chunked_doc(
+        origin="rust",
+        content="# Rust\n\nRust is a systems programming language focused on safety.",
+    )
+    store.upsert(doc1)
+    store.upsert(doc2)
+
+    results = store.retrieve_vss("programming", top_k=5)
+    assert len(results) >= 1
+    assert results[0].metrics[0].name == "cosine_distance"
+    assert results[0].metrics[0].value >= 0
+
+
+def test_retrieve_vss_with_string_query(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc = _make_chunked_doc(content="# Hello\n\nThis is a test document.")
+    store.upsert(doc)
+
+    # Query with string — should embed automatically
+    results = store.retrieve_vss("test", top_k=3)
+    assert len(results) >= 1
+
+
+def test_retrieve_vss_no_embed_raises(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=None)
+    doc = _make_chunked_doc(content="# Hello\n\nThis is a test document.")
+    store.upsert(doc)
+
+    with pytest.raises(ValueError, match="No embedding function available"):
+        store.retrieve_vss("test", top_k=3)
