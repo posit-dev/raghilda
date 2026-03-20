@@ -286,3 +286,36 @@ def test_upsert_with_optional_attribute(pg_con):
         rows = cur.fetchall()
         for row in rows:
             assert row[0] is None
+
+
+def test_retrieve_fts(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc1 = _make_chunked_doc(
+        origin="python",
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    doc2 = _make_chunked_doc(
+        origin="rust",
+        content="# Rust\n\nRust is a systems programming language focused on safety.",
+    )
+    store.upsert(doc1)
+    store.upsert(doc2)
+
+    results = store.retrieve_fts("Python", top_k=5)
+    assert len(results) >= 1
+    assert results[0].origin == "python"
+    assert results[0].metrics[0].name == "ts_rank"
+    assert results[0].metrics[0].value > 0
+
+    results = store.retrieve_fts("safety", top_k=5)
+    assert len(results) >= 1
+    assert results[0].origin == "rust"
+
+
+def test_retrieve_fts_no_match(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc = _make_chunked_doc(content="# Hello\n\nThis is about cooking recipes.")
+    store.upsert(doc)
+
+    results = store.retrieve_fts("quantum physics", top_k=5)
+    assert len(results) == 0

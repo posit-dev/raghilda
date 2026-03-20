@@ -2,6 +2,7 @@ from ._store import BaseStore, WriteResult
 import json
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
+from .chunk import RetrievedChunk, Metric
 from typing import Mapping, Optional
 import psycopg2
 import logging
@@ -352,6 +353,70 @@ class PostgreSQLStore(BaseStore):
 
     def retrieve(self, text, top_k, *args, **kwargs):  # noqa: ARG002
         raise NotImplementedError("retrieve is not yet implemented")
+
+    def retrieve_fts(
+        self,
+        text: str,
+        top_k: int = 3,
+    ) -> list[RetrievedChunk]:
+        """Retrieve chunks using PostgreSQL full-text search.
+
+        Uses ``to_tsvector`` / ``plainto_tsquery`` with ``ts_rank`` for
+        ranking results.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return.
+
+        Returns
+        -------
+        list[RetrievedChunk]
+            The matching chunks ranked by ts_rank score.
+        """
+        sql = """
+            SELECT
+                d.origin,
+                e.start_index,
+                e.end_index,
+                e.char_count,
+                e.context,
+                e.chunk_id,
+                SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index) AS chunk_text,
+                ts_rank(
+                    to_tsvector('simple', SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index)),
+                    plainto_tsquery('simple', %s)
+                ) AS rank
+            FROM embeddings e
+            JOIN documents d USING (origin)
+            WHERE to_tsvector('simple', SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index))
+                  @@ plainto_tsquery('simple', %s)
+            ORDER BY rank DESC
+            LIMIT %s
+        """
+        with self.con.cursor() as cur:
+            cur.execute(sql, [text, text, top_k])
+            rows = cur.fetchall()
+
+        chunks: list[RetrievedChunk] = []
+        for row in rows:
+            origin, start_index, end_index, char_count, context, chunk_id, chunk_text, rank = row
+            chunks.append(
+                RetrievedChunk(
+                    text=chunk_text,
+                    start_index=start_index,
+                    end_index=end_index,
+                    char_count=char_count,
+                    context=context,
+                    origin=origin,
+                    metrics=[Metric(name="ts_rank", value=float(rank))],
+                    chunk_ids=[chunk_id],
+                )
+            )
+
+        return chunks
 
     def size(self):
         raise NotImplementedError("size is not yet implemented")
