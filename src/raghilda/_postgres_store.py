@@ -428,8 +428,48 @@ class PostgreSQLStore(BaseStore):
             replaced_document=replaced_document,
         )
 
-    def retrieve(self, text, top_k, *args, **kwargs):  # noqa: ARG002
-        raise NotImplementedError("retrieve is not yet implemented")
+    def retrieve(
+        self,
+        text: str,
+        top_k: int = 3,
+    ) -> list[RetrievedChunk]:
+        """Retrieve the most similar chunks to the given text.
+
+        Combines results from vector similarity search (if embeddings are
+        available) and full-text search, then deduplicates by chunk id,
+        merging metrics from both methods.
+
+        Parameters
+        ----------
+        text
+            The query text to search for.
+        top_k
+            The maximum number of chunks to return from each retrieval
+            method (VSS and FTS). Because results from both methods are
+            combined, the final count may differ from ``top_k``.
+
+        Returns
+        -------
+        list[RetrievedChunk]
+            The retrieved chunks with their relevance metrics.
+        """
+        retrieved_chunks: list[RetrievedChunk] = []
+        if self._metadata.get("embed") is not None:
+            retrieved_chunks = self.retrieve_vss(text, top_k)
+
+        retrieved_chunks.extend(self.retrieve_fts(text, top_k))
+
+        # Deduplicate by (origin, chunk_id), merging metrics
+        combined: dict[tuple[str | None, int | None], RetrievedChunk] = {}
+        for chunk in retrieved_chunks:
+            first_chunk_id = chunk.chunk_ids[0] if chunk.chunk_ids else None
+            key = (chunk.origin, first_chunk_id)
+            if key not in combined:
+                combined[key] = chunk
+            else:
+                combined[key].metrics.extend(chunk.metrics or [])
+
+        return list(combined.values())
 
     def retrieve_fts(
         self,

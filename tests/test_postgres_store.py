@@ -372,3 +372,32 @@ def test_size(pg_con):
     # Replacing a doc shouldn't change the count
     store.upsert(_make_chunked_doc(origin="doc1", content="# Hello\n\nUpdated."))
     assert store.size() == 2
+
+
+def test_retrieve_combines_vss_and_fts(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=FakeEmbedding())
+    doc = _make_chunked_doc(
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    store.upsert(doc)
+
+    results = store.retrieve("Python", top_k=5)
+    assert len(results) >= 1
+    # Should have metrics from both VSS and FTS
+    metric_names = {m.name for r in results for m in r.metrics}
+    assert "cosine_distance" in metric_names
+    assert "ts_rank" in metric_names
+
+
+def test_retrieve_no_embed_uses_fts_only(pg_con):
+    store = PostgreSQLStore.create(con=pg_con, embed=None)
+    doc = _make_chunked_doc(
+        content="# Python\n\nPython is a popular programming language.",
+    )
+    store.upsert(doc)
+
+    results = store.retrieve("Python", top_k=5)
+    assert len(results) >= 1
+    metric_names = {m.name for r in results for m in r.metrics}
+    assert "ts_rank" in metric_names
+    assert "cosine_distance" not in metric_names
