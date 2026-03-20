@@ -131,9 +131,7 @@ class EmbeddingNVIDIA(EmbeddingProvider):
             )
 
         # Map our enum to NVIDIA's input_type values
-        nvidia_input_type = (
-            "query" if input_type == EmbedInputType.QUERY else "passage"
-        )
+        nvidia_input_type = "query" if input_type == EmbedInputType.QUERY else "passage"
 
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
