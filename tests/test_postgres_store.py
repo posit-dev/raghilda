@@ -2,11 +2,13 @@ import pytest
 import psycopg2
 from raghilda._postgres_store import PostgreSQLStore
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
+from raghilda.embedding import register_embedding_provider
 
 
 POSTGRES_URL = "postgresql://raghilda:raghilda@localhost:5432/raghilda"
 
 
+@register_embedding_provider("FakeEmbedding")
 class FakeEmbedding(EmbeddingProvider):
     def embed(self, x, input_type: EmbedInputType = EmbedInputType.DOCUMENT):
         return [[1.0, 2.0, 3.0]] * len(x)
@@ -126,3 +128,37 @@ def test_create_store_no_embed(pg_con):
         """)
         columns = {r[0] for r in cur.fetchall()}
         assert "embedding" not in columns
+
+
+def test_connect_recovers_metadata(pg_con):
+    PostgreSQLStore.create(
+        con=pg_con,
+        embed=FakeEmbedding(),
+        name="my_store",
+        title="My Store",
+        attributes={"tenant": str, "priority": int},
+    )
+
+    store = PostgreSQLStore.connect(pg_con)
+    assert store._metadata["name"] == "my_store"
+    assert store._metadata["title"] == "My Store"
+    assert isinstance(store._metadata["embed"], FakeEmbedding)
+    assert "tenant" in store._metadata["attributes"]
+    assert "priority" in store._metadata["attributes"]
+
+
+def test_connect_no_embed(pg_con):
+    PostgreSQLStore.create(
+        con=pg_con,
+        embed=None,
+        name="no_embed_store",
+    )
+
+    store = PostgreSQLStore.connect(pg_con)
+    assert store._metadata["name"] == "no_embed_store"
+    assert store._metadata["embed"] is None
+
+
+def test_connect_no_metadata(pg_con):
+    with pytest.raises(ValueError, match="No metadata found"):
+        PostgreSQLStore.connect(pg_con)

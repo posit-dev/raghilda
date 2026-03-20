@@ -1,6 +1,6 @@
 from ._store import BaseStore
 import json
-from .embedding import EmbeddingProvider
+from .embedding import EmbeddingProvider, embedding_from_config
 from typing import Mapping, Optional
 import psycopg2
 import logging
@@ -9,6 +9,7 @@ from ._attributes import (
     AttributeStructType,
     AttributeType,
     AttributesSchemaSpec,
+    attributes_spec_from_json_dict,
     attributes_spec_to_json_dict,
     normalize_attributes_spec,
 )
@@ -183,8 +184,58 @@ class PostgreSQLStore(BaseStore):
         return PostgreSQLStore(con, metadata)
 
     @staticmethod
-    def connect(con: psycopg2.extensions.connection) -> "PostgreSQLStore":  # noqa: ARG004
-        raise NotImplementedError("connect is not yet implemented")
+    def connect(con: psycopg2.extensions.connection) -> "PostgreSQLStore":
+        """Connect to an existing PostgreSQL store.
+
+        Parameters
+        ----------
+        con
+            An open psycopg2 connection to a PostgreSQL database
+            that already contains a raghilda store.
+
+        Returns
+        -------
+        PostgreSQLStore
+            A connected store instance.
+        """
+        with con.cursor() as cur:
+            try:
+                cur.execute(
+                    "SELECT name, title, embed_config, attributes_schema_json FROM metadata"
+                )
+                row = cur.fetchone()
+            except psycopg2.errors.UndefinedTable:
+                con.rollback()
+                raise ValueError("No metadata found in the database")
+
+        if row is None:
+            raise ValueError("No metadata found in the database")
+
+        name, title, embed_config_json, attributes_schema_json = row
+
+        embed = None
+        if embed_config_json is not None:
+            embed_config = json.loads(embed_config_json)
+            try:
+                embed = embedding_from_config(embed_config)
+            except ValueError as e:
+                logger.warning(f"Could not restore embedding provider: {e}")
+
+        if attributes_schema_json is None:
+            attributes_spec = {}
+        else:
+            attributes_spec = attributes_spec_from_json_dict(
+                json.loads(attributes_schema_json),
+            )
+
+        metadata = {
+            "name": name,
+            "title": title,
+            "embed": embed,
+            "attributes": attributes_spec,
+        }
+
+        return PostgreSQLStore(con, metadata)
 
     def upsert(self, document, *, skip_if_unchanged=True):  # noqa: ARG002
         raise NotImplementedError("upsert is not yet implemented")
