@@ -8,8 +8,6 @@ from typing import Any, Mapping, Optional, Sequence, Union
 from enum import StrEnum
 import psycopg2
 import logging
-
-ConnectionLike = Union[str, psycopg2.extensions.connection]
 from ._attributes import (
     AttributeFloatVectorType,
     AttributeStructType,
@@ -25,6 +23,8 @@ from ._attribute_schema import AttributeFilter, filterable_attribute_paths
 from ._attribute_filters import compile_filter_to_sql, pg_column_expression
 
 logger = logging.getLogger(__name__)
+
+ConnectionLike = Union[str, psycopg2.extensions.connection]
 
 _FILTERABLE_BASE_COLUMNS = {
     "chunk_id",
