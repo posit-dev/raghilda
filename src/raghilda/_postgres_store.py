@@ -24,6 +24,7 @@ _RESERVED_SYSTEM_COLUMNS = {
     "chunk_id",
     "context",
     "embedding",
+    "fts_search_vector",
     "origin",
     "text",
     "start_index",
@@ -163,9 +164,15 @@ class PostgreSQLStore(BaseStore):
                     end_index INTEGER,
                     char_count INTEGER,
                     context VARCHAR,
+                    fts_search_vector tsvector,
                     PRIMARY KEY (origin, start_index, end_index)
                     {tail_columns_sql}
                 );
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_embeddings_fts
+                ON embeddings USING GIN (fts_search_vector);
             """)
 
             cur.execute(
@@ -255,6 +262,14 @@ class PostgreSQLStore(BaseStore):
             raise ValueError("document.origin must be a non-empty string for upsert().")
         if len(document.chunks) == 0:
             raise ValueError("Document must contain at least one chunk.")
+        for chunk in document.chunks:
+            expected = document.content[chunk.start_index : chunk.end_index]
+            if chunk.text != expected:
+                raise ValueError(
+                    "Chunk text must match document.content[start_index:end_index]. "
+                    f"Got chunk.text={chunk.text!r}, expected {expected!r} "
+                    f"for start_index={chunk.start_index}, end_index={chunk.end_index}."
+                )
 
         # Check if we can skip early
         with self.con.cursor() as cur:
@@ -317,6 +332,7 @@ class PostgreSQLStore(BaseStore):
                     "end_index",
                     "char_count",
                     "context",
+                    "fts_search_vector",
                 ]
                 values: list = [
                     document.origin,
@@ -324,6 +340,7 @@ class PostgreSQLStore(BaseStore):
                     chunk.end_index,
                     len(chunk.text),
                     chunk.context,
+                    chunk.text,
                 ]
                 if embeddings is not None:
                     columns.append("embedding")
@@ -336,10 +353,16 @@ class PostgreSQLStore(BaseStore):
                         attr_val = json.dumps(attr_val)
                     values.append(attr_val)
 
-                placeholders = ", ".join(["%s"] * len(values))
+                placeholders = []
+                for col in columns:
+                    if col == "fts_search_vector":
+                        placeholders.append("to_tsvector('simple', %s)")
+                    else:
+                        placeholders.append("%s")
+                placeholders_sql = ", ".join(placeholders)
                 columns_sql = ", ".join(columns)
                 cur.execute(
-                    f"INSERT INTO embeddings ({columns_sql}) VALUES ({placeholders})",
+                    f"INSERT INTO embeddings ({columns_sql}) VALUES ({placeholders_sql})",
                     values,
                 )
 
@@ -385,14 +408,10 @@ class PostgreSQLStore(BaseStore):
                 e.context,
                 e.chunk_id,
                 SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index) AS chunk_text,
-                ts_rank(
-                    to_tsvector('simple', SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index)),
-                    plainto_tsquery('simple', %s)
-                ) AS rank
+                ts_rank(e.fts_search_vector, plainto_tsquery('simple', %s)) AS rank
             FROM embeddings e
             JOIN documents d USING (origin)
-            WHERE to_tsvector('simple', SUBSTRING(d.text FROM e.start_index + 1 FOR e.end_index - e.start_index))
-                  @@ plainto_tsquery('simple', %s)
+            WHERE e.fts_search_vector @@ plainto_tsquery('simple', %s)
             ORDER BY rank DESC
             LIMIT %s
         """
