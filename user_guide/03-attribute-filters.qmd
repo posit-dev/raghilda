@@ -380,14 +380,14 @@ underscores only), so names cannot contain dots (`.`) or dashes (`-`).
 
 Backend support differs by store:
 
-| Capability | DuckDBStore | ChromaDBStore | OpenAIStore |
-|---|---|---|---|
-| Scalar attributes (`str/int/float/bool`) | ✅ | ✅ | ✅ |
-| Class-based schema declarations | ✅ | ✅ | ✅ |
-| Optional/defaulted attributes | ✅ | ❌ | ❌ |
-| Nested object attributes | ✅ | ❌ | ❌ |
-| Vector attributes (`Annotated[list[float], N]`) | ✅ | ❌ | ❌ |
-| Per-chunk attribute overrides | ✅ | ✅ | ❌ (document-level only) |
+| Capability | DuckDBStore | ChromaDBStore | OpenAIStore | PostgreSQLStore |
+|---|---|---|---|---|
+| Scalar attributes (`str/int/float/bool`) | ✅ | ✅ | ✅ | ✅ |
+| Class-based schema declarations | ✅ | ✅ | ✅ | ✅ |
+| Optional/defaulted attributes | ✅ | ❌ | ❌ | ✅ |
+| Nested object attributes | ✅ | ❌ | ❌ | ✅ (JSONB) |
+| Vector attributes (`Annotated[list[float], N]`) | ✅ | ❌ | ❌ | ✅ (pgvector) |
+| Per-chunk attribute overrides | ✅ | ✅ | ❌ (document-level only) | ✅ |
 
 ## Built-In Backend Columns
 
@@ -402,6 +402,6 @@ that can be used in `attributes_filter`.
 | `end_index` | Chunk end character offset in the document text. |
 | `context` | Chunk context string (if provided during chunking). |
 
-`DuckDBStore` and `ChromaDBStore` support these names directly.
+`DuckDBStore`, `ChromaDBStore`, and `PostgreSQLStore` support these names directly.
 `OpenAIStore` does not support built-in backend columns in `attributes_filter`;
 only declared attributes are filterable.
