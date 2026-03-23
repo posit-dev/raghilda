@@ -32,6 +32,13 @@ def skip_if_no_openai() -> None:
     _skip_if_unavailable(env_vars=("OPENAI_API_KEY",), host="api.openai.com")
 
 
+def skip_if_no_nvidia() -> None:
+    _skip_if_unavailable(
+        env_vars=("NVIDIA_API_KEY",),
+        host="integrate.api.nvidia.com",
+    )
+
+
 def skip_if_no_cohere() -> None:
     _skip_if_unavailable(
         env_vars=("CO_API_KEY", "COHERE_API_KEY"),
