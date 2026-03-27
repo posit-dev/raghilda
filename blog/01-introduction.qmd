@@ -2,27 +2,29 @@
 title: "RAG with raghilda"
 description: "An introduction to building retrieval-augmented generation systems with raghilda."
 date: "2026-03-13"
+author: Daniel Falbel and Tomasz Kalinowski
 ---
 
-## What's RAG and why?
 
-RAG stands for Retrieval-Augmented Generation. In practice it's as simple as using some sort of
-**retrieval** method to find relevant documents and use them to **augment** the context of a
-**generative** model.
+We're happy to introduce Raghilda, a new Python package for building RAG (Retrieval-Augmented Generation) solutions.
+
+RAG is a simple concept that comes up anytime you want to _retreive_ content for an LLM to improve or _augment_ the _generated_ output.
 
 ```{mermaid}
 %%| label: fig-rag
-%%| fig-cap: "Without RAG, the query goes directly to the LLM. With RAG, relevant documents are retrieved first and included in the prompt."
+%%| fig-cap: "Without RAG, the LLM generates a response using only the user query. With RAG, relevant documents are retrieved and provided to the LLM before it generates a response."
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#f5f5f5", "primaryBorderColor": "#ccc", "primaryTextColor": "#333", "lineColor": "#999", "secondaryColor": "#fafafa", "tertiaryColor": "#fff"}}}%%
-flowchart TD
+flowchart TB
   subgraph s1 [Without RAG]
     direction LR
-    Q1[User Query] --> LLM1[LLM] --> R1[Response]
+    Q1[/User Query/] --> LLM1[LLM] --> R1[/Response/]
   end
 
   subgraph s2 [With RAG]
     direction LR
-    Q2[User Query] --> Ret[Retrieval] --> D[Documents] --> LLM2[LLM] --> R2[Response]
+    Q2[/User Query/] --> LLM2[LLM] --> R2[/Response/]
+    Q2 --> D[Retrieve Relevant Documents]
+    D --> LLM2
   end
 
   s1 ~~~ s2
