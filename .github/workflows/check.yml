@@ -42,4 +42,4 @@ jobs:
       run: uv sync --all-extras
     
     - name: Run checks
-      run: uv run task check
+      run: PYTEST_ADDOPTS=-vv uv run task check
