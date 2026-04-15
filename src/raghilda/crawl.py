@@ -662,6 +662,8 @@ class BaseCrawler(ABC):
             fn=lambda origin: self.fetch_markdown(
                 origin,
                 convert=convert,
+                # origins(..., cache_force_refresh=True) already refreshed the source
+                # for this crawl, so reuse that cached snapshot here.
                 cache_force_refresh=False,
             ),
         )
