@@ -6,6 +6,7 @@ import fnmatch
 import hashlib
 import http.server
 import json
+import os
 from pathlib import Path
 import re
 import socketserver
@@ -13,6 +14,7 @@ import threading
 from typing import Any
 import unicodedata
 
+import pytest
 import raghilda.crawl as crawl_module
 from raghilda.crawl import (
     CrawlScope,
@@ -1564,6 +1566,25 @@ def test_directory_crawler_accepts_percent_escaped_file_uri_roots(
     )
 
     assert origins == [markdown.resolve().as_uri()]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific file URI handling")
+def test_directory_crawler_round_trips_windows_file_uris(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "My Docs"
+    markdown = _write(root, "read me.md", "# Hello")
+    crawler = DirectoryCrawler()
+
+    root_uri = root.resolve().as_uri()
+    origin = markdown.resolve().as_uri()
+
+    origins = list(crawler.origins(CrawlScope(roots=[root_uri]), progress=False))
+    source = crawler.fetch_raw(origin)
+
+    assert origins == [origin]
+    assert source.origin == origin
+    assert source.body_path == markdown.resolve()
 
 
 def test_web_crawler_returns_no_origins_or_requests_when_limit_is_zero(

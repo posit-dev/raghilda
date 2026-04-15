@@ -17,7 +17,8 @@ import time
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 import threading
 import unicodedata
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import requests
 
@@ -1559,15 +1560,24 @@ def _to_directory_path(root: str | Path) -> Path:
         return root
     parsed = urlparse(str(root))
     if parsed.scheme == "file":
-        return Path(unquote(parsed.path))
+        return _path_from_file_uri(str(root))
     assert parsed.scheme in {"", "file"}
     return Path(str(root))
+
+
+def _path_from_file_uri(origin: str) -> Path:
+    parsed = urlparse(origin)
+    assert parsed.scheme == "file"
+    raw_path = parsed.path
+    if parsed.netloc and parsed.netloc != "localhost":
+        raw_path = f"//{parsed.netloc}{parsed.path}"
+    return Path(url2pathname(raw_path))
 
 
 def _path_from_file_origin(origin: str) -> Path:
     parsed = urlparse(origin)
     if parsed.scheme == "file":
-        return Path(unquote(parsed.path))
+        return _path_from_file_uri(origin)
     return Path(origin)
 
 
