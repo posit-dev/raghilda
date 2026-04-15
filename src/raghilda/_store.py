@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from concurrent.futures import FIRST_COMPLETED, CancelledError, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Generic, Literal, Sequence, TypeVar
+import threading
+from typing import Any, Callable, Generic, Iterable, Literal, Sequence, TypeVar
 
 from .chunk import RetrievedChunk
 from .document import Document
 
 TDocument = TypeVar("TDocument", bound=Document, covariant=True)
+_RECENT_INGEST_ORIGIN_WINDOW = 10_000
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,13 @@ class WriteResult(Generic[TDocument]):
     action: Literal["inserted", "replaced", "skipped"]
     document: TDocument
     replaced_document: TDocument | None = None
+
+
+@dataclass(frozen=True)
+class IngestSummary:
+    inserted: int
+    replaced: int
+    skipped: int
 
 
 class BaseStore(ABC):
@@ -76,6 +86,103 @@ class BaseStore(ABC):
             chunk metadata. This helps avoid unnecessary embedding work.
         """
         pass
+
+    def ingest(
+        self,
+        documents: Iterable[Any],
+        *,
+        prepare: Callable[[Any], Document] | None = None,
+        max_workers: int = 1,
+    ) -> IngestSummary:
+        """Prepare and upsert a stream of documents.
+
+        Inputs are consumed lazily and submitted incrementally. After
+        ``prepare`` is applied, recent non-empty string origins are checked for
+        duplicates as the stream is consumed. Duplicate detection is best
+        effort: a duplicate raises ``ValueError`` when encountered, after any
+        writes already in flight complete. No rollback is attempted.
+        """
+        assert max_workers >= 1
+        stop_event = threading.Event()
+        recent_origins: dict[str, None] = {}
+        recent_origins_lock = threading.Lock()
+
+        def remember_origin(origin: str | None) -> None:
+            if not isinstance(origin, str) or not origin:
+                return
+            with recent_origins_lock:
+                if origin in recent_origins:
+                    raise ValueError(f"Duplicate origin during ingest: {origin}")
+                recent_origins[origin] = None
+                if len(recent_origins) > _RECENT_INGEST_ORIGIN_WINDOW:
+                    # dict preserves insertion order, so the first key is the oldest.
+                    recent_origins.pop(next(iter(recent_origins)))
+
+        def process_document(item: Any) -> WriteResult[Document]:
+            if stop_event.is_set():
+                raise CancelledError()
+            document = prepare(item) if prepare is not None else item
+            if stop_event.is_set():
+                raise CancelledError()
+            remember_origin(document.origin)
+            if stop_event.is_set():
+                raise CancelledError()
+            return self.upsert(document)
+
+        iterator = iter(documents)
+        pending = set()
+        inserted = 0
+        replaced = 0
+        skipped = 0
+        exhausted = False
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            while not exhausted and len(pending) < max_workers:
+                try:
+                    document = next(iterator)
+                except StopIteration:
+                    exhausted = True
+                    continue
+                pending.add(executor.submit(process_document, document))
+
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                results = []
+                for future in done:
+                    try:
+                        results.append(future.result())
+                    except CancelledError:
+                        continue
+                for result in results:
+                    if result.action == "inserted":
+                        inserted += 1
+                    elif result.action == "replaced":
+                        replaced += 1
+                    elif result.action == "skipped":
+                        skipped += 1
+                    else:
+                        raise ValueError(f"Unknown write action: {result.action}")
+
+                while not exhausted and len(pending) < max_workers:
+                    try:
+                        document = next(iterator)
+                    except StopIteration:
+                        exhausted = True
+                        continue
+                    pending.add(executor.submit(process_document, document))
+        except Exception:
+            stop_event.set()
+            for future in pending:
+                future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+            raise
+
+        executor.shutdown(wait=True, cancel_futures=False)
+        return IngestSummary(
+            inserted=inserted,
+            replaced=replaced,
+            skipped=skipped,
+        )
 
     @abstractmethod
     def retrieve(
