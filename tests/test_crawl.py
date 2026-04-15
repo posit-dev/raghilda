@@ -1609,3 +1609,38 @@ def test_web_crawler_returns_no_origins_or_requests_when_limit_is_zero(
 
         assert origins == []
         assert getattr(server, "requests") == []
+
+
+def test_web_crawler_does_not_fetch_extra_root_once_limit_is_reached(
+    tmp_path: Path,
+) -> None:
+    with _serve(
+        {
+            "/first": {
+                "body": "<html><body><main>First</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+            "/second": {
+                "body": "<html><body><main>Second</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+        }
+    ) as server:
+        root_url = f"http://127.0.0.1:{server.server_port}"
+        crawler = WebCrawler(
+            cache_dir=tmp_path / "limit-cache",
+            max_workers=2,
+        )
+        scope = CrawlScope(
+            roots=[f"{root_url}/first", f"{root_url}/second"],
+            depth=0,
+            limit=1,
+        )
+
+        origins = list(crawler.origins(scope, progress=False))
+        requests = [request["path"] for request in getattr(server, "requests")]
+
+        assert origins == [f"{root_url}/first"]
+        assert requests == ["/first"]

@@ -920,51 +920,65 @@ class WebCrawler(BaseCrawler):
                 batch.append((origin, root_host))
 
             next_frontier: list[tuple[str, str]] = []
-            fetched_sources = _map_ordered(
-                batch,
-                max_workers=self.max_workers,
-                fn=lambda item: (
-                    item,
-                    self.fetch_raw(
-                        item[0],
-                        cache_force_refresh=cache_force_refresh,
+            offset = 0
+            while offset < len(batch):
+                remaining = (
+                    None
+                    if resolved_scope.limit is None
+                    else resolved_scope.limit - yielded
+                )
+                if remaining == 0:
+                    return
+                chunk_size = len(batch) - offset
+                if remaining is not None:
+                    chunk_size = min(chunk_size, remaining)
+                window = batch[offset : offset + chunk_size]
+                fetched_sources = _map_ordered(
+                    window,
+                    max_workers=min(self.max_workers, len(window)),
+                    fn=lambda item: (
+                        item,
+                        self.fetch_raw(
+                            item[0],
+                            cache_force_refresh=cache_force_refresh,
+                        ),
                     ),
-                ),
-            )
-            for (origin, root_host), source in fetched_sources:
-                type_label = (source.metadata or {}).get("type_label")
-                matches_patterns = _matches_patterns(
-                    origin,
-                    include_patterns=resolved_scope.include_patterns,
-                    exclude_patterns=resolved_scope.exclude_patterns,
                 )
-                matches_types = _matches_types(
-                    type_label,
-                    include_types=resolved_scope.include_types,
-                    exclude_types=resolved_scope.exclude_types,
-                )
-                if matches_patterns and matches_types:
-                    yield origin
-                    yielded += 1
-                    if (
-                        resolved_scope.limit is not None
-                        and yielded >= resolved_scope.limit
-                    ):
-                        return
-                if current_depth >= resolved_scope.depth:
-                    continue
+                for (origin, root_host), source in fetched_sources:
+                    type_label = (source.metadata or {}).get("type_label")
+                    matches_patterns = _matches_patterns(
+                        origin,
+                        include_patterns=resolved_scope.include_patterns,
+                        exclude_patterns=resolved_scope.exclude_patterns,
+                    )
+                    matches_types = _matches_types(
+                        type_label,
+                        include_types=resolved_scope.include_types,
+                        exclude_types=resolved_scope.exclude_types,
+                    )
+                    if matches_patterns and matches_types:
+                        yield origin
+                        yielded += 1
+                        if (
+                            resolved_scope.limit is not None
+                            and yielded >= resolved_scope.limit
+                        ):
+                            return
+                    if current_depth >= resolved_scope.depth:
+                        continue
 
-                text = _read_text(source.body_path)
-                resolved_origin = source.resolved_origin or origin
-                resolved_host = urlparse(resolved_origin).hostname or root_host
-                for link in sorted(_extract_links(text)):
-                    canonical = _canonicalize(link, base=resolved_origin)
-                    if canonical is None:
-                        continue
-                    parsed = urlparse(canonical)
-                    if parsed.scheme not in {"http", "https"}:
-                        continue
-                    next_frontier.append((canonical, resolved_host))
+                    text = _read_text(source.body_path)
+                    resolved_origin = source.resolved_origin or origin
+                    resolved_host = urlparse(resolved_origin).hostname or root_host
+                    for link in sorted(_extract_links(text)):
+                        canonical = _canonicalize(link, base=resolved_origin)
+                        if canonical is None:
+                            continue
+                        parsed = urlparse(canonical)
+                        if parsed.scheme not in {"http", "https"}:
+                            continue
+                        next_frontier.append((canonical, resolved_host))
+                offset += chunk_size
             frontier = next_frontier
             current_depth += 1
 
