@@ -2977,6 +2977,28 @@ def test_connect(tmp_path):
     assert results[0].text == "hello"
 
 
+def test_connect_restores_bm25_index_state(tmp_path):
+    db_path = tmp_path / "test_bm25.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_test",
+        title="Connect BM25 Test Store",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+    store.build_index("bm25")
+    store.con.close()
+
+    store2 = DuckDBStore.connect(str(db_path))
+    results = store2.retrieve_bm25("hello", top_k=1)
+
+    assert len(results) == 1
+    assert results[0].text == "hello"
+
+
 def test_upsert_after_hnsw_index_on_reconnect(tmp_path):
     """Upserting after reconnecting to a DB with HNSW indexes must work.
 

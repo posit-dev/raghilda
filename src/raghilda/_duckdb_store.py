@@ -404,6 +404,7 @@ class DuckDBStore(BaseStore):
             require_embedding=self.metadata.embed is not None,
         )
         self._db_lock = threading.Lock()
+        self._has_bm25_index = _has_bm25_index(self.con)
 
     def upsert(
         self,
@@ -1053,18 +1054,7 @@ class DuckDBStore(BaseStore):
         return output
 
     def _require_bm25_index(self) -> None:
-        row = self.con.execute(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                FROM duckdb_functions()
-                WHERE schema_name = 'fts_main_chunks'
-                    AND function_name = 'match_bm25'
-            )
-            """
-        ).fetchone()
-        assert row is not None
-        if not row[0]:
+        if not self._has_bm25_index:
             raise RuntimeError(
                 "DuckDBStore retrieval requires a BM25 index. "
                 'Call `store.build_index("bm25")` or `store.build_index()` '
@@ -1098,6 +1088,7 @@ class DuckDBStore(BaseStore):
                 self.con.begin()
                 self._create_fts_index()
                 self.con.commit()
+                self._has_bm25_index = True
             except Exception as e:
                 self.con.rollback()
                 raise e
@@ -1228,6 +1219,21 @@ def _load_extensions_for_existing_indexes(con: duckdb.DuckDBPyConnection) -> Non
     has_hnsw = any("USING HNSW" in (row[0] or "") for row in rows)
     if has_hnsw:
         con.execute("INSTALL vss; LOAD vss;")
+
+
+def _has_bm25_index(con: duckdb.DuckDBPyConnection) -> bool:
+    row = con.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM duckdb_functions()
+            WHERE schema_name = 'fts_main_chunks'
+                AND function_name = 'match_bm25'
+        )
+        """
+    ).fetchone()
+    assert row is not None
+    return bool(row[0])
 
 
 def _validate_required_schema(
