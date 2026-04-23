@@ -513,6 +513,9 @@ class DuckDBStore(BaseStore):
                     _duckdb_append(self.con, "documents", [doc_row])
                 _duckdb_append(self.con, "embeddings", chunk_rows)
                 self.con.commit()
+                # DuckDB FTS materializes BM25 state in side tables and does not
+                # refresh it after writes, while HNSW indexes are maintained.
+                self._has_bm25_index = False
             except Exception:
                 try:
                     self.con.rollback()
@@ -1056,9 +1059,10 @@ class DuckDBStore(BaseStore):
     def _require_bm25_index(self) -> None:
         if not self._has_bm25_index:
             raise RuntimeError(
-                "DuckDBStore retrieval requires a BM25 index. "
+                "DuckDBStore retrieval requires a current BM25 index. "
                 'Call `store.build_index("bm25")` or `store.build_index()` '
-                "before calling `retrieve_bm25()` or `retrieve()`."
+                "after inserting or updating documents and before calling "
+                "`retrieve_bm25()` or `retrieve()`."
             )
 
     def build_index(

@@ -607,6 +607,23 @@ class TestDuckDBStore:
         with pytest.raises(RuntimeError, match="build_index"):
             store_with_docs.retrieve_bm25("document", top_k=3)
 
+    def test_retrieve_bm25_requires_rebuild_after_upsert(self, store):
+        doc1 = MarkdownDocument(origin="bm25-doc-1", content="alpha beta")
+        doc1 = doc1.to_chunked(
+            [_get_markdown_chunk(doc1, start=0, end=len(doc1.content))]
+        )
+        store.upsert(doc1)
+        store.build_index("bm25")
+
+        doc2 = MarkdownDocument(origin="bm25-doc-2", content="gamma delta")
+        doc2 = doc2.to_chunked(
+            [_get_markdown_chunk(doc2, start=0, end=len(doc2.content))]
+        )
+        store.upsert(doc2)
+
+        with pytest.raises(RuntimeError, match="build_index"):
+            store.retrieve_bm25("gamma", top_k=3)
+
     def test_retrieve_bm25_returns_document_slice_for_non_zero_start(self, store):
         # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
         doc = MarkdownDocument(origin="bm25-text-source", content="alphabetagamma")
