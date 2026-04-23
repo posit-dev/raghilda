@@ -179,6 +179,9 @@ class DuckDBStore(BaseStore):
     )
     store.upsert(MarkdownChunker().chunk(doc))
 
+    # Build indexes before retrieval
+    store.build_index()
+
     # Retrieve similar chunks
     chunks = store.retrieve("How do I use this?", top_k=5)
     ```
