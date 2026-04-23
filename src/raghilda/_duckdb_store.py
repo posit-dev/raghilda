@@ -1011,6 +1011,7 @@ class DuckDBStore(BaseStore):
         """
 
         with self._db_lock:
+            self._require_bm25_index()
             result = self.con.execute(
                 sql,
                 {
@@ -1047,6 +1048,25 @@ class DuckDBStore(BaseStore):
             output.append(RetrievedDuckDBMarkdownChunk(**chunk_dict))
 
         return output
+
+    def _require_bm25_index(self) -> None:
+        row = self.con.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM duckdb_functions()
+                WHERE schema_name = 'fts_main_chunks'
+                    AND function_name = 'match_bm25'
+            )
+            """
+        ).fetchone()
+        assert row is not None
+        if not row[0]:
+            raise RuntimeError(
+                "DuckDBStore retrieval requires a BM25 index. "
+                'Call `store.build_index("bm25")` or `store.build_index()` '
+                "before calling `retrieve_bm25()` or `retrieve()`."
+            )
 
     def build_index(
         self,

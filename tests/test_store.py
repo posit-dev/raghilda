@@ -603,6 +603,10 @@ class TestDuckDBStore:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
 
+    def test_retrieve_bm25_requires_build_index(self, store_with_docs):
+        with pytest.raises(RuntimeError, match="build_index"):
+            store_with_docs.retrieve_bm25("document", top_k=3)
+
     def test_retrieve_bm25_returns_document_slice_for_non_zero_start(self, store):
         # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
         doc = MarkdownDocument(origin="bm25-text-source", content="alphabetagamma")
@@ -640,6 +644,10 @@ class TestDuckDBStore:
         for chunk in results:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
+
+    def test_retrieve_requires_build_index(self, store_with_docs):
+        with pytest.raises(RuntimeError, match="build_index"):
+            store_with_docs.retrieve("document", top_k=3, deoverlap=False)
 
     def test_retrieve_with_deoverlap(self, store):
         # Create a document with overlapping chunks
