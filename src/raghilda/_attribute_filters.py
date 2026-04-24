@@ -375,20 +375,19 @@ def _tokenize_filter(text: str) -> list[_Token]:
             if j >= n or text[j] != "'":
                 raise ValueError("Unterminated string literal in attributes filter")
             raw = text[i : j + 1]
-            value = raw[1:-1].replace("''", "'")
-            tokens.append(_Token(kind="STRING", raw=raw, value=value))
+            string_value = raw[1:-1].replace("''", "'")
+            tokens.append(_Token(kind="STRING", raw=raw, value=string_value))
             i = j + 1
             continue
 
         number_match = _NUMBER_RE.match(text, i)
         if number_match is not None:
             raw = number_match.group(0)
-            value: int | float
             if "." in raw:
-                value = float(raw)
+                number_value: int | float = float(raw)
             else:
-                value = int(raw)
-            tokens.append(_Token(kind="NUMBER", raw=raw, value=value))
+                number_value = int(raw)
+            tokens.append(_Token(kind="NUMBER", raw=raw, value=number_value))
             i = number_match.end()
             continue
 
