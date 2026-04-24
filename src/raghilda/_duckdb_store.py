@@ -57,6 +57,7 @@ _FILTERABLE_BASE_COLUMNS = {
     "context",
 }
 
+
 @dataclass(repr=False)
 class DuckDBMarkdownChunk(MarkdownChunk):
     """MarkdownChunk with DuckDB-specific fields for database storage"""
