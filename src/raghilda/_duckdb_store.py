@@ -57,7 +57,6 @@ _FILTERABLE_BASE_COLUMNS = {
     "context",
 }
 
-
 @dataclass(repr=False)
 class DuckDBMarkdownChunk(MarkdownChunk):
     """MarkdownChunk with DuckDB-specific fields for database storage"""
@@ -329,7 +328,8 @@ class DuckDBStore(BaseStore):
             name VARCHAR,
             title VARCHAR,
             embed_config VARCHAR,
-            attributes_schema_json VARCHAR
+            attributes_schema_json VARCHAR,
+            bm25_index_is_current BOOLEAN DEFAULT FALSE
         );
 
         CREATE OR REPLACE TABLE documents (
@@ -370,14 +370,16 @@ class DuckDBStore(BaseStore):
                 name,
                 title,
                 embed_config,
-                attributes_schema_json
-            ) VALUES (?, ?, ?, ?)
+                attributes_schema_json,
+                bm25_index_is_current
+            ) VALUES (?, ?, ?, ?, ?)
             """,
             [
                 name,
                 title,
                 embed_config_json,
                 attributes_schema_json,
+                False,
             ],
         )
 
@@ -403,8 +405,11 @@ class DuckDBStore(BaseStore):
             attributes_schema=self.metadata.attributes_schema,
             require_embedding=self.metadata.embed is not None,
         )
-        self._db_lock = threading.Lock()
-        self._has_bm25_index = _has_bm25_index(self.con)
+        self._db_lock = threading.RLock()
+        # Best-effort BM25 state for this handle. We intentionally avoid a
+        # metadata read on every retrieval; multiple live stores per DB file
+        # are unsupported and are not kept in sync.
+        self._has_bm25_index = _read_bm25_index_state(self.con)
 
     def upsert(
         self,
@@ -512,6 +517,7 @@ class DuckDBStore(BaseStore):
                 else:
                     _duckdb_append(self.con, "documents", [doc_row])
                 _duckdb_append(self.con, "embeddings", chunk_rows)
+                _set_bm25_index_state(self.con, False)
                 self.con.commit()
                 # DuckDB FTS materializes BM25 state in side tables and does not
                 # refresh it after writes, while HNSW indexes are maintained.
@@ -996,12 +1002,12 @@ class DuckDBStore(BaseStore):
         sql = f"""
         WITH ranked AS (
             SELECT
-                e.chunk_id, 
+                e.chunk_id,
                 doc.origin AS origin,
-                e.start_index, 
-                e.end_index, 
+                e.start_index,
+                e.end_index,
                 e.char_count,
-                e.context, 
+                e.context,
                 {attribute_select}
                 doc.text[e.start_index + 1:e.end_index] AS text,
                 'bm25' AS metric_name,
@@ -1058,9 +1064,12 @@ class DuckDBStore(BaseStore):
 
     def _require_bm25_index(self) -> None:
         if not self._has_bm25_index:
+            rebuild_hint = 'Call `store.build_index("bm25")`'
+            if self.metadata.embed is not None:
+                rebuild_hint += " or `store.build_index()`"
             raise RuntimeError(
                 "DuckDBStore retrieval requires a current BM25 index. "
-                'Call `store.build_index("bm25")` or `store.build_index()` '
+                f"{rebuild_hint} "
                 "after inserting or updating documents and before calling "
                 "`retrieve_bm25()` or `retrieve()`."
             )
@@ -1086,26 +1095,28 @@ class DuckDBStore(BaseStore):
         else:
             index_types = [_coerce_index_type(item) for item in type]
 
-        if IndexType.BM25 in index_types:
-            self.con.execute("INSTALL FTS; LOAD FTS;")
-            try:
-                self.con.begin()
-                self._create_fts_index()
-                self.con.commit()
-                self._has_bm25_index = True
-            except Exception as e:
-                self.con.rollback()
-                raise e
+        with self._db_lock:
+            if IndexType.BM25 in index_types:
+                self.con.execute("INSTALL FTS; LOAD FTS;")
+                try:
+                    self.con.begin()
+                    self._create_fts_index()
+                    _set_bm25_index_state(self.con, True)
+                    self.con.commit()
+                    self._has_bm25_index = True
+                except Exception as e:
+                    self.con.rollback()
+                    raise e
 
-        if IndexType.HNSW in index_types:
-            self.con.execute("INSTALL vss; LOAD vss;")
-            try:
-                self.con.begin()
-                self._create_hnsw_index()
-                self.con.commit()
-            except Exception as e:
-                self.con.rollback()
-                raise e
+            if IndexType.HNSW in index_types:
+                self.con.execute("INSTALL vss; LOAD vss;")
+                try:
+                    self.con.begin()
+                    self._create_hnsw_index()
+                    self.con.commit()
+                except Exception as e:
+                    self.con.rollback()
+                    raise e
 
     def _create_fts_index(self):
         self.con.execute(
@@ -1225,7 +1236,30 @@ def _load_extensions_for_existing_indexes(con: duckdb.DuckDBPyConnection) -> Non
         con.execute("INSTALL vss; LOAD vss;")
 
 
-def _has_bm25_index(con: duckdb.DuckDBPyConnection) -> bool:
+def _ensure_bm25_index_state_column(
+    con: duckdb.DuckDBPyConnection,
+) -> None:
+    if "bm25_index_is_current" in _table_columns(con, table="metadata"):
+        return
+    con.execute(
+        "ALTER TABLE metadata ADD COLUMN bm25_index_is_current BOOLEAN DEFAULT FALSE"
+    )
+
+
+def _read_bm25_index_state(con: duckdb.DuckDBPyConnection) -> bool:
+    if "bm25_index_is_current" not in _table_columns(con, table="metadata"):
+        # NOTE: legacy stores predate explicit BM25 freshness tracking.
+        # For backward compatibility we keep trusting any existing FTS index
+        # until this release writes the new metadata field. TODO: switch the
+        # missing-column case to conservative "stale until rebuilt" behavior
+        # in a future breaking release.
+        return _has_legacy_bm25_index(con)
+    row = con.execute("SELECT bm25_index_is_current FROM metadata").fetchone()
+    assert row is not None
+    return bool(row[0])
+
+
+def _has_legacy_bm25_index(con: duckdb.DuckDBPyConnection) -> bool:
     row = con.execute(
         """
         SELECT EXISTS (
@@ -1238,6 +1272,14 @@ def _has_bm25_index(con: duckdb.DuckDBPyConnection) -> bool:
     ).fetchone()
     assert row is not None
     return bool(row[0])
+
+
+def _set_bm25_index_state(con: duckdb.DuckDBPyConnection, is_current: bool) -> None:
+    _ensure_bm25_index_state_column(con)
+    con.execute(
+        "UPDATE metadata SET bm25_index_is_current = ?",
+        [is_current],
+    )
 
 
 def _validate_required_schema(
