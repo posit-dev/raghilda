@@ -15,6 +15,7 @@
 - Docs are built with Quarto, so use it's syntax in docstrings.
 
 ## Must-Run Commands Before Hand-off
+- Before committing or pushing Python changes, run `./.venv/bin/task format`; CI runs `format_check` and will fail on unformatted files.
 - `./.venv/bin/task check`
 - `./.venv/bin/task tests`
 - For docs changes, also `./.venv/bin/task docs_build`

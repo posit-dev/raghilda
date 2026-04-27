@@ -50,6 +50,9 @@ for link in links:
     chunked_document = chunker.chunk(document)
     store.upsert(chunked_document)
 
+# Build indexes before retrieval
+store.build_index()
+
 # Retrieve relevant chunks
 chunks = store.retrieve("How do I stream a response?", top_k=5)
 for chunk in chunks:

@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
@@ -603,6 +604,33 @@ class TestDuckDBStore:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
 
+    def test_retrieve_bm25_requires_build_index(self, store_with_docs):
+        with pytest.raises(RuntimeError, match="build_index"):
+            store_with_docs.retrieve_bm25("document", top_k=3)
+
+    def test_retrieve_bm25_requires_build_index_without_embeddings(self, store):
+        with pytest.raises(RuntimeError, match='store.build_index\\("bm25"\\)') as exc:
+            store.retrieve_bm25("document", top_k=3)
+
+        assert "store.build_index()" not in str(exc.value)
+
+    def test_retrieve_bm25_requires_rebuild_after_upsert(self, store):
+        doc1 = MarkdownDocument(origin="bm25-doc-1", content="alpha beta")
+        doc1 = doc1.to_chunked(
+            [_get_markdown_chunk(doc1, start=0, end=len(doc1.content))]
+        )
+        store.upsert(doc1)
+        store.build_index("bm25")
+
+        doc2 = MarkdownDocument(origin="bm25-doc-2", content="gamma delta")
+        doc2 = doc2.to_chunked(
+            [_get_markdown_chunk(doc2, start=0, end=len(doc2.content))]
+        )
+        store.upsert(doc2)
+
+        with pytest.raises(RuntimeError, match="build_index"):
+            store.retrieve_bm25("gamma", top_k=3)
+
     def test_retrieve_bm25_returns_document_slice_for_non_zero_start(self, store):
         # Guard against 0-based/1-based off-by-one slicing errors for non-zero starts.
         doc = MarkdownDocument(origin="bm25-text-source", content="alphabetagamma")
@@ -640,6 +668,10 @@ class TestDuckDBStore:
         for chunk in results:
             assert isinstance(chunk, RetrievedDuckDBMarkdownChunk)
             assert chunk.text is not None
+
+    def test_retrieve_requires_build_index(self, store_with_docs):
+        with pytest.raises(RuntimeError, match="build_index"):
+            store_with_docs.retrieve("document", top_k=3, deoverlap=False)
 
     def test_retrieve_with_deoverlap(self, store):
         # Create a document with overlapping chunks
@@ -1273,25 +1305,13 @@ class TestDuckDBStore:
             "priority": 0,
         }
 
-    def test_insert_snapshot_reads_are_serialized_under_db_lock(self, monkeypatch):
+    def test_upsert_replaces_document_and_preserves_attribute_defaults(self):
         store = DuckDBStore.create(
             location=":memory:",
             embed=None,
             overwrite=True,
             attributes={"tenant": str, "priority": (int, 0)},
         )
-
-        observed_lock_states: list[bool] = []
-        original_snapshot = store._load_document_snapshot
-
-        def wrapped_snapshot(*, origin: str, text: str):
-            observed_lock_states.append(store._db_lock.locked())
-            return original_snapshot(
-                origin=origin,
-                text=text,
-            )
-
-        monkeypatch.setattr(store, "_load_document_snapshot", wrapped_snapshot)
 
         first = MarkdownDocument(
             origin="lock-snapshot-test",
@@ -1325,10 +1345,11 @@ class TestDuckDBStore:
                 )
             ]
         )
-        store.upsert(second, skip_if_unchanged=False)
+        replaced = store.upsert(second, skip_if_unchanged=False)
 
-        assert observed_lock_states
-        assert all(observed_lock_states)
+        assert replaced.action == "replaced"
+        assert replaced.document.content == "alpha beta"
+        assert replaced.document.attributes == {"tenant": "docs", "priority": 0}
 
     def test_insert_snapshot_preserves_nullable_none_attributes(self):
         store = DuckDBStore.create(
@@ -2967,6 +2988,238 @@ def test_connect(tmp_path):
     results = store2.retrieve("hello", top_k=1)
     assert len(results) >= 1
     assert results[0].text == "hello"
+
+
+def test_connect_restores_bm25_index_state(tmp_path):
+    db_path = tmp_path / "test_bm25.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_test",
+        title="Connect BM25 Test Store",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+    store.build_index("bm25")
+    store.con.close()
+
+    store2 = DuckDBStore.connect(str(db_path))
+    results = store2.retrieve_bm25("hello", top_k=1)
+
+    assert len(results) == 1
+    assert results[0].text == "hello"
+
+
+def test_connect_requires_bm25_rebuild_after_upsert(tmp_path):
+    db_path = tmp_path / "test_bm25_reconnect_stale.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_stale_test",
+        title="Connect BM25 Stale Test Store",
+    )
+    doc1 = MarkdownDocument(origin="doc-1", content="alpha beta")
+    doc1 = doc1.to_chunked([_get_markdown_chunk(doc1, start=0, end=len(doc1.content))])
+    store.upsert(doc1)
+    store.build_index("bm25")
+
+    doc2 = MarkdownDocument(origin="doc-2", content="gamma delta")
+    doc2 = doc2.to_chunked([_get_markdown_chunk(doc2, start=0, end=len(doc2.content))])
+    store.upsert(doc2)
+    store.con.close()
+
+    reconnected = DuckDBStore.connect(str(db_path))
+
+    with pytest.raises(RuntimeError, match="build_index"):
+        reconnected.retrieve_bm25("gamma", top_k=1)
+
+
+def test_connect_migrates_legacy_bm25_index_as_current(tmp_path):
+    db_path = tmp_path / "test_bm25_legacy_migrate.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_legacy_test",
+        title="Connect BM25 Legacy Test Store",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+    store.build_index("bm25")
+    store.con.execute("ALTER TABLE metadata DROP COLUMN bm25_index_is_current")
+    store.con.close()
+
+    reconnected = DuckDBStore.connect(str(db_path))
+
+    results = reconnected.retrieve_bm25("hello", top_k=1)
+    assert len(results) == 1
+    assert results[0].text == "hello"
+
+    combined = reconnected.retrieve("hello", top_k=1)
+    assert len(combined) == 1
+    assert combined[0].text == "hello"
+
+
+def test_connect_read_only_detects_legacy_bm25_index(tmp_path):
+    db_path = tmp_path / "test_bm25_legacy_read_only.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_legacy_read_only_test",
+        title="Connect BM25 Legacy Read Only Test Store",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+    store.build_index("bm25")
+    store.con.execute("ALTER TABLE metadata DROP COLUMN bm25_index_is_current")
+    store.con.close()
+
+    reconnected = DuckDBStore.connect(str(db_path), read_only=True)
+
+    results = reconnected.retrieve_bm25("hello", top_k=1)
+    assert len(results) == 1
+    assert results[0].text == "hello"
+
+    combined = reconnected.retrieve("hello", top_k=1)
+    assert len(combined) == 1
+    assert combined[0].text == "hello"
+
+
+def test_upsert_on_legacy_store_starts_tracking_bm25_freshness(tmp_path):
+    db_path = tmp_path / "test_bm25_legacy_upgrade_write.db"
+
+    store = DuckDBStore.create(
+        location=str(db_path),
+        embed=None,
+        name="connect_bm25_legacy_upgrade_write_test",
+        title="Connect BM25 Legacy Upgrade Write Test Store",
+    )
+    doc1 = MarkdownDocument(origin="doc-1", content="alpha beta")
+    doc1 = doc1.to_chunked([_get_markdown_chunk(doc1, start=0, end=len(doc1.content))])
+    store.upsert(doc1)
+    store.build_index("bm25")
+    store.con.execute("ALTER TABLE metadata DROP COLUMN bm25_index_is_current")
+    store.con.close()
+
+    upgraded = DuckDBStore.connect(str(db_path))
+    doc2 = MarkdownDocument(origin="doc-2", content="gamma delta")
+    doc2 = doc2.to_chunked([_get_markdown_chunk(doc2, start=0, end=len(doc2.content))])
+    upgraded.upsert(doc2)
+    upgraded.con.close()
+
+    reconnected = DuckDBStore.connect(str(db_path))
+
+    with pytest.raises(RuntimeError, match="build_index"):
+        reconnected.retrieve_bm25("gamma", top_k=1)
+
+
+def test_build_index_waits_for_db_lock():
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="build_index_lock_test",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+
+    attempted = threading.Event()
+    thread_error: list[BaseException] = []
+
+    def build_index():
+        attempted.set()
+        try:
+            store.build_index("bm25")
+        except BaseException as exc:
+            thread_error.append(exc)
+
+    store._db_lock.acquire()
+    thread = threading.Thread(target=build_index)
+    thread.start()
+    assert attempted.wait(timeout=1)
+
+    thread.join(timeout=0.1)
+    assert thread.is_alive()
+
+    store._db_lock.release()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert thread_error == []
+
+
+def test_retrieve_waits_for_in_progress_bm25_build(monkeypatch):
+    store = DuckDBStore.create(
+        location=":memory:",
+        embed=None,
+        overwrite=True,
+        name="retrieve_waits_for_bm25_build_test",
+    )
+    doc = MarkdownDocument(origin="test", content="hello world")
+    doc = doc.to_chunked([_get_markdown_chunk(doc, start=0, end=5)])
+    store.upsert(doc)
+
+    build_started = threading.Event()
+    allow_build_to_finish = threading.Event()
+
+    original_create_fts_index = store._create_fts_index
+
+    def blocking_create_fts_index():
+        build_started.set()
+        assert allow_build_to_finish.wait(timeout=5)
+        original_create_fts_index()
+
+    monkeypatch.setattr(store, "_create_fts_index", blocking_create_fts_index)
+
+    thread_error: list[BaseException] = []
+
+    def build_index():
+        try:
+            store.build_index("bm25")
+        except BaseException as exc:
+            thread_error.append(exc)
+
+    thread = threading.Thread(target=build_index)
+    thread.start()
+    assert build_started.wait(timeout=1)
+
+    retrieve_started = threading.Event()
+    retrieve_finished = threading.Event()
+    retrieved_results: list[RetrievedDuckDBMarkdownChunk] = []
+    retrieve_error: list[BaseException] = []
+
+    def retrieve():
+        retrieve_started.set()
+        try:
+            results = store.retrieve("hello", top_k=1)
+            retrieved_results.extend(results)
+        except BaseException as exc:
+            retrieve_error.append(exc)
+        finally:
+            retrieve_finished.set()
+
+    retrieve_thread = threading.Thread(target=retrieve)
+    retrieve_thread.start()
+    assert retrieve_started.wait(timeout=1)
+    retrieve_thread.join(timeout=0.1)
+    assert retrieve_thread.is_alive()
+
+    allow_build_to_finish.set()
+    thread.join(timeout=5)
+    retrieve_thread.join(timeout=5)
+
+    assert thread_error == []
+    assert retrieve_error == []
+    assert retrieve_finished.is_set()
+    assert len(retrieved_results) == 1
+    assert retrieved_results[0].text == "hello"
 
 
 def test_upsert_after_hnsw_index_on_reconnect(tmp_path):
