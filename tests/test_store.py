@@ -1,7 +1,6 @@
 import os
 import hashlib
 import json
-import logging
 import subprocess
 import sys
 import textwrap
@@ -23,29 +22,6 @@ from raghilda._duckdb_store import (
 from raghilda._openai_store import _normalize_openai_attributes
 from raghilda.embedding import EmbeddingOpenAI
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
-
-logger = logging.getLogger(__name__)
-
-
-def _log_openai_ci_event(label: str, event: str, **fields: object) -> None:
-    suffix = " ".join(f"{key}={value}" for key, value in fields.items())
-    if suffix:
-        logger.info("OPENAI-CI %s %s %s", label, event, suffix)
-    else:
-        logger.info("OPENAI-CI %s %s", label, event)
-
-
-def _upsert_openai_fixture_document(
-    store: OpenAIStore,
-    document: MarkdownDocument,
-    *,
-    label: str,
-    name: str,
-) -> None:
-    assert isinstance(document.origin, str)
-    _log_openai_ci_event(label, "upsert_start", name=name, origin=document.origin)
-    store.upsert(document)
-    _log_openai_ci_event(label, "upsert_done", name=name, origin=document.origin)
 
 
 class CountingEmbedding(EmbeddingProvider):
@@ -1582,178 +1558,87 @@ class TestOpenAIStore:
         test_helpers.skip_if_no_openai()
 
     @pytest.fixture
-    def store(self, request):
-        label = request.node.nodeid
-        _log_openai_ci_event(label, "create_start")
+    def store(self):
         store = OpenAIStore.create()
-        _log_openai_ci_event(label, "create_done", store_id=store.store_id)
         try:
             yield store
         finally:
-            _log_openai_ci_event(label, "delete_start", store_id=store.store_id)
             try:
                 store.client.vector_stores.delete(vector_store_id=store.store_id)
             except openai.AuthenticationError:
-                _log_openai_ci_event(
-                    label, "delete_auth_error", store_id=store.store_id
-                )
-            else:
-                _log_openai_ci_event(label, "delete_done", store_id=store.store_id)
+                pass
 
     @pytest.fixture(scope="class")
-    def store_with_attributes(self, request):
-        label = request.node.nodeid
-        _log_openai_ci_event(label, "create_start", fixture="store_with_attributes")
+    def store_with_attributes(self):
         store = OpenAIStore.create(attributes={"tenant": str, "priority": int})
-        _log_openai_ci_event(
-            label,
-            "create_done",
-            fixture="store_with_attributes",
-            store_id=store.store_id,
-        )
-        _upsert_openai_fixture_document(
-            store,
+        store.upsert(
             MarkdownDocument(
                 origin="doc-attrs",
                 content="alpha bronze owl",
                 attributes={"tenant": "docs", "priority": 2},
             ),
-            label=label,
-            name="doc_attrs",
         )
-        _upsert_openai_fixture_document(
-            store,
+        store.upsert(
             MarkdownDocument(
                 origin="docs-priority-1",
                 content="alpha beta",
                 attributes={"tenant": "docs", "priority": 1},
             ),
-            label=label,
-            name="docs_priority_1",
         )
-        _upsert_openai_fixture_document(
-            store,
+        store.upsert(
             MarkdownDocument(
                 origin="ops-priority-5",
                 content="alpha gamma",
                 attributes={"tenant": "ops", "priority": 5},
             ),
-            label=label,
-            name="ops_priority_5",
         )
-        _upsert_openai_fixture_document(
-            store,
+        store.upsert(
             MarkdownDocument(
                 origin="docs-priority-3",
                 content="alpha alpha delta",
                 attributes={"tenant": "docs", "priority": 3},
             ),
-            label=label,
-            name="docs_priority_3",
         )
         try:
             yield store
         finally:
-            _log_openai_ci_event(
-                label,
-                "delete_start",
-                fixture="store_with_attributes",
-                store_id=store.store_id,
-            )
             try:
                 store.client.vector_stores.delete(vector_store_id=store.store_id)
             except openai.AuthenticationError:
-                _log_openai_ci_event(
-                    label,
-                    "delete_auth_error",
-                    fixture="store_with_attributes",
-                    store_id=store.store_id,
-                )
-            else:
-                _log_openai_ci_event(
-                    label,
-                    "delete_done",
-                    fixture="store_with_attributes",
-                    store_id=store.store_id,
-                )
+                pass
 
     @pytest.fixture
-    def store_with_class_attributes(self, request):
+    def store_with_class_attributes(self):
         class AttributesSpec:
             tenant: str
             priority: int
 
-        label = request.node.nodeid
-        _log_openai_ci_event(
-            label, "create_start", fixture="store_with_class_attributes"
-        )
         store = OpenAIStore.create(attributes=AttributesSpec)
-        _log_openai_ci_event(
-            label,
-            "create_done",
-            fixture="store_with_class_attributes",
-            store_id=store.store_id,
-        )
         try:
             yield store
         finally:
-            _log_openai_ci_event(
-                label,
-                "delete_start",
-                fixture="store_with_class_attributes",
-                store_id=store.store_id,
-            )
             try:
                 store.client.vector_stores.delete(vector_store_id=store.store_id)
             except openai.AuthenticationError:
-                _log_openai_ci_event(
-                    label,
-                    "delete_auth_error",
-                    fixture="store_with_class_attributes",
-                    store_id=store.store_id,
-                )
-            else:
-                _log_openai_ci_event(
-                    label,
-                    "delete_done",
-                    fixture="store_with_class_attributes",
-                    store_id=store.store_id,
-                )
+                pass
 
     @pytest.fixture
-    def store_with_docs(self, store, request):
-        label = request.node.nodeid
+    def store_with_docs(self, store):
         doc = MarkdownDocument(
             origin="test", content="hello world this is a document world world world"
         )
-        _upsert_openai_fixture_document(
-            store,
-            doc,
-            label=label,
-            name="store_with_docs",
-        )
+        store.upsert(doc)
         return store
 
     def test_create_store(self, store):
         assert isinstance(store, OpenAIStore)
         assert isinstance(store.store_id, str)
 
-    def test_insert(self, store_with_docs, request):
-        label = request.node.nodeid
-        _log_openai_ci_event(label, "size_start", store_id=store_with_docs.store_id)
+    def test_insert(self, store_with_docs):
         assert store_with_docs.size() == 1
-        _log_openai_ci_event(label, "size_done", store_id=store_with_docs.store_id)
 
-    def test_retrieve(self, store_with_docs, request):
-        label = request.node.nodeid
-        _log_openai_ci_event(label, "retrieve_start", store_id=store_with_docs.store_id)
+    def test_retrieve(self, store_with_docs):
         results = store_with_docs.retrieve("world", top_k=3)
-        _log_openai_ci_event(
-            label,
-            "retrieve_done",
-            store_id=store_with_docs.store_id,
-            result_count=len(results),
-        )
         assert len(results) > 0
         for chunk in results:
             assert isinstance(chunk, RetrievedChunk)

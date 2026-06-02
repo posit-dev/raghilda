@@ -42,4 +42,4 @@ jobs:
       run: uv sync --all-extras
     
     - name: Run checks
-      run: PYTEST_ADDOPTS='-vv -o log_cli=true --log-cli-level=INFO' uv run task check
+      run: uv run task check
