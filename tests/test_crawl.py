@@ -651,6 +651,34 @@ def test_web_markdown_documents_reuses_refreshed_sources(
         assert len(root_requests) == 1
 
 
+def test_web_markdown_documents_reuses_immediately_stale_discovery_cache(
+    tmp_path: Path,
+) -> None:
+    with _serve(
+        {
+            "/": {
+                "body": "<html><body><main>Root</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            }
+        }
+    ) as server:
+        root_url = f"http://127.0.0.1:{server.server_port}/"
+        crawler = WebCrawler(
+            cache_dir=tmp_path / "stale-markdown-docs-cache",
+            cache_stale_after=timedelta(seconds=0),
+        )
+        scope = CrawlScope(roots=[root_url], depth=0)
+
+        documents = list(crawler.markdown_documents(scope, progress=False))
+        root_requests = [
+            request for request in getattr(server, "requests") if request["path"] == "/"
+        ]
+
+        assert documents == [MarkdownDocument(origin=root_url, content="Root")]
+        assert len(root_requests) == 1
+
+
 def test_web_crawler_fetches_same_depth_frontier_concurrently(tmp_path: Path) -> None:
     root = "https://example.com/docs"
     first = "https://example.com/docs/one"
@@ -961,6 +989,27 @@ def test_web_crawler_prefers_content_type_over_misleading_url_suffix(
     assert document == MarkdownDocument(origin=origin, content="Rendered Readme")
 
 
+def test_web_crawler_preserves_reserved_escapes_in_requested_origin(
+    tmp_path: Path,
+) -> None:
+    origin = "https://example.com/a%2Fb"
+    session: Any = _FakeWebSession(
+        {
+            origin: {
+                "body": "<html><body><main>Escaped</main></body></html>",
+            }
+        }
+    )
+    cache_dir = tmp_path / "escaped-cache"
+    crawler = WebCrawler(cache_dir=cache_dir, session=session)
+
+    source = crawler.fetch_raw(origin)
+
+    assert session.requests == [(origin, {})]
+    assert source.origin == origin
+    assert source.body_path == cache_dir / f"{_expected_cache_base(origin)}.html"
+
+
 def test_web_crawler_falls_back_to_raw_when_magika_is_unavailable(
     tmp_path: Path,
     monkeypatch,
@@ -1236,6 +1285,28 @@ def test_cloudflare_crawler_polls_job_and_uses_markdown_records(
         origin="https://example.com/docs/page",
         content="## Page\n",
     )
+    assert len(session.post_calls) == 1
+
+
+def test_cloudflare_markdown_documents_reuses_immediately_stale_discovery_cache(
+    tmp_path: Path,
+) -> None:
+    session = _ParameterizedCloudflareSession()
+    crawler = CloudflareCrawler(
+        account_id="account-123",
+        api_token="token-123",
+        cache_dir=tmp_path / "cloudflare-stale-cache",
+        session=session,
+        cache_stale_after=timedelta(seconds=0),
+        poll_interval=0,
+    )
+    scope = CrawlScope(roots=["https://example.com/docs"], depth=0)
+
+    documents = list(crawler.markdown_documents(scope, progress=False))
+
+    assert documents == [
+        MarkdownDocument(origin="https://example.com/docs", content="# Docs\n")
+    ]
     assert len(session.post_calls) == 1
 
 

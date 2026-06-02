@@ -17,14 +17,14 @@ import time
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 import threading
 import unicodedata
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 from urllib.request import url2pathname
 
 import requests
 
 from .document import MarkdownDocument
 from .read import _convert_to_markdown
-from .scrape import _canonicalize, _extract_links
+from .scrape import _extract_links
 
 try:
     from magika import Magika
@@ -643,6 +643,19 @@ class BaseCrawler(ABC):
         converter = convert or self._default_convert
         return converter(source)
 
+    def _fetch_markdown_after_origin_discovery(
+        self,
+        origin: str,
+        *,
+        convert: Callable[[FetchedSource], MarkdownDocument] | None = None,
+    ) -> MarkdownDocument:
+        source = self._fetch_raw_after_origin_discovery(origin)
+        converter = convert or self._default_convert
+        return converter(source)
+
+    def _fetch_raw_after_origin_discovery(self, origin: str) -> FetchedSource:
+        return self.fetch_raw(origin, cache_force_refresh=False)
+
     def markdown_documents(
         self,
         scope: CrawlScope,
@@ -659,12 +672,9 @@ class BaseCrawler(ABC):
         yield from _map_ordered(
             origins,
             max_workers=self.max_workers,
-            fn=lambda origin: self.fetch_markdown(
+            fn=lambda origin: self._fetch_markdown_after_origin_discovery(
                 origin,
                 convert=convert,
-                # origins(..., cache_force_refresh=True) already refreshed the source
-                # for this crawl, so reuse that cached snapshot here.
-                cache_force_refresh=False,
             ),
         )
 
@@ -913,7 +923,7 @@ class WebCrawler(BaseCrawler):
         frontier: list[tuple[str, str]] = []
 
         for root in resolved_scope.roots:
-            canonical_root = _canonicalize(str(root))
+            canonical_root = _canonicalize_web_url(str(root))
             assert canonical_root is not None
             parsed = urlparse(canonical_root)
             assert parsed.scheme in {"http", "https"}
@@ -999,7 +1009,7 @@ class WebCrawler(BaseCrawler):
                         else resolved_host
                     )
                     for link in sorted(_extract_links(text)):
-                        canonical = _canonicalize(link, base=resolved_origin)
+                        canonical = _canonicalize_web_url(link, base=resolved_origin)
                         if canonical is None:
                             continue
                         parsed = urlparse(canonical)
@@ -1016,7 +1026,7 @@ class WebCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
-        canonical_origin = _canonicalize(origin)
+        canonical_origin = _canonicalize_web_url(origin)
         assert canonical_origin is not None
         parsed = urlparse(canonical_origin)
         assert parsed.scheme in {"http", "https"}
@@ -1064,7 +1074,7 @@ class WebCrawler(BaseCrawler):
 
         response.raise_for_status()
         content_type = response.headers.get("Content-Type")
-        resolved_origin = _canonicalize(response.url) or response.url
+        resolved_origin = _canonicalize_web_url(response.url) or response.url
         type_label = _detect_type_label(
             path=_type_hint_path(canonical_origin, content_type=content_type),
             content_type=content_type,
@@ -1094,6 +1104,16 @@ class WebCrawler(BaseCrawler):
         assert body_path is not None
         assert meta is not None
         return self._source_from_meta(meta, body_path=body_path)
+
+    def _fetch_raw_after_origin_discovery(self, origin: str) -> FetchedSource:
+        canonical_origin = _canonicalize_web_url(origin)
+        assert canonical_origin is not None
+        cached_entry = self._cache.fetch(canonical_origin)
+        assert cached_entry is not None
+        body_path, cached_meta = cached_entry
+        assert body_path is not None
+        assert cached_meta is not None
+        return self._source_from_meta(cached_meta, body_path=body_path)
 
     def _default_convert(self, source: FetchedSource) -> MarkdownDocument:
         type_label = (source.metadata or {}).get("type_label")
@@ -1231,7 +1251,7 @@ class CloudflareCrawler(BaseCrawler):
         for root in resolved_scope.roots:
             if resolved_scope.limit is not None and yielded >= resolved_scope.limit:
                 return
-            canonical_root = _canonicalize(str(root))
+            canonical_root = _canonicalize_web_url(str(root))
             assert canonical_root is not None
             remaining = (
                 None if resolved_scope.limit is None else resolved_scope.limit - yielded
@@ -1269,7 +1289,7 @@ class CloudflareCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
-        canonical_origin = _canonicalize(origin)
+        canonical_origin = _canonicalize_web_url(origin)
         assert canonical_origin is not None
         record_entry = (
             None if cache_force_refresh else self._records.get(canonical_origin)
@@ -1299,16 +1319,32 @@ class CloudflareCrawler(BaseCrawler):
             if record is None:
                 raise ValueError(f"Cloudflare crawl did not return record for {origin}")
             record_entry = self._records[canonical_origin]
-        else:
-            record = record_entry.record
 
         assert record_entry is not None
+        return self._source_from_record_entry(canonical_origin, record_entry)
+
+    def _fetch_raw_after_origin_discovery(self, origin: str) -> FetchedSource:
+        canonical_origin = _canonicalize_web_url(origin)
+        assert canonical_origin is not None
+        record_entry = self._records.get(canonical_origin)
+        if record_entry is None:
+            record_entry = self._load_record_cache_entry(canonical_origin)
+            assert record_entry is not None
+            self._records[canonical_origin] = record_entry
+        return self._source_from_record_entry(canonical_origin, record_entry)
+
+    def _source_from_record_entry(
+        self,
+        canonical_origin: str,
+        record_entry: _CloudflareRecordCacheEntry,
+    ) -> FetchedSource:
         content_path, _ = self._store_record_cache_entry(
             canonical_origin,
-            record=record,
+            record=record_entry.record,
             fetched_at=record_entry.fetched_at,
         )
         assert content_path is not None
+        record = record_entry.record
         return FetchedSource(
             origin=canonical_origin,
             resolved_origin=record.get("metadata", {}).get("url", canonical_origin),
@@ -1582,6 +1618,19 @@ def _resolve_crawl_scope(scope: CrawlScope) -> _ResolvedCrawlScope:
         include_external_links=scope.include_external_links,
         include_subdomains=scope.include_subdomains,
     )
+
+
+def _canonicalize_web_url(target: str, *, base: str | None = None) -> str | None:
+    url = urljoin(base, target) if base else target
+    if not url:
+        return None
+    url, _ = urldefrag(url)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    return url
 
 
 def _resolve_cache_dir(
