@@ -1599,12 +1599,16 @@ class CloudflareCrawler(BaseCrawler):
             canonical_url = _canonicalize_web_url(record["url"])
             if canonical_url is None:
                 continue
-            if apply_patterns and not _allow_web_origin(
-                canonical_url,
-                scope_origin,
-                root_host,
-                include_external_links=include_external_links,
-                include_subdomains=include_subdomains,
+            if (
+                apply_patterns
+                and not _allow_web_origin(
+                    canonical_url,
+                    scope_origin,
+                    root_host,
+                    include_external_links=include_external_links,
+                    include_subdomains=include_subdomains,
+                )
+                and not _is_cloudflare_seed_redirect_target(root, canonical_url)
             ):
                 continue
             if canonical_url != record["url"]:
@@ -1897,6 +1901,28 @@ def _allow_web_origin(
         and origin_key[2] == scope_origin[2]
         and host.endswith(f".{root_host}")
     )
+
+
+def _is_cloudflare_seed_redirect_target(root: str, target: str) -> bool:
+    root_parsed = urlparse(root)
+    target_parsed = urlparse(target)
+    if root_parsed.scheme not in {"http", "https"}:
+        return False
+    if target_parsed.scheme not in {"http", "https"}:
+        return False
+    if root_parsed.port is not None or target_parsed.port is not None:
+        return False
+
+    root_host = _redirect_host_key(root_parsed.hostname or "")
+    target_host = _redirect_host_key(target_parsed.hostname or "")
+    return root_host != "" and root_host == target_host
+
+
+def _redirect_host_key(host: str) -> str:
+    host = host.lower()
+    if host.startswith("www."):
+        return host[4:]
+    return host
 
 
 def _resolve_cache_dir(

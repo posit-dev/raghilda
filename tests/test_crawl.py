@@ -2004,6 +2004,53 @@ class _OutOfScopeCloudflareSession(_ParameterizedCloudflareSession):
         )
 
 
+class _ExternalFirstCloudflareSession(_ParameterizedCloudflareSession):
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        timeout: float,
+    ) -> _CloudflareResponse:
+        response = super().get(url, headers=headers, params=params, timeout=timeout)
+        if params == {"limit": 1}:
+            return response
+        job_id = url.rsplit("/", 1)[-1]
+        root = self._jobs[job_id]["url"]
+        return _CloudflareResponse(
+            {
+                "success": True,
+                "result": {
+                    "id": job_id,
+                    "status": "completed",
+                    "records": [
+                        {
+                            "url": "https://external.test/page",
+                            "status": "completed",
+                            "markdown": "# External\n",
+                            "metadata": {
+                                "status": 200,
+                                "title": "External",
+                                "url": "https://external.test/page",
+                            },
+                        },
+                        {
+                            "url": root,
+                            "status": "completed",
+                            "markdown": "# Root\n",
+                            "metadata": {
+                                "status": 200,
+                                "title": "Root",
+                                "url": root,
+                            },
+                        },
+                    ],
+                },
+            }
+        )
+
+
 class _RedirectCloudflareSession(_ParameterizedCloudflareSession):
     def get(
         self,
@@ -2209,6 +2256,58 @@ def test_cloudflare_crawler_filters_returned_records_to_web_scope(
     assert origins == [
         "https://example.com/root",
         "https://example.com/page",
+    ]
+
+
+def test_cloudflare_crawler_does_not_treat_external_first_record_as_seed(
+    tmp_path: Path,
+) -> None:
+    session = _ExternalFirstCloudflareSession()
+    crawler = CloudflareCrawler(
+        account_id="account-123",
+        api_token="token-123",
+        cache_dir=tmp_path / "cloudflare-external-first-cache",
+        session=session,
+        poll_interval=0,
+    )
+    scope = CrawlScope(
+        roots=["https://example.com/root"],
+        depth=1,
+        limit=1,
+        include_external_links=False,
+        include_subdomains=False,
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == ["https://example.com/root"]
+
+
+def test_cloudflare_markdown_documents_keeps_cross_origin_redirected_seed(
+    tmp_path: Path,
+) -> None:
+    session = _CrossOriginRedirectCloudflareSession()
+    crawler = CloudflareCrawler(
+        account_id="account-123",
+        api_token="token-123",
+        cache_dir=tmp_path / "cloudflare-cross-origin-seed-cache",
+        session=session,
+        poll_interval=0,
+    )
+    scope = CrawlScope(
+        roots=["http://example.com"],
+        depth=0,
+        include_external_links=False,
+        include_subdomains=False,
+    )
+
+    documents = list(crawler.markdown_documents(scope, progress=False))
+
+    assert documents == [
+        MarkdownDocument(
+            origin="https://example.com/landing",
+            content="# Landing\n",
+        )
     ]
 
 
