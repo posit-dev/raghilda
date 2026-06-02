@@ -907,7 +907,8 @@ class WebCrawler(BaseCrawler):
         resolved_scope = _resolve_crawl_scope(scope)
         if resolved_scope.limit == 0:
             return
-        visited: set[str] = set()
+        visited: set[tuple[str, str]] = set()
+        yielded_origins: set[str] = set()
         yielded = 0
         frontier: list[tuple[str, str]] = []
 
@@ -923,7 +924,8 @@ class WebCrawler(BaseCrawler):
         while frontier:
             batch: list[tuple[str, str]] = []
             for origin, root_host in frontier:
-                if origin in visited:
+                visit_key = (origin, root_host)
+                if visit_key in visited:
                     continue
                 if not self._allow_origin(
                     origin,
@@ -932,7 +934,7 @@ class WebCrawler(BaseCrawler):
                     include_subdomains=resolved_scope.include_subdomains,
                 ):
                     continue
-                visited.add(origin)
+                visited.add(visit_key)
                 batch.append((origin, root_host))
 
             next_frontier: list[tuple[str, str]] = []
@@ -972,8 +974,13 @@ class WebCrawler(BaseCrawler):
                         include_types=resolved_scope.include_types,
                         exclude_types=resolved_scope.exclude_types,
                     )
-                    if matches_patterns and matches_types:
+                    if (
+                        matches_patterns
+                        and matches_types
+                        and origin not in yielded_origins
+                    ):
                         yield origin
+                        yielded_origins.add(origin)
                         yielded += 1
                         if (
                             resolved_scope.limit is not None
@@ -1714,10 +1721,6 @@ def _read_text(path: Path) -> str:
 
 
 def _known_body_suffix(origin: str, *, content_type: str | None) -> str | None:
-    parsed = urlparse(origin)
-    suffix = Path(parsed.path).suffix
-    if suffix:
-        return suffix
     normalized = _normalize_content_type(content_type)
     if normalized == "text/html":
         return ".html"
@@ -1727,6 +1730,10 @@ def _known_body_suffix(origin: str, *, content_type: str | None) -> str | None:
         return ".json"
     if normalized == "application/pdf":
         return ".pdf"
+    parsed = urlparse(origin)
+    suffix = Path(parsed.path).suffix
+    if suffix:
+        return suffix
     return None
 
 

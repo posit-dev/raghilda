@@ -521,6 +521,42 @@ def test_web_crawler_allows_later_in_scope_occurrence_of_same_url(
     assert origins == [first_root, second_root, shared]
 
 
+def test_web_crawler_revisits_shared_page_for_broader_subdomain_scope(
+    tmp_path: Path,
+) -> None:
+    narrow_root = "https://api.docs.example.com/start"
+    broad_root = "https://docs.example.com/start"
+    shared = "https://api.docs.example.com/shared"
+    sibling = "https://cdn.docs.example.com/asset"
+    session: Any = _FakeWebSession(
+        {
+            narrow_root: {
+                "body": f'<html><body><a href="{shared}">Shared</a></body></html>',
+            },
+            broad_root: {
+                "body": f'<html><body><a href="{shared}">Shared</a></body></html>',
+            },
+            shared: {
+                "body": f'<html><body><a href="{sibling}">Sibling</a></body></html>',
+            },
+            sibling: {"body": "<html><body><main>Sibling</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "multi-root-subdomain-cache",
+        session=session,
+    )
+    scope = CrawlScope(
+        roots=[narrow_root, broad_root],
+        depth=2,
+        include_subdomains=True,
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == [narrow_root, broad_root, shared, sibling]
+
+
 def test_web_crawler_discovers_matching_descendants_from_filtered_seed(
     tmp_path: Path,
 ) -> None:
@@ -900,6 +936,29 @@ def test_web_crawler_uses_magika_when_no_explicit_ext_is_available(
 
     base = _expected_cache_base(origin)
     assert source.body_path == cache_dir / f"{base}.html"
+
+
+def test_web_crawler_prefers_content_type_over_misleading_url_suffix(
+    tmp_path: Path,
+) -> None:
+    origin = "https://example.com/README.md"
+    session: Any = _FakeWebSession(
+        {
+            origin: {
+                "body": "<html><body><main>Rendered Readme</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+            }
+        }
+    )
+    cache_dir = tmp_path / "content-type-cache"
+    crawler = WebCrawler(cache_dir=cache_dir, session=session)
+
+    source = crawler.fetch_raw(origin)
+    document = crawler.fetch_markdown(origin)
+
+    base = _expected_cache_base(origin)
+    assert source.body_path == cache_dir / f"{base}.html"
+    assert document == MarkdownDocument(origin=origin, content="Rendered Readme")
 
 
 def test_web_crawler_falls_back_to_raw_when_magika_is_unavailable(
