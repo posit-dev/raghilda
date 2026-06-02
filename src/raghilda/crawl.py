@@ -673,6 +673,13 @@ class BaseCrawler(ABC):
 
 
 class DirectoryCrawler(BaseCrawler):
+    """Crawl local files and optionally cache converted markdown.
+
+    Directory traversal always reads the current filesystem state. The cache
+    stores converted markdown per file origin and is reused only when the
+    current file hash and modification time still match the cached metadata.
+    """
+
     def __init__(
         self,
         *,

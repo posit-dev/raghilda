@@ -1450,6 +1450,23 @@ def test_directory_crawler_returns_no_origins_when_limit_is_zero(
     assert origins == []
 
 
+def test_directory_crawler_fetch_markdown_refreshes_when_file_changes(
+    tmp_path: Path,
+) -> None:
+    markdown = _write(tmp_path, "docs/readme.md", "# Hello")
+    cache = tmp_path / "cache"
+    crawler = DirectoryCrawler(cache_dir=cache)
+
+    origin = markdown.resolve().as_uri()
+    first = crawler.fetch_markdown(origin)
+    markdown.write_text("# Updated\n", encoding="utf-8")
+
+    refreshed = crawler.fetch_markdown(origin)
+
+    assert first == MarkdownDocument(origin=origin, content="# Hello")
+    assert refreshed == MarkdownDocument(origin=origin, content="# Updated\n")
+
+
 def test_directory_crawler_fetch_markdown_force_refresh_rebuilds_cached_markdown(
     tmp_path: Path,
 ) -> None:

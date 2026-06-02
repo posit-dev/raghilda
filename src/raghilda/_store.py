@@ -101,6 +101,13 @@ class BaseStore(ABC):
         duplicates as the stream is consumed. Duplicate detection is best
         effort: a duplicate raises ``ValueError`` when encountered, after any
         writes already in flight complete. No rollback is attempted.
+
+        Returns
+        -------
+        IngestSummary
+            Aggregate counts for inserted, replaced, and skipped documents.
+            Call ``upsert()`` directly when per-document ``WriteResult`` values
+            are needed.
         """
         assert max_workers >= 1
         stop_event = threading.Event()
