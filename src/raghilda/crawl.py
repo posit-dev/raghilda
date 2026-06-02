@@ -706,12 +706,16 @@ class DirectoryCrawler(BaseCrawler):
         resolved_scope = _resolve_crawl_scope(scope)
         if resolved_scope.limit == 0:
             return
+        cache_root = self.cache_dir.resolve() if self.cache_dir is not None else None
         count = 0
         for root in resolved_scope.roots:
             path = _to_directory_path(root)
             assert path.exists(), f"Root does not exist: {path}"
             if path.is_file():
-                origin = path.resolve().as_uri()
+                resolved_path = path.resolve()
+                if cache_root is not None and resolved_path.is_relative_to(cache_root):
+                    continue
+                origin = resolved_path.as_uri()
                 if self._include_path(
                     path,
                     origin,
@@ -731,10 +735,15 @@ class DirectoryCrawler(BaseCrawler):
             for file_path in sorted(path.rglob("*")):
                 if not file_path.is_file():
                     continue
+                resolved_file_path = file_path.resolve()
+                if cache_root is not None and resolved_file_path.is_relative_to(
+                    cache_root
+                ):
+                    continue
                 relative_depth = len(file_path.relative_to(path).parts) - 1
                 if relative_depth > resolved_scope.depth:
                     continue
-                origin = file_path.resolve().as_uri()
+                origin = resolved_file_path.as_uri()
                 if not self._include_path(
                     file_path,
                     origin,
@@ -916,7 +925,6 @@ class WebCrawler(BaseCrawler):
             for origin, root_host in frontier:
                 if origin in visited:
                     continue
-                visited.add(origin)
                 if not self._allow_origin(
                     origin,
                     root_host,
@@ -924,6 +932,7 @@ class WebCrawler(BaseCrawler):
                     include_subdomains=resolved_scope.include_subdomains,
                 ):
                     continue
+                visited.add(origin)
                 batch.append((origin, root_host))
 
             next_frontier: list[tuple[str, str]] = []
@@ -977,6 +986,11 @@ class WebCrawler(BaseCrawler):
                     text = _read_text(source.body_path)
                     resolved_origin = source.resolved_origin or origin
                     resolved_host = urlparse(resolved_origin).hostname or root_host
+                    child_root_host = (
+                        root_host
+                        if resolved_scope.include_subdomains
+                        else resolved_host
+                    )
                     for link in sorted(_extract_links(text)):
                         canonical = _canonicalize(link, base=resolved_origin)
                         if canonical is None:
@@ -984,7 +998,7 @@ class WebCrawler(BaseCrawler):
                         parsed = urlparse(canonical)
                         if parsed.scheme not in {"http", "https"}:
                             continue
-                        next_frontier.append((canonical, resolved_host))
+                        next_frontier.append((canonical, child_root_host))
                 offset += chunk_size
             frontier = next_frontier
             current_depth += 1

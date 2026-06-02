@@ -457,6 +457,70 @@ def test_web_crawler_include_subdomains_stays_within_requested_host_tree(
     assert disallowed_sibling not in origins
 
 
+def test_web_crawler_include_subdomains_keeps_original_scope_host(
+    tmp_path: Path,
+) -> None:
+    root = "https://docs.example.com/start"
+    api = "https://api.docs.example.com/page"
+    cdn = "https://cdn.docs.example.com/asset"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": f'<html><body><a href="{api}">API</a></body></html>',
+            },
+            api: {
+                "body": f'<html><body><a href="{cdn}">CDN</a></body></html>',
+            },
+            cdn: {"body": "<html><body><main>CDN</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "subdomain-root-host-cache",
+        session=session,
+    )
+    scope = CrawlScope(
+        roots=[root],
+        depth=2,
+        include_subdomains=True,
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == [root, api, cdn]
+
+
+def test_web_crawler_allows_later_in_scope_occurrence_of_same_url(
+    tmp_path: Path,
+) -> None:
+    first_root = "https://alpha.example.com/start"
+    second_root = "https://docs.example.com/start"
+    shared = "https://api.docs.example.com/page"
+    session: Any = _FakeWebSession(
+        {
+            first_root: {
+                "body": f'<html><body><a href="{shared}">Shared</a></body></html>',
+            },
+            second_root: {
+                "body": f'<html><body><a href="{shared}">Shared</a></body></html>',
+            },
+            shared: {"body": "<html><body><main>Shared</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "multi-root-visited-cache",
+        session=session,
+    )
+    scope = CrawlScope(
+        roots=[first_root, second_root],
+        depth=1,
+        include_subdomains=True,
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == [first_root, second_root, shared]
+
+
 def test_web_crawler_discovers_matching_descendants_from_filtered_seed(
     tmp_path: Path,
 ) -> None:
@@ -1465,6 +1529,24 @@ def test_directory_crawler_fetch_markdown_refreshes_when_file_changes(
 
     assert first == MarkdownDocument(origin=origin, content="# Hello")
     assert refreshed == MarkdownDocument(origin=origin, content="# Updated\n")
+
+
+def test_directory_crawler_excludes_own_cache_files_from_directory_walk(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    markdown = _write(tmp_path, "docs/readme.md", "# Hello")
+    monkeypatch.chdir(tmp_path)
+    crawler = DirectoryCrawler(cache_dir=True)
+    scope = CrawlScope(roots=[tmp_path])
+
+    documents = list(crawler.markdown_documents(scope, progress=False))
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert documents == [
+        MarkdownDocument(origin=markdown.resolve().as_uri(), content="# Hello")
+    ]
+    assert origins == [markdown.resolve().as_uri()]
 
 
 def test_directory_crawler_fetch_markdown_force_refresh_rebuilds_cached_markdown(
