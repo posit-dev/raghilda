@@ -87,6 +87,9 @@ class BaseStore(ABC):
         """
         pass
 
+    def _ingest_upsert(self, document: Document) -> WriteResult[Document]:
+        return self.upsert(document)
+
     def ingest(
         self,
         documents: Iterable[Any],
@@ -134,7 +137,7 @@ class BaseStore(ABC):
             remember_origin(document.origin)
             if stop_event.is_set():
                 raise CancelledError()
-            return self.upsert(document)
+            return self._ingest_upsert(document)
 
         iterator = iter(documents)
         pending = set()
@@ -155,11 +158,19 @@ class BaseStore(ABC):
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 results = []
+                cancelled_errors = []
+                errors = []
                 for future in done:
                     try:
                         results.append(future.result())
-                    except CancelledError:
-                        continue
+                    except CancelledError as exc:
+                        cancelled_errors.append(exc)
+                    except Exception as exc:
+                        errors.append(exc)
+                if errors:
+                    raise errors[0]
+                if cancelled_errors and not stop_event.is_set():
+                    raise cancelled_errors[0]
                 for result in results:
                     if result.action == "inserted":
                         inserted += 1

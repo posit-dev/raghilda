@@ -1,5 +1,6 @@
 from ._store import BaseStore, WriteResult
 import json
+import threading
 from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 from .document import Document, ChunkedMarkdownDocument
 from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
@@ -137,6 +138,7 @@ class PostgreSQLStore(BaseStore):
         self.con = con
         self._metadata = metadata
         self._schema = psycopg2.extensions.quote_ident(schema, con)
+        self._ingest_upsert_lock = threading.Lock()
 
     def close(self) -> None:
         """Close the store's database connection."""
@@ -538,6 +540,13 @@ class PostgreSQLStore(BaseStore):
             document=document,
             replaced_document=replaced_document,
         )
+
+    def _ingest_upsert(
+        self,
+        document: Document,
+    ) -> WriteResult[ChunkedMarkdownDocument]:
+        with self._ingest_upsert_lock:
+            return self.upsert(document)
 
     def _load_document_snapshot(
         self, *, origin: str, text: str

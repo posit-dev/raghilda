@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
 import shutil
@@ -17,7 +18,7 @@ import time
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 import threading
 import unicodedata
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
 from urllib.request import url2pathname
 
 import requests
@@ -84,6 +85,7 @@ RootInput = str | Path
 RootsInput = RootInput | Sequence[RootInput]
 CacheValue = tuple[Path | None, dict[str, Any] | None]
 CacheEntry = tuple[str, Path | None, dict[str, Any] | None]
+WebOriginKey = tuple[str, str, int | None]
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 
@@ -222,6 +224,9 @@ class _FilesystemCrawlerCache:
         record = self._read_record(metadata_path)
         if record is None:
             self._cleanup_broken_metadata_path(metadata_path)
+            return None
+        if record["key"] != key:
+            self._cleanup_mismatched_metadata_path(metadata_path, key)
             return None
 
         content_path: Path | None = None
@@ -458,6 +463,11 @@ class _FilesystemCrawlerCache:
             return None
         if content_path is not None and not isinstance(content_path, str):
             return None
+        if content_path is not None:
+            if content_path in {"", ".", ".."}:
+                return None
+            if Path(content_path).name != content_path or "\\" in content_path:
+                return None
         if metadata is not None and not isinstance(metadata, dict):
             return None
 
@@ -479,6 +489,25 @@ class _FilesystemCrawlerCache:
             if not metadata_path.exists():
                 return
             if self._read_record(metadata_path) is not None:
+                return
+
+            self._delete_base_files_locked(base)
+
+    def _cleanup_mismatched_metadata_path(
+        self,
+        metadata_path: Path,
+        key: str,
+    ) -> None:
+        """Best-effort cleanup for a metadata file stored under the wrong key."""
+        if self.root is None:
+            return
+
+        base = self._base_for_key(key)
+        with self._locked_base(base):
+            if not metadata_path.exists():
+                return
+            record = self._read_record(metadata_path)
+            if record is not None and record["key"] == key:
                 return
 
             self._delete_base_files_locked(base)
@@ -515,7 +544,9 @@ class _FilesystemCrawlerCache:
         assert self.root is not None
 
         deleted = 0
-        for path in self.root.glob(f"{base}.*"):
+        for path in self.root.iterdir():
+            if not self._belongs_to_base(path.name, base):
+                continue
             if not path.is_file():
                 continue
             try:
@@ -529,7 +560,9 @@ class _FilesystemCrawlerCache:
         """Delete stale files for one base, keeping the current pair."""
         assert self.root is not None
 
-        for path in self.root.glob(f"{base}.*"):
+        for path in self.root.iterdir():
+            if not self._belongs_to_base(path.name, base):
+                continue
             if not path.is_file():
                 continue
             if path.name in keep:
@@ -539,25 +572,41 @@ class _FilesystemCrawlerCache:
             except FileNotFoundError:
                 pass
 
+    def _belongs_to_base(self, name: str, base: str) -> bool:
+        if name == f"{base}{self._METADATA_SUFFIX}":
+            return True
+        prefix = f"{base}."
+        if not name.startswith(prefix):
+            return False
+        return "--" not in name[len(prefix) :]
+
     def _write_content(self, content_path: Path, content: bytes | str | Path) -> None:
-        """Write content directly to its destination path."""
-        if isinstance(content, bytes):
-            with content_path.open("wb") as handle:
-                handle.write(content)
-            return
-
-        if isinstance(content, str):
-            with content_path.open("w", encoding="utf-8") as handle:
-                handle.write(content)
-            return
-
         if isinstance(content, Path):
             if content == content_path:
                 return
-            shutil.copyfile(content, content_path)
-            return
 
-        raise TypeError(f"Unsupported content type: {type(content)!r}")
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "wb",
+                dir=content_path.parent,
+                prefix=f".{content_path.name}.",
+                delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                if isinstance(content, bytes):
+                    handle.write(content)
+                elif isinstance(content, str):
+                    handle.write(content.encode("utf-8"))
+                elif isinstance(content, Path):
+                    with content.open("rb") as source:
+                        shutil.copyfileobj(source, handle)
+                else:
+                    raise TypeError(f"Unsupported content type: {type(content)!r}")
+            os.replace(temporary_path, content_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def _write_json(self, path: Path, obj: Mapping[str, Any]) -> None:
         """Write metadata JSON directly to its destination path."""
@@ -718,6 +767,7 @@ class DirectoryCrawler(BaseCrawler):
             return
         cache_root = self.cache_dir.resolve() if self.cache_dir is not None else None
         count = 0
+        yielded_origins: set[str] = set()
         for root in resolved_scope.roots:
             path = _to_directory_path(root)
             assert path.exists(), f"Root does not exist: {path}"
@@ -726,6 +776,8 @@ class DirectoryCrawler(BaseCrawler):
                 if cache_root is not None and resolved_path.is_relative_to(cache_root):
                     continue
                 origin = resolved_path.as_uri()
+                if origin in yielded_origins:
+                    continue
                 if self._include_path(
                     path,
                     origin,
@@ -734,6 +786,7 @@ class DirectoryCrawler(BaseCrawler):
                     include_types=resolved_scope.include_types,
                     exclude_types=resolved_scope.exclude_types,
                 ):
+                    yielded_origins.add(origin)
                     yield origin
                     count += 1
                     if (
@@ -742,18 +795,18 @@ class DirectoryCrawler(BaseCrawler):
                     ):
                         return
                 continue
-            for file_path in sorted(path.rglob("*")):
-                if not file_path.is_file():
-                    continue
+            for file_path in _iter_directory_files(
+                path,
+                max_depth=resolved_scope.depth,
+            ):
                 resolved_file_path = file_path.resolve()
                 if cache_root is not None and resolved_file_path.is_relative_to(
                     cache_root
                 ):
                     continue
-                relative_depth = len(file_path.relative_to(path).parts) - 1
-                if relative_depth > resolved_scope.depth:
-                    continue
                 origin = resolved_file_path.as_uri()
+                if origin in yielded_origins:
+                    continue
                 if not self._include_path(
                     file_path,
                     origin,
@@ -763,6 +816,7 @@ class DirectoryCrawler(BaseCrawler):
                     exclude_types=resolved_scope.exclude_types,
                 ):
                     continue
+                yielded_origins.add(origin)
                 yield origin
                 count += 1
                 if resolved_scope.limit is not None and count >= resolved_scope.limit:
@@ -874,6 +928,8 @@ class DirectoryCrawler(BaseCrawler):
             exclude_patterns=exclude_patterns,
         ):
             return False
+        if not include_types and not exclude_types:
+            return True
         label = _detect_type_label(
             path=path, content_type=mimetypes.guess_type(path.name)[0]
         )
@@ -894,7 +950,8 @@ class WebCrawler(BaseCrawler):
         max_workers: int = 1,
     ) -> None:
         assert max_workers >= 1
-        self.session = session or requests.Session()
+        self.session = requests.Session() if session is None else session
+        self._cache_context = None if session is None else f"session:{id(self.session)}"
         self.cache_dir = _resolve_cache_dir(
             cache_dir,
             backend_name="web",
@@ -917,10 +974,10 @@ class WebCrawler(BaseCrawler):
         resolved_scope = _resolve_crawl_scope(scope)
         if resolved_scope.limit == 0:
             return
-        visited: set[tuple[str, str]] = set()
+        visited: set[tuple[str, WebOriginKey, str]] = set()
         yielded_origins: set[str] = set()
         yielded = 0
-        frontier: list[tuple[str, str]] = []
+        frontier: list[tuple[str, WebOriginKey, str]] = []
 
         for root in resolved_scope.roots:
             canonical_root = _canonicalize_web_url(str(root))
@@ -928,26 +985,34 @@ class WebCrawler(BaseCrawler):
             parsed = urlparse(canonical_root)
             assert parsed.scheme in {"http", "https"}
             root_host = parsed.hostname or ""
-            frontier.append((canonical_root, root_host))
+            frontier.append(
+                (canonical_root, _web_origin_key(canonical_root), root_host)
+            )
 
         current_depth = 0
         while frontier:
-            batch: list[tuple[str, str]] = []
-            for origin, root_host in frontier:
-                visit_key = (origin, root_host)
+            batch: list[tuple[str, WebOriginKey, str]] = []
+            for origin, scope_origin, root_host in frontier:
+                visit_key = (origin, scope_origin, root_host)
                 if visit_key in visited:
                     continue
                 if not self._allow_origin(
                     origin,
+                    scope_origin,
                     root_host,
                     include_external_links=resolved_scope.include_external_links,
                     include_subdomains=resolved_scope.include_subdomains,
                 ):
                     continue
+                if _matches_exclude_patterns(
+                    origin,
+                    exclude_patterns=resolved_scope.exclude_patterns,
+                ):
+                    continue
                 visited.add(visit_key)
-                batch.append((origin, root_host))
+                batch.append((origin, scope_origin, root_host))
 
-            next_frontier: list[tuple[str, str]] = []
+            next_frontier: list[tuple[str, WebOriginKey, str]] = []
             offset = 0
             while offset < len(batch):
                 remaining = (
@@ -972,7 +1037,7 @@ class WebCrawler(BaseCrawler):
                         ),
                     ),
                 )
-                for (origin, root_host), source in fetched_sources:
+                for (origin, scope_origin, root_host), source in fetched_sources:
                     type_label = (source.metadata or {}).get("type_label")
                     matches_patterns = _matches_patterns(
                         origin,
@@ -1002,12 +1067,19 @@ class WebCrawler(BaseCrawler):
 
                     text = _read_text(source.body_path)
                     resolved_origin = source.resolved_origin or origin
-                    resolved_host = urlparse(resolved_origin).hostname or root_host
-                    child_root_host = (
-                        root_host
-                        if resolved_scope.include_subdomains
-                        else resolved_host
-                    )
+                    resolved_origin_key = _web_origin_key(resolved_origin)
+                    origin_key = _web_origin_key(origin)
+                    child_root_host = root_host
+                    if (
+                        resolved_scope.include_subdomains
+                        and resolved_origin_key == origin_key
+                    ):
+                        child_scope_origin = scope_origin
+                    else:
+                        child_scope_origin = resolved_origin_key
+                        child_root_host = (
+                            urlparse(resolved_origin).hostname or root_host
+                        )
                     for link in sorted(_extract_links(text)):
                         canonical = _canonicalize_web_url(link, base=resolved_origin)
                         if canonical is None:
@@ -1015,7 +1087,9 @@ class WebCrawler(BaseCrawler):
                         parsed = urlparse(canonical)
                         if parsed.scheme not in {"http", "https"}:
                             continue
-                        next_frontier.append((canonical, child_root_host))
+                        next_frontier.append(
+                            (canonical, child_scope_origin, child_root_host)
+                        )
                 offset += chunk_size
             frontier = next_frontier
             current_depth += 1
@@ -1036,7 +1110,11 @@ class WebCrawler(BaseCrawler):
         cached_meta: dict[str, Any] | None = None
         if cached_entry is not None:
             body_path, cached_meta = cached_entry
-        has_cache = body_path is not None and cached_meta is not None
+        has_cache = (
+            body_path is not None
+            and cached_meta is not None
+            and self._cache_context_matches(cached_meta)
+        )
         now = _utcnow()
 
         if has_cache and not cache_force_refresh:
@@ -1074,7 +1152,9 @@ class WebCrawler(BaseCrawler):
 
         response.raise_for_status()
         content_type = response.headers.get("Content-Type")
-        resolved_origin = _canonicalize_web_url(response.url) or response.url
+        resolved_origin = (
+            _canonicalize_web_url(response.url, base=canonical_origin) or response.url
+        )
         type_label = _detect_type_label(
             path=_type_hint_path(canonical_origin, content_type=content_type),
             content_type=content_type,
@@ -1089,6 +1169,7 @@ class WebCrawler(BaseCrawler):
             "type_label": type_label,
             "fetched_at": now.isoformat(),
             "revalidated_at": None,
+            "cache_context": self._cache_context,
         }
         cached_entry = self._cache.upsert(
             canonical_origin,
@@ -1103,6 +1184,22 @@ class WebCrawler(BaseCrawler):
         body_path, meta = cached_entry
         assert body_path is not None
         assert meta is not None
+        actual_type_label = _detect_type_label(
+            path=body_path,
+            content_type=content_type,
+        )
+        if actual_type_label != meta.get("type_label"):
+            meta["type_label"] = actual_type_label
+            cached_entry = self._cache.upsert(
+                canonical_origin,
+                content=body_path,
+                metadata=meta,
+                content_ext=None,
+            )
+            assert cached_entry is not None
+            body_path, meta = cached_entry
+            assert body_path is not None
+            assert meta is not None
         return self._source_from_meta(meta, body_path=body_path)
 
     def _fetch_raw_after_origin_discovery(self, origin: str) -> FetchedSource:
@@ -1178,24 +1275,25 @@ class WebCrawler(BaseCrawler):
             return False
         return now - freshest_cache_time <= self.cache_stale_after
 
+    def _cache_context_matches(self, cached_meta: dict[str, Any]) -> bool:
+        return cached_meta.get("cache_context") == self._cache_context
+
     def _allow_origin(
         self,
         origin: str,
+        scope_origin: WebOriginKey,
         root_host: str,
         *,
         include_external_links: bool,
         include_subdomains: bool,
     ) -> bool:
-        host = urlparse(origin).hostname or ""
-        if not host:
-            return False
-        if host == root_host:
-            return True
-        if include_external_links:
-            return True
-        if not include_subdomains:
-            return False
-        return host.endswith(f".{root_host}")
+        return _allow_web_origin(
+            origin,
+            scope_origin,
+            root_host,
+            include_external_links=include_external_links,
+            include_subdomains=include_subdomains,
+        )
 
 
 class CloudflareCrawler(BaseCrawler):
@@ -1248,14 +1346,20 @@ class CloudflareCrawler(BaseCrawler):
         del progress
         resolved_scope = _resolve_crawl_scope(scope)
         yielded = 0
+        yielded_origins: set[str] = set()
+        crawled_roots: set[str] = set()
         for root in resolved_scope.roots:
             if resolved_scope.limit is not None and yielded >= resolved_scope.limit:
                 return
             canonical_root = _canonicalize_web_url(str(root))
             assert canonical_root is not None
+            if canonical_root in crawled_roots:
+                continue
+            crawled_roots.add(canonical_root)
             remaining = (
                 None if resolved_scope.limit is None else resolved_scope.limit - yielded
             )
+            root_limit = remaining if not yielded_origins else None
             records = self._crawl_root(
                 canonical_root,
                 cache_force_refresh=cache_force_refresh,
@@ -1264,10 +1368,12 @@ class CloudflareCrawler(BaseCrawler):
                 exclude_patterns=resolved_scope.exclude_patterns,
                 include_external_links=resolved_scope.include_external_links,
                 include_subdomains=resolved_scope.include_subdomains,
-                limit=remaining,
+                limit=root_limit,
             )
             for record in records:
                 origin = record["url"]
+                if origin in yielded_origins:
+                    continue
                 label = _detect_type_label(
                     path=None,
                     content_type="text/markdown",
@@ -1278,6 +1384,7 @@ class CloudflareCrawler(BaseCrawler):
                     exclude_types=resolved_scope.exclude_types,
                 ):
                     continue
+                yielded_origins.add(origin)
                 yield origin
                 yielded += 1
                 if resolved_scope.limit is not None and yielded >= resolved_scope.limit:
@@ -1316,9 +1423,13 @@ class CloudflareCrawler(BaseCrawler):
                 (item for item in records if item["url"] == canonical_origin),
                 None,
             )
+            if record is None and len(records) == 1:
+                record = records[0]
             if record is None:
                 raise ValueError(f"Cloudflare crawl did not return record for {origin}")
-            record_entry = self._records[canonical_origin]
+            record_entry = self._records.get(record["url"])
+            assert record_entry is not None
+            self._records[canonical_origin] = record_entry
 
         assert record_entry is not None
         return self._source_from_record_entry(canonical_origin, record_entry)
@@ -1398,6 +1509,11 @@ class CloudflareCrawler(BaseCrawler):
             and self._cloudflare_cache_is_fresh(cached_entry.fetched_at)
         ):
             return cached_entry.records
+        if not cache_force_refresh and apply_patterns:
+            cached_entry = self._load_root_cache_entry(cache_key)
+            if cached_entry is not None:
+                self._roots[cache_key] = cached_entry
+                return cached_entry.records
 
         endpoint = f"{self.base_url}/accounts/{self.account_id}/browser-rendering/crawl"
         payload = self._crawl_payload(
@@ -1474,9 +1590,27 @@ class CloudflareCrawler(BaseCrawler):
             records.extend(page_result.get("records") or [])
             cursor = page_result.get("cursor")
 
-        completed_records = [
-            record for record in records if record.get("status") == "completed"
-        ]
+        scope_origin = _web_origin_key(root)
+        root_host = urlparse(root).hostname or ""
+        completed_records = []
+        for record in records:
+            if record.get("status") != "completed":
+                continue
+            canonical_url = _canonicalize_web_url(record["url"])
+            if canonical_url is None:
+                continue
+            if apply_patterns and not _allow_web_origin(
+                canonical_url,
+                scope_origin,
+                root_host,
+                include_external_links=include_external_links,
+                include_subdomains=include_subdomains,
+            ):
+                continue
+            if canonical_url != record["url"]:
+                record = dict(record)
+                record["url"] = canonical_url
+            completed_records.append(record)
         if apply_patterns:
             completed_records = [
                 record
@@ -1492,6 +1626,12 @@ class CloudflareCrawler(BaseCrawler):
             fetched_at=fetched_at,
             records=completed_records,
         )
+        if apply_patterns:
+            self._store_root_cache_entry(
+                cache_key,
+                records=completed_records,
+                fetched_at=fetched_at,
+            )
         for record in completed_records:
             self._records[record["url"]] = _CloudflareRecordCacheEntry(
                 fetched_at=fetched_at,
@@ -1551,6 +1691,58 @@ class CloudflareCrawler(BaseCrawler):
             "modified_since": self.modified_since,
         }
 
+    def _root_cache_key(self, cache_key: tuple[Any, ...]) -> str:
+        payload = {
+            "cache_key": cache_key,
+            "signature": self._record_cache_signature(),
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return f"cloudflare-root:{encoded}"
+
+    def _load_root_cache_entry(
+        self,
+        cache_key: tuple[Any, ...],
+    ) -> _CloudflareRootCacheEntry | None:
+        cached_entry = self._cache.fetch(self._root_cache_key(cache_key))
+        if cached_entry is None:
+            return None
+        _, cached_meta = cached_entry
+        if cached_meta is None:
+            return None
+        if cached_meta.get("signature") != self._record_cache_signature():
+            return None
+        fetched_at = _parse_datetime(cached_meta.get("fetched_at"))
+        if fetched_at is None or not self._cloudflare_cache_is_fresh(fetched_at):
+            return None
+        records = cached_meta["records"]
+        for record in records:
+            self._records[record["url"]] = _CloudflareRecordCacheEntry(
+                fetched_at=fetched_at,
+                record=record,
+            )
+        return _CloudflareRootCacheEntry(
+            fetched_at=fetched_at,
+            records=records,
+        )
+
+    def _store_root_cache_entry(
+        self,
+        cache_key: tuple[Any, ...],
+        *,
+        records: list[dict[str, Any]],
+        fetched_at: datetime,
+    ) -> None:
+        self._cache.upsert(
+            self._root_cache_key(cache_key),
+            content=None,
+            metadata={
+                "fetched_at": fetched_at.isoformat(),
+                "records": records,
+                "signature": self._record_cache_signature(),
+            },
+            content_ext=None,
+        )
+
     def _load_record_cache_entry(
         self,
         origin: str,
@@ -1567,7 +1759,6 @@ class CloudflareCrawler(BaseCrawler):
         if fetched_at is None or not self._cloudflare_cache_is_fresh(fetched_at):
             return None
         record = cached_meta["record"]
-        assert record["url"] == origin
         return _CloudflareRecordCacheEntry(
             fetched_at=fetched_at,
             record=record,
@@ -1609,8 +1800,8 @@ def _coerce_roots(roots: RootsInput) -> list[RootInput]:
 def _resolve_crawl_scope(scope: CrawlScope) -> _ResolvedCrawlScope:
     return _ResolvedCrawlScope(
         roots=_coerce_roots(scope.roots),
-        include_patterns=list(scope.include_patterns or []),
-        exclude_patterns=list(scope.exclude_patterns or []),
+        include_patterns=_coerce_string_sequence(scope.include_patterns),
+        exclude_patterns=_coerce_string_sequence(scope.exclude_patterns),
         depth=_DEFAULT_CRAWL_DEPTH if scope.depth is None else scope.depth,
         limit=scope.limit,
         include_types=_normalize_types(scope.include_types),
@@ -1620,17 +1811,92 @@ def _resolve_crawl_scope(scope: CrawlScope) -> _ResolvedCrawlScope:
     )
 
 
+def _coerce_string_sequence(values: Sequence[str] | str | None) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        return [values]
+    return list(values)
+
+
 def _canonicalize_web_url(target: str, *, base: str | None = None) -> str | None:
     url = urljoin(base, target) if base else target
     if not url:
         return None
     url, _ = urldefrag(url)
     parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme != parsed.scheme:
+        parsed = parsed._replace(scheme=scheme)
+        url = urlunparse(parsed)
     if parsed.scheme not in {"http", "https"}:
         return None
     if not parsed.netloc:
         return None
-    return url
+    try:
+        parsed.port
+    except ValueError:
+        return None
+    netloc = _canonical_netloc(parsed)
+    if netloc != parsed.netloc:
+        parsed = parsed._replace(netloc=netloc)
+    if parsed.path == "/" and not parsed.params:
+        parsed = parsed._replace(path="")
+    return urlunparse(parsed)
+
+
+def _canonical_netloc(parsed: Any) -> str:
+    userinfo = ""
+    if "@" in parsed.netloc:
+        userinfo = f"{parsed.netloc.rsplit('@', 1)[0]}@"
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = parsed.port
+    if port is None:
+        return f"{userinfo}{host}"
+    if parsed.scheme == "http" and port == 80:
+        return f"{userinfo}{host}"
+    if parsed.scheme == "https" and port == 443:
+        return f"{userinfo}{host}"
+    return f"{userinfo}{host}:{port}"
+
+
+def _web_origin_key(origin: str) -> WebOriginKey:
+    parsed = urlparse(origin)
+    scheme = parsed.scheme.lower()
+    port = parsed.port
+    if port is None and scheme == "http":
+        port = 80
+    elif port is None and scheme == "https":
+        port = 443
+    return scheme, parsed.hostname or "", port
+
+
+def _allow_web_origin(
+    origin: str,
+    scope_origin: WebOriginKey,
+    root_host: str,
+    *,
+    include_external_links: bool,
+    include_subdomains: bool,
+) -> bool:
+    parsed = urlparse(origin)
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    origin_key = _web_origin_key(origin)
+    if origin_key == scope_origin:
+        return True
+    if include_external_links:
+        return True
+    if not include_subdomains:
+        return False
+    return (
+        origin_key[0] == scope_origin[0]
+        and origin_key[2] == scope_origin[2]
+        and host.endswith(f".{root_host}")
+    )
 
 
 def _resolve_cache_dir(
@@ -1645,17 +1911,56 @@ def _resolve_cache_dir(
         if cache_dir is True:
             return Path.cwd() / ".raghilda" / "cache" / backend_name
         raise TypeError("cache_dir must be None, True, or a filesystem path")
-    return Path(cache_dir)
+    return Path(cache_dir).resolve()
 
 
 def _to_directory_path(root: str | Path) -> Path:
     if isinstance(root, Path):
         return root
-    parsed = urlparse(str(root))
+    value = str(root)
+    if re.match(r"^[A-Za-z]:(?:[\\/]|$)", value):
+        return Path(value)
+    parsed = urlparse(value)
     if parsed.scheme == "file":
-        return _path_from_file_uri(str(root))
+        return _path_from_file_uri(value)
     assert parsed.scheme in {"", "file"}
-    return Path(str(root))
+    return Path(value)
+
+
+def _iter_directory_files(root: Path, *, max_depth: int) -> Iterator[Path]:
+    yield from _iter_directory_files_from(
+        root,
+        root=root,
+        resolved_root=root.resolve(),
+        max_depth=max_depth,
+    )
+
+
+def _iter_directory_files_from(
+    directory: Path,
+    *,
+    root: Path,
+    resolved_root: Path,
+    max_depth: int,
+) -> Iterator[Path]:
+    for child in sorted(directory.iterdir()):
+        if not child.resolve().is_relative_to(resolved_root):
+            continue
+        if child.is_file():
+            yield child
+            continue
+        if child.is_symlink():
+            continue
+        if not child.is_dir():
+            continue
+        child_depth = len(child.relative_to(root).parts) - 1
+        if child_depth < max_depth:
+            yield from _iter_directory_files_from(
+                child,
+                root=root,
+                resolved_root=resolved_root,
+                max_depth=max_depth,
+            )
 
 
 def _path_from_file_uri(origin: str) -> Path:
@@ -1675,7 +1980,11 @@ def _path_from_file_origin(origin: str) -> Path:
 
 
 def _normalize_types(types: Sequence[str] | None) -> set[str]:
-    return {item.strip().lower() for item in types or []}
+    if types is None:
+        return set()
+    if isinstance(types, str):
+        types = [types]
+    return {item.strip().lower() for item in types}
 
 
 def _matches_patterns(
@@ -1684,12 +1993,19 @@ def _matches_patterns(
     include_patterns: Sequence[str],
     exclude_patterns: Sequence[str],
 ) -> bool:
-    for pattern in exclude_patterns:
-        if re.search(pattern, origin):
-            return False
+    if _matches_exclude_patterns(origin, exclude_patterns=exclude_patterns):
+        return False
     if not include_patterns:
         return True
     return any(re.search(pattern, origin) for pattern in include_patterns)
+
+
+def _matches_exclude_patterns(
+    origin: str,
+    *,
+    exclude_patterns: Sequence[str],
+) -> bool:
+    return any(re.search(pattern, origin) for pattern in exclude_patterns)
 
 
 def _matches_cloudflare_patterns(
@@ -1775,6 +2091,12 @@ def _known_body_suffix(origin: str, *, content_type: str | None) -> str | None:
         return ".html"
     if normalized == "text/markdown":
         return ".md"
+    if normalized == "text/plain":
+        return ".txt"
+    if normalized in {"application/xml", "text/xml"}:
+        return ".xml"
+    if normalized == "text/x-python":
+        return ".py"
     if normalized == "application/json":
         return ".json"
     if normalized == "application/pdf":

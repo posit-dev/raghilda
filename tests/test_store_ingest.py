@@ -360,6 +360,57 @@ def test_base_store_ingest_ignores_cancelled_sibling_when_worker_failed(
         store.ingest(documents, max_workers=2)
 
 
+def test_base_store_ingest_propagates_worker_cancelled_error() -> None:
+    store = _RecordingStore()
+    documents = [MarkdownDocument(origin="doc-1", content="# One")]
+
+    def prepare(document: MarkdownDocument) -> MarkdownDocument:
+        del document
+        raise CancelledError("prepare cancelled")
+
+    with pytest.raises(CancelledError, match="prepare cancelled"):
+        store.ingest(documents, prepare=prepare, max_workers=1)
+
+
+def test_postgresql_store_ingest_serializes_upsert_calls() -> None:
+    pytest.importorskip("psycopg2")
+    from raghilda._postgres_store import PostgreSQLStore
+
+    store = PostgreSQLStore.__new__(PostgreSQLStore)
+    store._ingest_upsert_lock = threading.Lock()
+    lock = threading.Lock()
+    in_flight = 0
+    max_in_flight = 0
+
+    def upsert(
+        document: Document,
+        *,
+        skip_if_unchanged: bool = True,
+    ) -> WriteResult[Document]:
+        del skip_if_unchanged
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        try:
+            time.sleep(0.02)
+            return WriteResult(action="inserted", document=document)
+        finally:
+            with lock:
+                in_flight -= 1
+
+    store.upsert = upsert  # type: ignore[method-assign]
+    documents = [
+        MarkdownDocument(origin="doc-1", content="# One"),
+        MarkdownDocument(origin="doc-2", content="# Two"),
+    ]
+
+    summary = store.ingest(documents, max_workers=2)
+
+    assert summary == IngestSummary(inserted=2, replaced=0, skipped=0)
+    assert max_in_flight == 1
+
+
 def test_duckdb_store_ingest_prepares_chunked_documents() -> None:
     store = DuckDBStore.create(
         location=":memory:",
