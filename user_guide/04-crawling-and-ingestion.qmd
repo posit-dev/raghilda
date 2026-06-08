@@ -3,12 +3,20 @@ title: "Crawling and Ingestion"
 guide-section: "Getting Started"
 ---
 
-raghilda can crawl files or websites, convert each source to Markdown, chunk the
-documents, and write them to a store as a streaming ingestion job. This is the
-main path for building or refreshing a knowledge base from source material that
-changes over time.
+raghilda's core workflow is intentionally sequential: find a source, read it,
+chunk it, and upsert it. That is the recommended first path for building a store
+because every step is visible, easy to inspect, and easy to change.
 
-The API has three parts:
+As your source collection grows, store creation can become mostly waiting on
+network requests, file conversion, chunking, and writes. The crawling and
+ingestion API is the next step when you want that work to run concurrently. It
+can make store creation substantially faster while still letting you inspect the
+origins, fetched sources, converted Markdown documents, and final ingest
+summary.
+
+The tradeoff is a few extra concepts. Use this API when the simple sequential
+workflow is too slow, or when you need a repeatable refresh job for a larger
+site, document collection, or codebase. The API has three parts:
 
 - `CrawlScope` describes what to crawl.
 - A crawler discovers sources and returns `MarkdownDocument` objects.
