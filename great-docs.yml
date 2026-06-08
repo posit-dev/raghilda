@@ -75,6 +75,16 @@ reference:
       - name: store.OpenAIStore
       - name: store.PostgreSQLStore
 
+  - title: Crawl
+    desc: Crawlers for discovering and converting source documents
+    contents:
+      - crawl.CrawlScope
+      - crawl.FetchedSource
+      - crawl.BaseCrawler
+      - crawl.DirectoryCrawler
+      - crawl.WebCrawler
+      - crawl.CloudflareCrawler
+
   - title: Embedding
     desc: Embedding providers for generating vector representations
     contents:

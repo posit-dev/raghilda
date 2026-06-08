@@ -38,7 +38,7 @@ def _extract_links(txt: str) -> set[str]:
         root = ET.fromstring(txt)
         for loc in root.findall(".//{*}url/{*}loc"):
             if loc is not None and loc.text:
-                links.update(loc.text.strip())
+                links.add(loc.text.strip())
     except Exception:
         pass
 

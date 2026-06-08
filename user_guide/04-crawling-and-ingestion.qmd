@@ -1,0 +1,268 @@
+---
+title: "Crawling and Ingestion"
+guide-section: "Getting Started"
+---
+
+raghilda's core workflow is intentionally sequential: find a source, read it,
+chunk it, and upsert it. That is the recommended first path for building a store
+because every step is visible, easy to inspect, and easy to change.
+
+As your source collection grows, store creation can become mostly waiting on
+network requests, file conversion, chunking, and writes. The crawling and
+ingestion API is the next step when you want that work to run concurrently. It
+can make store creation substantially faster while still letting you inspect the
+origins, fetched sources, converted Markdown documents, and final ingest
+summary.
+
+The tradeoff is a few extra concepts. Use this API when the simple sequential
+workflow is too slow, or when you need a repeatable refresh job for a larger
+site, document collection, or codebase. The API has three parts:
+
+- `CrawlScope` describes what to crawl.
+- A crawler discovers sources and returns `MarkdownDocument` objects.
+- `store.ingest()` prepares and upserts the stream.
+
+## Crawl a website
+
+Use `WebCrawler` when you want raghilda to fetch pages directly with
+`requests`. The crawler starts from one or more roots, follows links up to
+`depth`, and yields matching pages as Markdown documents.
+
+```{python}
+#| eval: false
+from datetime import timedelta
+
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CrawlScope, WebCrawler
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingOpenAI(),
+    name="docs",
+    overwrite=True,
+)
+
+crawler = WebCrawler(
+    cache_dir=True,
+    cache_stale_after=timedelta(days=1),
+    max_workers=4,
+)
+scope = CrawlScope(
+    roots=["https://quarto.org/docs/guide/"],
+    depth=2,
+    include_patterns=[r"^https://quarto\.org/docs/guide/"],
+    exclude_patterns=[r"/reference/"],
+    include_types=["html"],
+)
+
+chunker = MarkdownChunker(chunk_size=1600, target_overlap=0.5)
+
+summary = store.ingest(
+    crawler.markdown_documents(scope),
+    prepare=chunker.chunk,
+    max_workers=4,
+)
+store.build_index()
+
+print(summary)
+```
+
+`CrawlScope` owns traversal policy:
+
+| Field | Description |
+|-------|-------------|
+| `roots` | Starting files, directories, or URLs. |
+| `depth` | Number of link or directory levels to follow. `0` means only the roots. |
+| `limit` | Maximum number of origins to yield. |
+| `include_patterns` | Regular expressions that origins must match. |
+| `exclude_patterns` | Regular expressions that remove origins from the crawl. |
+| `include_types` | Type labels to include, such as `html`, `markdown`, `pdf`, `python`, or `text`. |
+| `exclude_types` | Type labels to skip. |
+| `include_external_links` | Allow links outside the root origin. Defaults to `False`. |
+| `include_subdomains` | Allow subdomains under the root host. Defaults to `False`. |
+
+`WebCrawler(cache_dir=True)` stores fetched response bodies under
+`.raghilda/cache/web`. With `cache_stale_after`, fresh cached responses are
+reused, and stale responses are revalidated with `ETag` or `Last-Modified`
+headers when the server provides them. Pass `cache_force_refresh=True` to
+`origins()`, `fetch_raw()`, `fetch_markdown()`, or `markdown_documents()` when a
+run must bypass the cache.
+
+## Crawl local files
+
+Use `DirectoryCrawler` for local Markdown, notebooks, PDFs, text files, and
+other files supported by `read_as_markdown()`.
+
+```{python}
+#| eval: false
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CrawlScope, DirectoryCrawler
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.create(
+    location="local-docs.db",
+    embed=None,
+    name="local_docs",
+    overwrite=True,
+)
+
+crawler = DirectoryCrawler(cache_dir=True, max_workers=4)
+scope = CrawlScope(
+    roots=["docs"],
+    depth=3,
+    include_patterns=[r".*\.(md|qmd|ipynb|pdf)$"],
+    exclude_patterns=[r".*/_site/.*", r".*/\.venv/.*"],
+)
+
+chunker = MarkdownChunker()
+summary = store.ingest(
+    crawler.markdown_documents(scope),
+    prepare=chunker.chunk,
+    max_workers=4,
+)
+
+print(summary)
+```
+
+Directory crawling always reads the current filesystem tree. If you enable
+`cache_dir`, converted Markdown is reused only when the source file hash and
+modification time still match the cached metadata. The crawler also skips its
+own cache directory when the cache is inside a crawled root.
+
+## Inspect before ingesting
+
+The crawler interface is useful even when you are not ready to write to a
+store. Use `origins()` to inspect what the scope discovers, or use
+`fetch_markdown()` to convert one source.
+
+```{python}
+#| eval: false
+from raghilda.crawl import CrawlScope, WebCrawler
+
+crawler = WebCrawler(cache_dir=True)
+scope = CrawlScope(
+    roots=["https://example.com/docs/"],
+    depth=1,
+    limit=10,
+)
+
+for origin in crawler.origins(scope):
+    print(origin)
+
+doc = crawler.fetch_markdown("https://example.com/docs/")
+print(doc.origin)
+print(doc.content[:500])
+```
+
+All crawler classes implement the same public methods:
+
+| Method | Returns |
+|--------|---------|
+| `origins(scope)` | A lazy iterator of source origins. |
+| `fetch_raw(origin)` | A `FetchedSource` with the cached body path and metadata. |
+| `fetch_markdown(origin)` | One `MarkdownDocument`. |
+| `markdown_documents(scope)` | A lazy iterator of `MarkdownDocument` objects. |
+
+## Customize conversion
+
+By default, crawlers convert fetched sources with raghilda's Markdown reader.
+Pass a `convert` function when a site or file collection needs custom cleanup.
+The function receives a `FetchedSource` and returns a `MarkdownDocument`.
+
+```{python}
+#| eval: false
+from raghilda.crawl import CrawlScope, FetchedSource, WebCrawler
+from raghilda.document import MarkdownDocument
+from raghilda.read import read_as_markdown
+
+
+def convert_reference_page(source: FetchedSource) -> MarkdownDocument:
+    doc = read_as_markdown(str(source.body_path))
+    markdown = doc.content
+    markdown = markdown.replace("Edit this page", "")
+    return MarkdownDocument(origin=source.origin, content=markdown)
+
+
+crawler = WebCrawler(cache_dir=True)
+scope = CrawlScope(roots=["https://example.com/reference/"], depth=1)
+documents = crawler.markdown_documents(scope, convert=convert_reference_page)
+```
+
+Keep chunking in `store.ingest(prepare=...)`, not in the converter. The
+converter should return one unchunked Markdown document per origin; `prepare`
+can then apply the same chunking policy to every document.
+
+## Use Cloudflare crawling
+
+Use `CloudflareCrawler` when you want Cloudflare to perform the browser-rendered
+crawl and return Markdown records. This is useful for sites that need rendering
+or where you want Cloudflare's crawl service to manage discovery.
+
+```{python}
+#| eval: false
+import os
+from datetime import timedelta
+
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CloudflareCrawler, CrawlScope
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.create(
+    location="rendered-docs.db",
+    embed=None,
+    name="rendered_docs",
+    overwrite=True,
+)
+
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    cache_dir=True,
+    cache_stale_after=timedelta(days=1),
+    render=True,
+)
+scope = CrawlScope(
+    roots=["https://example.com/docs/"],
+    depth=2,
+    include_patterns=["https://example.com/docs/**"],
+    exclude_patterns=["https://example.com/docs/archive/**"],
+    limit=250,
+)
+
+summary = store.ingest(
+    crawler.markdown_documents(scope),
+    prepare=MarkdownChunker().chunk,
+    max_workers=4,
+)
+
+print(summary)
+```
+
+For Cloudflare crawls, `include_patterns` and `exclude_patterns` use
+Cloudflare-style wildcard patterns, such as `https://example.com/docs/**`.
+`include_external_links` and `include_subdomains` are passed through to the
+Cloudflare crawl request.
+
+## Refresh a store
+
+`store.ingest()` upserts each prepared document and returns an `IngestSummary`
+with counts for inserted, replaced, and skipped documents. The input stream is
+consumed lazily, and `prepare` runs in the worker pool.
+
+```{python}
+#| eval: false
+summary = store.ingest(
+    crawler.markdown_documents(scope, cache_force_refresh=True),
+    prepare=chunker.chunk,
+    max_workers=4,
+)
+
+print(f"Inserted: {summary.inserted}")
+print(f"Replaced: {summary.replaced}")
+print(f"Skipped: {summary.skipped}")
+```
+
+Use `upsert()` directly when you need per-document `WriteResult` objects.
+Use `ingest()` when you want one aggregate summary for a crawl or refresh job.
