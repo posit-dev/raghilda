@@ -1,0 +1,310 @@
+---
+title: "Using RAG with Chatlas"
+guide-section: "Getting Started"
+---
+
+While raghilda builds the knowledge store, [chatlas](https://posit-dev.github.io/chatlas/) can handle the conversation part. The integration point between the two is a Python function that you register as a tool with chatlas. When the LLM decides it needs information from your store, it calls that function, receives the relevant chunks, and incorporates them into its answer.
+
+This page will walk you through the pattern step by step. It assumes you already have a populated store (look over [Core Concepts](00-getting-started.qmd) or [Crawling and Ingestion](04-crawling-and-ingestion.qmd) if you need to build one first).
+
+## Connecting to a store
+
+Let's start by connecting to an existing store (a `DuckDBStore`). Using `.connect(read_only=True)` is recommended when the store is only used for retrieval:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("quarto_docs.db", read_only=True)
+print(f"Store contains {store.size()} documents")
+```
+
+Any raghilda store backend works here: `DuckDBStore`, `ChromaDBStore`, or `OpenAIStore`. The rest of the code is identical regardless of the backend.
+
+## Defining a search tool
+
+chatlas discovers tools through plain Python functions. The function's docstring and type hints tell the model what the tool does and what arguments it accepts. A retrieval tool might look like this:
+
+```{python}
+#| eval: false
+import json
+
+def search_docs(query: str, num_results: int = 5) -> str:
+    """
+    Search the documentation for relevant information.
+
+    Parameters
+    ----------
+    query
+        A description of what to look for.
+    num_results
+        The number of relevant passages to return (default of `5`).
+    """
+    chunks = store.retrieve(query, top_k=num_results, deoverlap=True)
+    return json.dumps(
+        [{"text": chunk.text, "context": chunk.context} for chunk in chunks]
+    )
+```
+
+There are a few things we should take note of:
+
+- the docstring is sent to the model as part of the tool description. Write it for the LLM: be specific about when the tool should be used and what `query=` should contain.
+- the return value must be a string. JSON works really well here because it preserves structure without requiring the model to parse anything unusual.
+- `deoverlap=True` (the default) merges overlapping chunks from the same document so the model receives coherent passages rather than repetitive fragments.
+
+The goal is a function that returns enough context for the model to answer accurately, but not so much that it drowns the prompt in noise. Start with a simple version like the one above and refine the docstring and return format once you can observe how the model uses the results.
+
+## Registering the tool and chatting
+
+Pass the function to `chat.register_tool()`. After registration, the model can call it whenever it determines that retrieval would help answer a prompt:
+
+```{python}
+#| eval: false
+from chatlas import ChatOpenAI
+
+chat = ChatOpenAI(
+    model="gpt-5.5",
+    system_prompt=(
+        "You are a helpful assistant that answers questions about Quarto. "
+        "Use the search_docs tool to find relevant information before answering."
+    ),
+)
+chat.register_tool(search_docs)
+
+chat.chat("How do I add citations to a Quarto document?")
+```
+
+The system prompt matters. Instructing the model to use the tool before answering reduces the chance that it falls back on its training data alone.
+
+## Interactive and programmatic use
+
+chatlas provides several ways to consume responses depending on context.
+
+**Console mode** for interactive exploration:
+
+```{python}
+#| eval: false
+chat.console()
+```
+
+This opens a REPL where you can ask questions and see tool calls in real time. Type `exit` or press `Ctrl+C` to quit.
+
+**Streaming** for applications that display output incrementally:
+
+```{python}
+#| eval: false
+for chunk in chat.stream("What formats does Quarto support?"):
+    print(chunk, end="", flush=True)
+```
+
+**Async** for concurrent workloads:
+
+```{python}
+#| eval: false
+response = await chat.chat_async("How do I create a Quarto presentation?")
+print(response)
+```
+
+All three modes use the same registered tools and conversation history. The choice depends on where your code runs: `.console()` for quick experimentation in a terminal, `.stream()` for user-facing applications where perceived latency matters, and `.chat_async()` for server-side code that handles multiple requests concurrently.
+
+## Tailoring retrieval to the tool's purpose
+
+The tool function is where you control retrieval quality. Here are adjustments worth considering:
+
+Every `RetrievedChunk` carries an `.origin` attribute that records where the chunk came from (typically a URL or file path). Including it in the JSON response lets the model cite its sources when answering:
+
+```{python}
+#| eval: false
+def search_docs(query: str, num_results: int = 5) -> str:
+    """Search the documentation for relevant information."""
+    chunks = store.retrieve(query, top_k=num_results, deoverlap=True)
+    return json.dumps([
+        {
+            "text": chunk.text,
+            "context": chunk.context,
+            "source": chunk.origin,
+        }
+        for chunk in chunks
+    ])
+```
+
+Adding `"source": chunk.origin` to the returned dictionary is all it takes. Once the model sees URLs or paths alongside the text, it can reference them in its answer without any additional prompting.
+
+When a store indexes content from multiple sources or sections, you can pass an `attributes_filter=` argument to `retrieve()` to restrict results to a subset. The filter uses a SQL-like expression (`"section = 'guide'"`) that matches against the attributes defined in your store's schema:
+
+```{python}
+#| eval: false
+def search_guides(query: str) -> str:
+    """Search only the user guide section of the documentation."""
+    chunks = store.retrieve(
+        query,
+        top_k=5,
+        attributes_filter="section = 'guide'",
+    )
+    return json.dumps([{"text": chunk.text} for chunk in chunks])
+```
+
+Here only chunks whose `section` attribute equals `'guide'` are considered. This keeps retrieval focused and avoids pulling in, for example, API reference text when the user asks a conceptual question. See [Attribute Filters](03-attribute-filters.qmd) for more on defining and using attribute schemas.
+
+You can also register several tool functions on the same chat, each backed by a different filter or even a different store. The model decides which tool to invoke based on the docstrings, so give each function a clear description of what it covers:
+
+```{python}
+#| eval: false
+def search_api_reference(query: str) -> str:
+    """Search the API reference for function signatures and parameters."""
+    chunks = store.retrieve(
+        query,
+        top_k=3,
+        attributes_filter="section = 'reference'",
+    )
+    return json.dumps([{"text": chunk.text} for chunk in chunks])
+
+def search_tutorials(query: str) -> str:
+    """Search the tutorials for step-by-step instructions and examples."""
+    chunks = store.retrieve(
+        query,
+        top_k=5,
+        attributes_filter="section = 'tutorial'",
+    )
+    return json.dumps([{"text": chunk.text} for chunk in chunks])
+
+chat.register_tool(search_api_reference)
+chat.register_tool(search_tutorials)
+```
+
+With two tools registered, a question like `"What arguments does `ChatOpenAI` accept?"` routes to `search_api_reference`, while `"How do I set up streaming in a Shiny app?"` routes to `search_tutorials`. The model makes the choice on each turn, and you can observe which tool it selects by watching the tool-call display in `.chat()` or `.console()`.
+
+None of these adjustments require any changes to chatlas itself. The retrieval logic lives entirely in your tool functions, which means you can iterate on what gets returned, how many results to include, and how to filter without touching the chat configuration. That separation is deliberate and it keeps the conversational layer stable while you tune retrieval independently.
+
+## Choosing a model provider
+
+Because the retrieval logic lives in a plain Python function, the choice of model provider is independent of raghilda. chatlas supports hosted APIs, cloud platforms, and local inference servers. The tool registration interface is the same in every case.
+
+Anthropic's Claude models tend to follow tool-calling instructions closely and produce well-structured answers:
+
+```{python}
+#| eval: false
+from chatlas import ChatAnthropic
+
+chat = ChatAnthropic(model="claude-opus-4-8")
+chat.register_tool(search_docs)
+```
+
+Google's Gemini models offer a generous free tier, which is useful for prototyping before committing to a paid API:
+
+```{python}
+#| eval: false
+from chatlas import ChatGoogle
+
+chat = ChatGoogle(model="gemini-3.5-flash")
+chat.register_tool(search_docs)
+```
+
+Ollama runs models locally, so nothing leaves your machine. This matters when the store contains proprietary or sensitive material:
+
+```{python}
+#| eval: false
+from chatlas import ChatOllama
+
+chat = ChatOllama(model="Llama-3.3-8B-Instruct")
+chat.register_tool(search_docs)
+```
+
+The [chatlas model choice documentation](https://posit-dev.github.io/chatlas/get-started/models.html) lists all available providers. Switching between them requires changing only the constructor call; the registered tools, system prompt, and conversation history carry over if you assign them to a new chat object.
+
+## A full example
+
+The following script builds a store from a documentation site and starts an interactive RAG chat session. It reuses an existing store if one is already present.
+
+```{python}
+#| eval: false
+from pathlib import Path
+
+from chatlas import ChatOpenAI
+
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CrawlScope, WebCrawler
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import DuckDBStore
+
+DB_PATH = Path("chatlas_docs.db")
+
+
+def build_store() -> DuckDBStore:
+    store = DuckDBStore.create(
+        location=str(DB_PATH),
+        embed=EmbeddingOpenAI(),
+        name="chatlas_docs",
+        title="Chatlas Documentation",
+        overwrite=True,
+    )
+    crawler = WebCrawler(cache_dir=True, max_workers=4)
+    scope = CrawlScope(
+        roots=["https://posit-dev.github.io/chatlas/"],
+        depth=1,
+        include_types=["html"],
+    )
+    chunker = MarkdownChunker()
+    summary = store.ingest(
+        crawler.markdown_documents(scope),
+        prepare=chunker.chunk,
+        max_workers=4,
+    )
+    store.build_index()
+    print(f"Indexed {summary.inserted} documents")
+    return store
+
+
+def get_store() -> DuckDBStore:
+    if DB_PATH.exists():
+        return DuckDBStore.connect(str(DB_PATH), read_only=True)
+    return build_store()
+
+
+def main():
+    import json
+
+    store = get_store()
+
+    def search_chatlas_docs(query: str, num_results: int = 5) -> str:
+        """
+        Search the chatlas documentation.
+
+        Use this tool when the user asks about chatlas features,
+        API usage, model providers, tool calling, or streaming.
+
+        Parameters
+        ----------
+        query
+            A description of what to look for.
+        num_results
+            Number of passages to return (default of 5).
+        """
+        chunks = store.retrieve(query, top_k=num_results, deoverlap=True)
+        return json.dumps(
+            [{"text": chunk.text, "context": chunk.context} for chunk in chunks]
+        )
+
+    chat = ChatOpenAI(
+        model="gpt-5.5",
+        system_prompt=(
+            "You answer questions about the chatlas Python library. "
+            "Always use the search tool before answering."
+        ),
+    )
+    chat.register_tool(search_chatlas_docs)
+    chat.console()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This script separates store construction from chat setup so the expensive indexing step only runs once. On subsequent runs it reconnects to the existing database and goes straight to the interactive session. The same structure works for any documentation site or local file collection: swap the `CrawlScope` roots and adjust the system prompt to match your domain.
+
+## Next steps
+
+- The [Core Concepts](00-getting-started.qmd) guide covers building a store from scratch.
+- The [Chunking](02-chunking.qmd) guide explains how to tune chunk size and overlap for better retrieval quality.
+- The [Attribute Filters](03-attribute-filters.qmd) guide shows how to scope retrieval by metadata.
+- The [chatlas documentation](https://posit-dev.github.io/chatlas/get-started/tools.html) has more detail on tool calling, streaming, and structured output.
