@@ -258,3 +258,54 @@ crawler = CloudflareCrawler(
 
 Combined with `store.ingest()`, this gives you a lightweight refresh job where only recently changed pages are fetched and upserted (while unchanged documents are skipped by the store's own deduplication logic).
 
+## Polling behavior
+
+Cloudflare processes crawl jobs asynchronously. After submitting a job, the crawler polls for completion at regular intervals. Two parameters control this behavior:
+
+- `poll_interval=5.0`: seconds to wait between status checks. The default of 5 seconds is reasonable for most jobs.
+- `max_poll_attempts=60`: maximum number of polls before raising a `TimeoutError`. With the default interval, this gives a 5-minute window.
+
+For large sites that take longer to crawl, we should increase the timeout:
+
+```{python}
+#| eval: false
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    poll_interval=10.0,
+    max_poll_attempts=120,
+)
+```
+
+This configuration waits up to 20 minutes for a crawl job to finish.
+
+## Inspecting discovered pages
+
+Before committing to a full ingest of a large site, you may want to spot-check what Cloudflare discovers and returns. `CloudflareCrawler` exposes lower-level methods for this kind of inspection. Use `origins()` to see what pages Cloudflare finds without converting them into documents:
+
+```{python}
+#| eval: false
+for origin in crawler.origins(scope):
+    print(origin)
+```
+
+Use `fetch_raw()` to retrieve the full `FetchedSource` for a single page, which includes metadata like the HTTP status code and content type:
+
+```{python}
+#| eval: false
+source = crawler.fetch_raw("https://example.com/docs/getting-started")
+print(f"Status: {source.status_code}")
+print(f"Fetched at: {source.fetched_at}")
+print(f"Body at: {source.body_path}")
+```
+
+Use `fetch_markdown()` to get a single `MarkdownDocument`:
+
+```{python}
+#| eval: false
+doc = crawler.fetch_markdown("https://example.com/docs/getting-started")
+print(doc.content[:500])
+```
+
+These methods are useful for debugging scope configuration or inspecting what Cloudflare returns before committing to a full ingest.
+
