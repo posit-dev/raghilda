@@ -408,6 +408,8 @@ if __name__ == "__main__":
         build_store()
 ```
 
+The script has two paths: an initial build that creates the store from scratch, and a refresh path that reconnects and upserts only changed content. The cache and the store's own deduplication (`skip_if_unchanged=True` in `upsert()`) work together to keep refresh runs fast: the cache avoids re-fetching pages whose content has not changed, and the store avoids re-computing embeddings for documents that are identical to what is already stored.
+
 ## When to use CloudflareCrawler
 
 Choosing between `CloudflareCrawler` and `WebCrawler` comes down to whether the target site needs JavaScript to produce its content and whether you are willing to depend on an external service. Neither crawler is strictly better as they serve different situations.
