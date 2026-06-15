@@ -112,3 +112,33 @@ The printed `IngestSummary` reports how many documents were newly added, how man
 
 The tradeoff is that `CloudflareCrawler` requires a Cloudflare account with Browser Rendering access and incurs API usage costs. For static HTML sites, `WebCrawler` is simpler (and free).
 
+## Browser rendering
+
+The `render=` parameter controls whether Cloudflare executes JavaScript before extracting page content. It defaults to `True`, which is the right choice for any site that relies on client-side rendering. When enabled, Cloudflare loads each page in a headless browser, waits for scripts to finish, and extracts text from the fully populated DOM.
+
+Setting it explicitly for clarity:
+
+```{python}
+#| eval: false
+# JavaScript is executed (default)
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    render=True,
+)
+```
+
+We should set `render=False` if the target site is server-rendered HTML and does not need JavaScript execution. This reduces crawl time and Cloudflare API usage:
+
+```{python}
+#| eval: false
+# Skip JavaScript execution for static sites
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    render=False,
+)
+```
+
+If you are unsure whether a site needs rendering, start with the default (`render=True`) and inspect a few pages. If the returned Markdown already contains the expected content, switching to `render=False` will speed up the crawl and reduce your Cloudflare API usage without losing any text.
+
