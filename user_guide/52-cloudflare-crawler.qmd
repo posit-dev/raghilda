@@ -26,3 +26,23 @@ api_token = os.environ["CLOUDFLARE_API_TOKEN"]
 
 If the credentials are missing or the account does not have Browser Rendering enabled, the crawler will raise an error on the first API call.
 
+## Basic usage
+
+A complete crawl-to-store pipeline needs four big pieces: 
+
+1. a store to write into
+2. a crawler to fetch and render pages
+3. a scope describing which pages to include
+4. a chunker to split the rendered Markdown into retrieval-sized pieces
+
+You also need to decide on an embedding provider for the store (or defer that by passing `embed=None` if you plan to add embeddings later).
+
+The example below uses all of the defaults for the crawler beyond the required credentials. That essentially means that:
+
+- browser rendering is on
+- all discovery methods are active
+- no caching is configured
+- no filtering patterns are applied
+
+This is a pretty reasonable starting point for an initial exploration of a site before tuning scope and caching for production use.
+
