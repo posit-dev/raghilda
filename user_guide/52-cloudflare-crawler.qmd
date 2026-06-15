@@ -85,3 +85,8 @@ store.build_index()
 
 print(summary)
 ```
+
+```
+IngestSummary(inserted=47, replaced=0, skipped=0)
+```
+
