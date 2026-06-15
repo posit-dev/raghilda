@@ -408,3 +408,23 @@ if __name__ == "__main__":
         build_store()
 ```
 
+## When to use CloudflareCrawler
+
+Choosing between `CloudflareCrawler` and `WebCrawler` comes down to whether the target site needs JavaScript to produce its content and whether you are willing to depend on an external service. Neither crawler is strictly better as they serve different situations.
+
+Use `CloudflareCrawler` when:
+
+- the target site renders content with JavaScript (React, Vue, Angular, etc.)
+- you need Cloudflare's sitemap-aware discovery rather than manual link following
+- you want pre-converted Markdown without running local conversion logic
+- the site is large enough that Cloudflare's distributed infrastructure crawls it faster than sequential local requests
+
+Use `WebCrawler` when:
+
+- the site is static HTML that does not require JavaScript execution
+- you want to avoid external API dependencies and costs
+- you need fine-grained control over HTTP headers, cookies, or authentication during fetching
+- the crawl is small enough that local `requests` calls are fast enough
+
+Both crawlers implement the same interface (`origins()`, `fetch_raw()`, `fetch_markdown()`, `markdown_documents()`), so switching between them requires changing only the constructor. The rest of your pipeline (chunking, ingestion, retrieval) remains unchanged.
+
