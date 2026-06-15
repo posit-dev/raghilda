@@ -428,3 +428,6 @@ Use `WebCrawler` when:
 
 Both crawlers implement the same interface (`origins()`, `fetch_raw()`, `fetch_markdown()`, `markdown_documents()`), so switching between them requires changing only the constructor. The rest of your pipeline (chunking, ingestion, retrieval) remains unchanged.
 
+## Conclusion
+
+`CloudflareCrawler` lets you build retrieval stores from sites that would otherwise be inaccessible to a simple HTTP client. The rendering, link discovery, and Markdown conversion all happen on Cloudflare's infrastructure, so your local code stays focused on chunking and ingestion. Combined with caching, filtering patterns, and `modified_since=`, you can keep a store current without redundant API calls or full re-crawls. For sites that do not need JavaScript execution, `WebCrawler` remains the simpler and cheaper option, and the shared crawler interface means you can switch between the two without restructuring your pipeline.
