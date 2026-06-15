@@ -207,3 +207,33 @@ Two additional scope fields are relevant for Cloudflare crawls:
 
 Both default to `False`, which keeps the crawl focused on the root domain.
 
+## Caching
+
+`CloudflareCrawler` accepts the same caching parameters as `WebCrawler`, though the underlying behavior differs slightly because results come from Cloudflare's API rather than direct HTTP requests. Enable caching with `cache_dir=True` to store results under `.raghilda/cache/cloudflare`, or pass a custom path:
+
+```{python}
+#| eval: false
+from datetime import timedelta
+
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    cache_dir=True,
+    cache_stale_after=timedelta(days=1),
+)
+```
+
+With caching enabled, the crawler stores both the crawl job results (list of discovered URLs and their rendered Markdown) and the individual page records on disk. On subsequent runs, fresh cached results are reused without making any Cloudflare API calls.
+
+The `cache_stale_after=` parameter controls when cached results are considered stale. When a cached entry is stale, the crawler sends a new request to Cloudflare with a `maxAge` hint asking for updated content. When `cache_stale_after` is not set, cached entries never expire.
+
+To force a completely fresh crawl that bypasses the cache entirely, pass `cache_force_refresh=True` to `markdown_documents()`:
+
+```{python}
+#| eval: false
+# Ignore all cached results, re-crawl everything
+documents = crawler.markdown_documents(scope, cache_force_refresh=True)
+```
+
+The cache validates its entries against a signature that includes the `account_id=`, `render=`, `source=`, and `modified_since=` settings. If any of these change between runs, the cache is automatically invalidated. This prevents stale results from a different configuration being reused.
+
