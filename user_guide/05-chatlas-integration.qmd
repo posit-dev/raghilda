@@ -48,8 +48,9 @@ def search_docs(query: str, num_results: int = 5) -> str:
 
 There are a few things we should take note of:
 
-- the docstring is sent to the model as part of the tool description. Write it for the LLM: be specific about when the tool should be used and what `query=` should contain.
-- the return value must be a string. JSON works really well here because it preserves structure without requiring the model to parse anything unusual.
+- The function captures the `store` variable from the surrounding scope. This is a normal Python closure: as long as `store` is defined before the function is called, the reference works.
+- The docstring is sent to the model as part of the tool description. Write it for the LLM: be specific about when the tool should be used and what `query=` should contain.
+- The return value must be a string because LLM tool-calling APIs transmit results as text. JSON works really well here because it preserves structure without requiring the model to parse anything unusual.
 - `deoverlap=True` (the default) merges overlapping chunks from the same document so the model receives coherent passages rather than repetitive fragments.
 
 The goal is a function that returns enough context for the model to answer accurately, but not so much that it drowns the prompt in noise. Start with a simple version like the one above and refine the docstring and return format once you can observe how the model uses the results.
