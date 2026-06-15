@@ -7,3 +7,22 @@ Some websites load their content entirely through JavaScript. A conventional HTT
 
 This guide covers how to set up and use `CloudflareCrawler` to build a store from JavaScript-heavy sites. It assumes familiarity with the general crawling workflow described in [Crawling and Ingestion](04-crawling-and-ingestion.qmd).
 
+## Prerequisites
+
+`CloudflareCrawler` requires two credentials from a Cloudflare account that has the Browser Rendering API enabled:
+
+- Account ID: found on your Cloudflare dashboard under the account overview page
+- API Token: a bearer token with permission to access the Browser Rendering API
+
+You should store both as environment variables rather than hardcoding them in scripts:
+
+```{python}
+#| eval: false
+import os
+
+account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+api_token = os.environ["CLOUDFLARE_API_TOKEN"]
+```
+
+If the credentials are missing or the account does not have Browser Rendering enabled, the crawler will raise an error on the first API call.
+
