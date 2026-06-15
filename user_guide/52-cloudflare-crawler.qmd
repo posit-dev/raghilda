@@ -235,7 +235,7 @@ To force a completely fresh crawl that bypasses the cache entirely, pass `cache_
 documents = crawler.markdown_documents(scope, cache_force_refresh=True)
 ```
 
-The cache validates its entries against a signature that includes the `account_id=`, `render=`, `source=`, and `modified_since=` settings. If any of these change between runs, the cache is automatically invalidated. This prevents stale results from a different configuration being reused.
+The cache validates its entries against a signature that includes the `render=`, `source=`, and `modified_since=` settings. If any of these change between runs, the cache is automatically invalidated. This prevents stale results from a different configuration being reused.
 
 ## Incremental updates with `modified_since=`
 
