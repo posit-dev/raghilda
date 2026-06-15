@@ -319,6 +319,11 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CloudflareCrawler, CrawlScope
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import DuckDBStore
+
 DB_PATH = Path("spa_docs.db")
 
 
