@@ -75,6 +75,8 @@ chat.register_tool(search_docs)
 chat.chat("How do I add citations to a Quarto document?")
 ```
 
+When you call `.chat()`, chatlas sends the prompt to the model, displays any tool calls the model makes (including the query it passes to your function), and then streams the final answer to the terminal. You see the full round trip without needing to wire up any display logic yourself.
+
 The system prompt matters. Instructing the model to use the tool before answering reduces the chance that it falls back on its training data alone.
 
 ## Interactive and programmatic use
