@@ -50,6 +50,11 @@ This is a pretty reasonable starting point for an initial exploration of a site 
 #| eval: false
 import os
 
+from raghilda.chunker import MarkdownChunker
+from raghilda.crawl import CloudflareCrawler, CrawlScope
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import DuckDBStore
+
 # 1. Create a store with an embedding provider
 store = DuckDBStore.create(
     location="rendered_docs.db",
