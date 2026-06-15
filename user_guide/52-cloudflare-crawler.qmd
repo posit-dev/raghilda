@@ -237,3 +237,24 @@ documents = crawler.markdown_documents(scope, cache_force_refresh=True)
 
 The cache validates its entries against a signature that includes the `account_id=`, `render=`, `source=`, and `modified_since=` settings. If any of these change between runs, the cache is automatically invalidated. This prevents stale results from a different configuration being reused.
 
+## Incremental updates with `modified_since=`
+
+For stores that need regular updates, the `modified_since=` parameter restricts the crawl to pages modified after a given Unix timestamp. This reduces the number of pages Cloudflare processes on each run:
+
+```{python}
+#| eval: false
+import time
+
+# Only include pages modified in the last 7 days
+one_week_ago = int(time.time()) - (7 * 24 * 60 * 60)
+
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    cache_dir=True,
+    modified_since=one_week_ago,
+)
+```
+
+Combined with `store.ingest()`, this gives you a lightweight refresh job where only recently changed pages are fetched and upserted (while unchanged documents are skipped by the store's own deduplication logic).
+
