@@ -142,3 +142,41 @@ crawler = CloudflareCrawler(
 
 If you are unsure whether a site needs rendering, start with the default (`render=True`) and inspect a few pages. If the returned Markdown already contains the expected content, switching to `render=False` will speed up the crawl and reduce your Cloudflare API usage without losing any text.
 
+## Page discovery with the source parameter
+
+The `source=` parameter controls how Cloudflare discovers pages on the target site. The default is `"all"`, which combines multiple discovery methods:
+
+```{python}
+#| eval: false
+# Use all available discovery methods (default)
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    source="all",
+)
+```
+
+Other options for `source=` are:
+
+- `"sitemap"`: only discover pages listed in the site's `sitemap.xml`. This is efficient for well-maintained sites where the sitemap is comprehensive.
+- `"crawl"`: follow links from the rendered DOM, similar to traditional web crawling but with JavaScript execution.
+- `"urls"`: only process the explicitly provided root URLs, without following any links.
+
+For a documentation site with a complete sitemap, `"sitemap"` is typically the fastest option because it avoids rendering every page just to find links:
+
+```{python}
+#| eval: false
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+    source="sitemap",
+)
+
+scope = CrawlScope(
+    roots=["https://example.com/docs/"],
+    depth=0,
+)
+```
+
+With `source="sitemap"` and `depth=0`, Cloudflare reads the sitemap from the root and returns all listed pages without further link-following.
+
