@@ -3,9 +3,13 @@ title: "Cloudflare Browser Rendering Crawler"
 guide-section: "Store Backends"
 ---
 
-Some websites load their content entirely through JavaScript. A conventional HTTP request to such a site returns an empty shell or a loading spinner rather than the actual text. The `CloudflareCrawler` addresses this by delegating page fetching and rendering to [Cloudflare's Browser Rendering API](https://developers.cloudflare.com/browser-rendering/), which executes JavaScript and returns the fully rendered page content as Markdown. Because the conversion to Markdown happens on Cloudflare's servers, you receive ready-to-chunk text without needing to run a headless browser locally.
+The `CloudflareCrawler` delegates all page fetching and rendering to [Cloudflare's Browser Rendering API](https://developers.cloudflare.com/browser-rendering/). This provides a lot of benefits if you have an account with Cloudflare:
 
-This guide covers how to set up and use `CloudflareCrawler` to build a store from JavaScript-heavy sites. It assumes familiarity with the general crawling workflow described in [Crawling and Ingestion](04-crawling-and-ingestion.qmd).
+- you effectively offload potentially very long-running crawling tasks, and possibly Markdown conversion, from the local host to Cloudflare's servers
+- those websites that load their content entirely through JavaScript (which make text retrieval generally problematic) are handled by Cloudflare
+- you don't have to run a headless browser locally, you simply receive ready-to-chunk text from the paid service
+
+This guide covers how to set up and use `CloudflareCrawler` to build a store. It assumes some familiarity with the general crawling workflow described in [Crawling and Ingestion](04-crawling-and-ingestion.qmd).
 
 ## Prerequisites
 
@@ -108,7 +112,7 @@ The printed `IngestSummary` reports how many documents were newly added, how man
 - JavaScript rendering: `CloudflareCrawler` executes JavaScript before extracting content. Single-page applications, dynamically-loaded documentation sites, and client-rendered dashboards all work without additional configuration.
 - No local browser required: you do not need Playwright, Selenium, or any headless browser installed.
 - Cloudflare handles link discovery: instead of parsing anchor tags from raw HTML (which may not exist until JavaScript runs), Cloudflare discovers links from the rendered DOM.
-- Markdown arrives pre-converted: the API returns Markdown directly, so there is no local HTML-to-Markdown conversion step.
+- Markdown arrives pre-converted: the API returns Markdown directly, and, you can optionally choose any HTML-to-Markdown converter instead of Cloudflare's.
 
 The tradeoff is that `CloudflareCrawler` requires a Cloudflare account with Browser Rendering access and incurs API usage costs. For static HTML sites, `WebCrawler` is simpler (and free).
 
