@@ -95,3 +95,9 @@ print(summary)
 IngestSummary(inserted=47, replaced=0, skipped=0)
 ```
 
+This posts a crawl job to Cloudflare, polls until it completes, retrieves the rendered Markdown for each discovered page, chunks it, and writes everything to the store. The `depth=2` setting tells Cloudflare to follow links up to two levels from the root URL.
+
+The `store.build_index()` call at the end creates an HNSW vector index and a BM25 keyword index over the stored chunks. These indexes make subsequent `retrieve()` calls fast. Building them after all documents are ingested is more efficient than updating them incrementally during writes, which is why it appears as a separate step at the end.
+
+The printed `IngestSummary` reports how many documents were newly added, how many had their content replaced, and how many were skipped because identical content was already in the store.
+
