@@ -101,3 +101,14 @@ The `store.build_index()` call at the end creates an HNSW vector index and a BM2
 
 The printed `IngestSummary` reports how many documents were newly added, how many had their content replaced, and how many were skipped because identical content was already in the store.
 
+## How it differs from WebCrawler
+
+`WebCrawler` fetches raw HTML with `requests` and converts it to Markdown locally. `CloudflareCrawler` offloads both the fetching and the Markdown conversion to Cloudflare's infrastructure. The practical differences are:
+
+- JavaScript rendering: `CloudflareCrawler` executes JavaScript before extracting content. Single-page applications, dynamically-loaded documentation sites, and client-rendered dashboards all work without additional configuration.
+- No local browser required: you do not need Playwright, Selenium, or any headless browser installed.
+- Cloudflare handles link discovery: instead of parsing anchor tags from raw HTML (which may not exist until JavaScript runs), Cloudflare discovers links from the rendered DOM.
+- Markdown arrives pre-converted: the API returns Markdown directly, so there is no local HTML-to-Markdown conversion step.
+
+The tradeoff is that `CloudflareCrawler` requires a Cloudflare account with Browser Rendering access and incurs API usage costs. For static HTML sites, `WebCrawler` is simpler (and free).
+
