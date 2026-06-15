@@ -180,3 +180,30 @@ scope = CrawlScope(
 
 With `source="sitemap"` and `depth=0`, Cloudflare reads the sitemap from the root and returns all listed pages without further link-following.
 
+## Filtering with Cloudflare-style patterns
+
+The `include_patterns=` and `exclude_patterns=` fields on `CrawlScope` behave differently depending on which crawler you use. With `WebCrawler`, they are Python regular expressions matched locally. With `CloudflareCrawler`, they are forwarded directly to the Cloudflare API as Cloudflare wildcard patterns, where `**` matches any number of path segments:
+
+```{python}
+#| eval: false
+scope = CrawlScope(
+    roots=["https://example.com/"],
+    depth=2,
+    include_patterns=["https://example.com/docs/**"],
+    exclude_patterns=[
+        "https://example.com/docs/archive/**",
+        "https://example.com/docs/internal/**",
+    ],
+    limit=500,
+)
+```
+
+The `include_patterns` list restricts the crawl to URLs matching at least one pattern. The `exclude_patterns` list removes URLs that match any pattern. The `limit=` field caps the total number of pages returned.
+
+Two additional scope fields are relevant for Cloudflare crawls:
+
+- `include_external_links=True` allows the crawler to follow links to other domains.
+- `include_subdomains=True` allows the crawler to follow links to subdomains of the root host (e.g., `docs.example.com` when crawling from `example.com`).
+
+Both default to `False`, which keeps the crawl focused on the root domain.
+
