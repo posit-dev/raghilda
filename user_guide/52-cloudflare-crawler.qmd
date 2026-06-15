@@ -1,0 +1,9 @@
+---
+title: "Cloudflare Browser Rendering Crawler"
+guide-section: "Store Backends"
+---
+
+Some websites load their content entirely through JavaScript. A conventional HTTP request to such a site returns an empty shell or a loading spinner rather than the actual text. The `CloudflareCrawler` addresses this by delegating page fetching and rendering to [Cloudflare's Browser Rendering API](https://developers.cloudflare.com/browser-rendering/), which executes JavaScript and returns the fully rendered page content as Markdown. Because the conversion to Markdown happens on Cloudflare's servers, you receive ready-to-chunk text without needing to run a headless browser locally.
+
+This guide covers how to set up and use `CloudflareCrawler` to build a store from JavaScript-heavy sites. It assumes familiarity with the general crawling workflow described in [Crawling and Ingestion](04-crawling-and-ingestion.qmd).
+
