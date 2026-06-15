@@ -419,7 +419,7 @@ Use `CloudflareCrawler` when:
 - the target site renders content with JavaScript (React, Vue, Angular, etc.)
 - you need Cloudflare's sitemap-aware discovery rather than manual link following
 - you want pre-converted Markdown without running local conversion logic
-- the site is large enough that Cloudflare's distributed infrastructure crawls it faster than sequential local requests
+- the site is large enough that Cloudflare's distributed infrastructure crawls it faster than concurrent local requests
 
 Use `WebCrawler` when:
 
