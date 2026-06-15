@@ -1,5 +1,5 @@
 ---
-title: "Using RAG with Chatlas"
+title: "Using RAG with chatlas"
 guide-section: "Getting Started"
 ---
 
