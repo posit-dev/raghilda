@@ -100,7 +100,7 @@ for chunk in chat.stream("What formats does Quarto support?"):
     print(chunk, end="", flush=True)
 ```
 
-**Async** for concurrent workloads:
+**Async** for concurrent workloads (note that `await` requires an `async def` context, so this form is typically used inside an async framework like FastAPI or an `asyncio.run()` entrypoint):
 
 ```{python}
 #| eval: false
