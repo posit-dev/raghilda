@@ -46,3 +46,42 @@ The example below uses all of the defaults for the crawler beyond the required c
 
 This is a pretty reasonable starting point for an initial exploration of a site before tuning scope and caching for production use.
 
+```{python}
+#| eval: false
+import os
+
+# 1. Create a store with an embedding provider
+store = DuckDBStore.create(
+    location="rendered_docs.db",
+    embed=EmbeddingOpenAI(),
+    name="rendered_docs",
+    title="Rendered Documentation",
+    overwrite=True,
+)
+
+# 2. Set up the crawler with Cloudflare credentials
+crawler = CloudflareCrawler(
+    account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+    api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+)
+
+# 3. Define the crawl scope
+scope = CrawlScope(
+    roots=["https://example.com/docs/"],
+    depth=2,
+)
+
+# 4. Chunk and ingest the crawled pages
+chunker = MarkdownChunker()
+
+summary = store.ingest(
+    crawler.markdown_documents(scope),
+    prepare=chunker.chunk,
+    max_workers=4,
+)
+
+# 5. Build retrieval indexes
+store.build_index()
+
+print(summary)
+```
