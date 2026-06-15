@@ -309,3 +309,97 @@ print(doc.content[:500])
 
 These methods are useful for debugging scope configuration or inspecting what Cloudflare returns before committing to a full ingest.
 
+## Full example
+
+The following script builds a store from a JavaScript-rendered documentation site. It uses caching so that repeated runs during development avoid redundant API calls, and it sets a one-day staleness window for production refresh jobs.
+
+```{python}
+#| eval: false
+import os
+from datetime import timedelta
+from pathlib import Path
+
+DB_PATH = Path("spa_docs.db")
+
+
+def build_store() -> DuckDBStore:
+    store = DuckDBStore.create(
+        location=str(DB_PATH),
+        embed=EmbeddingOpenAI(),
+        name="spa_docs",
+        title="SPA Documentation",
+        overwrite=True,
+    )
+
+    crawler = CloudflareCrawler(
+        account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+        api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+        cache_dir=True,
+        cache_stale_after=timedelta(days=1),
+        render=True,
+        source="all",
+        max_workers=4,
+    )
+
+    scope = CrawlScope(
+        roots=["https://my-spa-docs.example.com/"],
+        depth=2,
+        include_patterns=["https://my-spa-docs.example.com/**"],
+        exclude_patterns=["https://my-spa-docs.example.com/internal/**"],
+        limit=1000,
+    )
+
+    chunker = MarkdownChunker(chunk_size=1600, target_overlap=0.5)
+
+    summary = store.ingest(
+        crawler.markdown_documents(scope),
+        prepare=chunker.chunk,
+        max_workers=4,
+    )
+    
+    store.build_index()
+    
+    print(f"Inserted: {summary.inserted}")
+    print(f"Replaced: {summary.replaced}")
+    print(f"Skipped: {summary.skipped}")
+    
+    return store
+
+
+def refresh_store() -> None:
+    store = DuckDBStore.connect(str(DB_PATH))
+    
+    crawler = CloudflareCrawler(
+        account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+        api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+        cache_dir=True,
+        cache_stale_after=timedelta(days=1),
+        render=True,
+        max_workers=4,
+    )
+    
+    scope = CrawlScope(
+        roots=["https://my-spa-docs.example.com/"],
+        depth=2,
+        include_patterns=["https://my-spa-docs.example.com/**"],
+        limit=1000,
+    )
+    
+    chunker = MarkdownChunker(chunk_size=1600, target_overlap=0.5)
+    
+    summary = store.ingest(
+        crawler.markdown_documents(scope),
+        prepare=chunker.chunk,
+        max_workers=4,
+    )
+    
+    print(f"Refresh complete: {summary.inserted} new, {summary.replaced} updated, {summary.skipped} unchanged")
+
+
+if __name__ == "__main__":
+    if DB_PATH.exists():
+        refresh_store()
+    else:
+        build_store()
+```
+
