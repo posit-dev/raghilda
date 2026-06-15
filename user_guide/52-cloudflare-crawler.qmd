@@ -112,7 +112,7 @@ The printed `IngestSummary` reports how many documents were newly added, how man
 - JavaScript rendering: `CloudflareCrawler` executes JavaScript before extracting content. Single-page applications, dynamically-loaded documentation sites, and client-rendered dashboards all work without additional configuration.
 - No local browser required: you do not need Playwright, Selenium, or any headless browser installed.
 - Cloudflare handles link discovery: instead of parsing anchor tags from raw HTML (which may not exist until JavaScript runs), Cloudflare discovers links from the rendered DOM.
-- Markdown arrives pre-converted: the API returns Markdown directly, and, you can optionally choose any HTML-to-Markdown converter instead of Cloudflare's.
+- Markdown can arrive pre-converted: the API can return Markdown directly, with HTML-to-Markdown conversion performed by Cloudflare. This is optional: you can still choose to receive raw HTML and then perform HTML-to-Markdown conversion locally using Raghilda's built-in converter or another converter of your choice.
 
 The tradeoff is that `CloudflareCrawler` requires a Cloudflare account with Browser Rendering access and incurs API usage costs. For static HTML sites, `WebCrawler` is simpler (and free).
 
