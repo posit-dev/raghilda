@@ -2322,6 +2322,32 @@ def test_cloudflare_crawler_accepts_crawl_scope_for_roots_and_patterns(
     ]
 
 
+def test_cloudflare_crawler_applies_regex_includes_client_side(
+    tmp_path: Path,
+) -> None:
+    session = _ParameterizedCloudflareSession()
+    crawler = CloudflareCrawler(
+        account_id="account-123",
+        api_token="token-123",
+        cache_dir=tmp_path / "cloudflare-regex-cache",
+        session=session,
+        poll_interval=0,
+    )
+    # A pre-compiled regex cannot be sent to the Cloudflare API, so it must be
+    # enforced on the records returned by the crawl.
+    scope = CrawlScope(
+        roots=["https://example.com/docs"],
+        depth=1,
+        include_patterns=[re.compile(r".*/page$")],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == ["https://example.com/docs/page"]
+    # Regex includes are not forwarded to the API.
+    assert "includePatterns" not in session.post_calls[0][1]["options"]
+
+
 def test_cloudflare_crawler_filters_returned_records_to_web_scope(
     tmp_path: Path,
 ) -> None:
