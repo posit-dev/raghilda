@@ -251,10 +251,13 @@ summary = store.ingest(
 print(summary)
 ```
 
-For Cloudflare crawls, `include_patterns` and `exclude_patterns` use
-Cloudflare-style wildcard patterns, such as `https://example.com/docs/**`.
-`include_external_links` and `include_subdomains` are passed through to the
-Cloudflare crawl request.
+`include_patterns` and `exclude_patterns` use the same glob syntax here as for
+the other crawlers (for example, `https://example.com/docs/**`). Glob patterns
+are forwarded directly to Cloudflare's crawl API, which speaks the same `*`/`**`
+wildcard language. Compiled `re.Pattern` objects are also accepted: since the
+API cannot evaluate regexes, they are applied locally to the records Cloudflare
+returns. `include_external_links` and `include_subdomains` are passed through to
+the Cloudflare crawl request.
 
 ## Refresh a store
 
