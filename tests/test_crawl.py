@@ -2956,7 +2956,7 @@ def test_directory_crawler_coerces_scalar_patterns_and_types(
     crawler = DirectoryCrawler()
     scope = CrawlScope(
         roots=[tmp_path],
-        include_patterns=r".*/docs/.*",
+        include_patterns=re.compile(r".*/docs/.*"),
         include_types="markdown",
         exclude_types="python",
     )
@@ -2975,7 +2975,7 @@ def test_directory_crawler_accepts_crawl_scope_for_roots_and_patterns(
     scope = CrawlScope(
         roots=[tmp_path],
         depth=1,
-        include_patterns=[r".*/docs/.*"],
+        include_patterns=["**/docs/**"],
     )
 
     origins = list(crawler.origins(scope, progress=False))
