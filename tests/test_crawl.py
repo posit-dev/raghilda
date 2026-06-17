@@ -973,6 +973,95 @@ def test_web_crawler_accepts_crawl_scope_for_roots_and_patterns(
         ]
 
 
+def test_web_crawler_single_star_does_not_cross_path_separator(
+    tmp_path: Path,
+) -> None:
+    with _serve(
+        {
+            "/": {
+                "body": (
+                    '<html><body><a href="/docs/guide">Guide</a>'
+                    '<a href="/docs/guide/intro">Intro</a></body></html>'
+                ),
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+            "/docs/guide": {
+                "body": "<html><body><main>Guide</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+            "/docs/guide/intro": {
+                "body": "<html><body><main>Intro</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+        }
+    ) as server:
+        root_url = f"http://127.0.0.1:{server.server_port}/"
+        crawler = WebCrawler(cache_dir=tmp_path / "single-star-cache")
+        # `*` matches within a path segment only; `docs/guide/intro` is excluded.
+        scope = CrawlScope(
+            roots=[root_url],
+            depth=2,
+            include_patterns=[f"{root_url}docs/*"],
+        )
+
+        origins = list(crawler.origins(scope, progress=False))
+
+        assert origins == [f"{root_url}docs/guide"]
+
+
+def test_web_crawler_accepts_compiled_regex_pattern(tmp_path: Path) -> None:
+    root = "https://example.com"
+    guide = "https://example.com/guide"
+    admin = "https://example.com/admin"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    f'<html><body><a href="{guide}">Guide</a>'
+                    f'<a href="{admin}">Admin</a></body></html>'
+                ),
+            },
+            guide: {"body": "<html><body><main>Guide</main></body></html>"},
+            admin: {"body": "<html><body><main>Admin</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "regex-pattern-cache",
+        session=session,
+    )
+    # A pre-compiled regex is the escape hatch and uses `search` semantics.
+    scope = CrawlScope(
+        roots=[root],
+        depth=1,
+        include_patterns=[re.compile(r"/guide$")],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert guide in origins
+    assert admin not in origins
+
+
+def test_glob_pattern_matchers_segment_semantics() -> None:
+    single = crawl_module._compile_pattern_matchers(["https://example.com/docs/*"])
+    deep = crawl_module._compile_pattern_matchers(["https://example.com/docs/**"])
+
+    def matches(matchers, url: str) -> bool:
+        return crawl_module._matches_patterns(
+            url, include_matchers=matchers, exclude_matchers=[]
+        )
+
+    # `*` stays within a single path segment.
+    assert matches(single, "https://example.com/docs/page")
+    assert not matches(single, "https://example.com/docs/page/sub")
+    # `**` crosses path separators, and a trailing `/**` also matches the bare parent.
+    assert matches(deep, "https://example.com/docs/page/sub")
+    assert matches(deep, "https://example.com/docs")
+
+
 def test_web_markdown_documents_reuses_refreshed_sources(
     tmp_path: Path,
 ) -> None:
