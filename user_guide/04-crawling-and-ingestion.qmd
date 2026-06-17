@@ -123,8 +123,8 @@ crawler = DirectoryCrawler(cache_dir=True, max_workers=4)
 scope = CrawlScope(
     roots=["docs"],
     depth=3,
-    include_patterns=[r".*\.(md|qmd|ipynb|pdf)$"],
-    exclude_patterns=[r".*/_site/.*", r".*/\.venv/.*"],
+    include_patterns=["**/*.md", "**/*.qmd", "**/*.ipynb", "**/*.pdf"],
+    exclude_patterns=["**/_site/**", "**/.venv/**"],
 )
 
 chunker = MarkdownChunker()
