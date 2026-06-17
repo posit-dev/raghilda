@@ -108,8 +108,8 @@ def test_directory_crawler_discovers_and_converts_markdown_documents(
     scope = CrawlScope(
         roots=[tmp_path],
         depth=3,
-        include_patterns=[r".*/docs/.*"],
-        exclude_patterns=[r".*/skip\.py$"],
+        include_patterns=["**/docs/**"],
+        exclude_patterns=["**/skip.py"],
         include_types=["markdown", "jupyter-notebook"],
     )
 
@@ -333,8 +333,8 @@ def test_web_crawler_discovers_origins_and_revalidates_cache(tmp_path: Path) -> 
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_origin)}(?:/.*)?$"],
-            exclude_patterns=[r".*/skip$"],
+            include_patterns=[f"{root_origin}/**"],
+            exclude_patterns=["**/skip"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
@@ -786,7 +786,7 @@ def test_web_crawler_discovers_matching_descendants_from_filtered_seed(
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_url)}docs/.*"],
+            include_patterns=[f"{root_url}docs/**"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
@@ -812,7 +812,7 @@ def test_web_crawler_does_not_fetch_excluded_origins(tmp_path: Path) -> None:
     scope = CrawlScope(
         roots=[root],
         depth=1,
-        exclude_patterns=[r"/admin$"],
+        exclude_patterns=["**/admin"],
     )
 
     origins = list(crawler.origins(scope, progress=False))
@@ -961,7 +961,7 @@ def test_web_crawler_accepts_crawl_scope_for_roots_and_patterns(
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_url)}docs/.*"],
+            include_patterns=[f"{root_url}docs/**"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
