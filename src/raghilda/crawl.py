@@ -118,7 +118,6 @@ class CrawlScope:
     exclude_patterns: PatternsInput = None
     """Patterns that drop an origin from the crawl, taking precedence over
     `include_patterns`. Uses the same glob-or-`re.Pattern` syntax."""
-
     depth: int | None = None
     """Number of link or directory levels to follow beyond the roots. `0` means
     only the roots themselves. When `None`, traversal is effectively unbounded.
