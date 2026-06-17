@@ -52,8 +52,8 @@ crawler = WebCrawler(
 scope = CrawlScope(
     roots=["https://quarto.org/docs/guide/"],
     depth=2,
-    include_patterns=[r"^https://quarto\.org/docs/guide/"],
-    exclude_patterns=[r"/reference/"],
+    include_patterns=["https://quarto.org/docs/guide/**"],
+    exclude_patterns=["**/reference/**"],
     include_types=["html"],
 )
 
@@ -76,12 +76,23 @@ print(summary)
 | `roots` | Starting files, directories, or URLs. |
 | `depth` | Number of link or directory levels to follow. `0` means only the roots. |
 | `limit` | Maximum number of origins to yield. |
-| `include_patterns` | Regular expressions that origins must match. |
-| `exclude_patterns` | Regular expressions that remove origins from the crawl. |
+| `include_patterns` | Glob patterns (`*`, `**`) that origins must match. Pass a compiled `re.Pattern` for regex matching. |
+| `exclude_patterns` | Glob patterns that remove origins from the crawl. Also accepts compiled `re.Pattern` objects. |
 | `include_types` | Type labels to include, such as `html`, `markdown`, `pdf`, `python`, or `text`. |
 | `exclude_types` | Type labels to skip. |
 | `include_external_links` | Allow links outside the root origin. Defaults to `False`. |
 | `include_subdomains` | Allow subdomains under the root host. Defaults to `False`. |
+
+`include_patterns` and `exclude_patterns` use the same glob syntax across every
+crawler, so the same `CrawlScope` behaves identically whether you run it through
+`WebCrawler`, `DirectoryCrawler`, or `CloudflareCrawler`. A single `*` matches
+any characters except `/` (one path segment), while `**` matches any characters
+including `/` (any number of segments). Patterns are matched against the full
+origin URL, and `exclude_patterns` always take priority over `include_patterns`.
+For matching that globs cannot express (alternation, anchors, character
+classes), pass a pre-compiled `re.Pattern` instead of a string; compiled regexes
+are matched with `re.search`. You can freely mix glob strings and compiled
+regexes in the same list.
 
 `WebCrawler(cache_dir=True)` stores fetched response bodies under
 `.raghilda/cache/web`. With `cache_stale_after`, fresh cached responses are
