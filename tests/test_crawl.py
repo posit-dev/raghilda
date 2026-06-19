@@ -1134,6 +1134,128 @@ def test_glob_pattern_include_exclude_interaction() -> None:
     assert not matches("https://example.com/docs/report.pdf")
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        # The query is kept; only the #fragment is dropped.
+        ("https://example.com/p?a=1#frag", "https://example.com/p?a=1"),
+        (
+            "https://example.com/p?a=1&b=2#section-3",
+            "https://example.com/p?a=1&b=2",
+        ),
+        # A fragment with no query leaves a clean path behind.
+        ("https://example.com/p#frag", "https://example.com/p"),
+        # A query with no fragment is untouched.
+        ("https://example.com/p?a=1", "https://example.com/p?a=1"),
+    ],
+)
+def test_canonicalize_web_url_drops_fragment_but_keeps_query(
+    url: str, expected: str
+) -> None:
+    assert crawl_module._canonicalize_web_url(url) == expected
+
+
+def test_web_crawler_preserves_query_string_during_discovery(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.com"
+    search = "https://example.com/search?q=python&page=2"
+    # Query and fragment together: the query stays, the fragment is dropped.
+    page = "https://example.com/p?a=1"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/search?q=python&page=2">Search</a>'
+                    '<a href="/p?a=1#frag">Page</a></body></html>'
+                ),
+            },
+            search: {"body": "<html><body><main>Results</main></body></html>"},
+            page: {"body": "<html><body><main>Page</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-discovery-cache",
+        session=session,
+    )
+
+    origins = list(crawler.origins(CrawlScope(roots=[root], depth=1), progress=False))
+
+    # The discovered link keeps its full query string end-to-end.
+    assert search in origins
+    # `https://example.com/p?a=1#frag` -> `https://example.com/p?a=1`: the query
+    # survives and only the fragment is dropped.
+    assert page in origins
+    assert "https://example.com/p?a=1#frag" not in origins
+    # The query-bearing URLs are the ones actually fetched.
+    fetched = {url for url, _ in session.requests}
+    assert {search, page} <= fetched
+
+
+def test_web_crawler_treats_query_variants_as_distinct_origins(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.com/list"
+    page_one = "https://example.com/list?page=1"
+    page_two = "https://example.com/list?page=2"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/list?page=1">1</a>'
+                    '<a href="/list?page=2">2</a></body></html>'
+                ),
+            },
+            page_one: {"body": "<html><body><main>Page 1</main></body></html>"},
+            page_two: {"body": "<html><body><main>Page 2</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-variants-cache",
+        session=session,
+    )
+
+    origins = list(crawler.origins(CrawlScope(roots=[root], depth=1), progress=False))
+
+    # URLs that differ only by query string are crawled as separate origins.
+    assert page_one in origins
+    assert page_two in origins
+    fetched = {url for url, _ in session.requests}
+    assert {page_one, page_two} <= fetched
+
+
+def test_web_crawler_patterns_match_query_string_origins(tmp_path: Path) -> None:
+    root = "https://example.com/list"
+    keep = "https://example.com/list?page=1"
+    drop = "https://example.com/list?debug=1"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/list?page=1">keep</a>'
+                    '<a href="/list?debug=1">drop</a></body></html>'
+                ),
+            },
+            keep: {"body": "<html><body><main>Page 1</main></body></html>"},
+            drop: {"body": "<html><body><main>Debug</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-patterns-cache",
+        session=session,
+    )
+    # Glob patterns are matched against the full URL, query string included.
+    scope = CrawlScope(
+        roots=[root],
+        depth=1,
+        include_patterns=["https://example.com/list?page=*"],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == [keep]
+
+
 def test_web_markdown_documents_reuses_refreshed_sources(
     tmp_path: Path,
 ) -> None:
