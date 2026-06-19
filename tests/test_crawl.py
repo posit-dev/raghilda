@@ -1129,7 +1129,7 @@ def test_glob_pattern_include_exclude_interaction() -> None:
 
     # `exclude_patterns` will win over `include_patterns` even though the include
     # pattern also matches these URLs (so that users can exclude specific paths or
-    # file types from an otherwise broad crawl). 
+    # file types from an otherwise broad crawl).
     assert not matches("https://example.com/private/notes")
     assert not matches("https://example.com/docs/report.pdf")
 
