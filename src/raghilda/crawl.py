@@ -83,6 +83,8 @@ _DEFAULT_CRAWL_DEPTH = 100_000
 
 RootInput = str | Path
 RootsInput = RootInput | Sequence[RootInput]
+PatternInput = str | re.Pattern[str]
+PatternsInput = PatternInput | Sequence[PatternInput] | None
 CacheValue = tuple[Path | None, dict[str, Any] | None]
 CacheEntry = tuple[str, Path | None, dict[str, Any] | None]
 WebOriginKey = tuple[str, str, int | None]
@@ -93,8 +95,8 @@ TOutput = TypeVar("TOutput")
 @dataclass(frozen=True)
 class CrawlScope:
     roots: RootsInput
-    include_patterns: Sequence[str] | None = None
-    exclude_patterns: Sequence[str] | None = None
+    include_patterns: PatternsInput = None
+    exclude_patterns: PatternsInput = None
     depth: int | None = None
     limit: int | None = None
     include_types: Sequence[str] | None = None
@@ -137,8 +139,10 @@ class _CloudflareRecordCacheEntry:
 @dataclass(frozen=True)
 class _ResolvedCrawlScope:
     roots: list[RootInput]
-    include_patterns: list[str]
-    exclude_patterns: list[str]
+    include_patterns: list[PatternInput]
+    exclude_patterns: list[PatternInput]
+    include_matchers: list[Callable[[str], bool]]
+    exclude_matchers: list[Callable[[str], bool]]
     depth: int
     limit: int | None
     include_types: set[str]
@@ -781,8 +785,8 @@ class DirectoryCrawler(BaseCrawler):
                 if self._include_path(
                     path,
                     origin,
-                    include_patterns=resolved_scope.include_patterns,
-                    exclude_patterns=resolved_scope.exclude_patterns,
+                    include_matchers=resolved_scope.include_matchers,
+                    exclude_matchers=resolved_scope.exclude_matchers,
                     include_types=resolved_scope.include_types,
                     exclude_types=resolved_scope.exclude_types,
                 ):
@@ -810,8 +814,8 @@ class DirectoryCrawler(BaseCrawler):
                 if not self._include_path(
                     file_path,
                     origin,
-                    include_patterns=resolved_scope.include_patterns,
-                    exclude_patterns=resolved_scope.exclude_patterns,
+                    include_matchers=resolved_scope.include_matchers,
+                    exclude_matchers=resolved_scope.exclude_matchers,
                     include_types=resolved_scope.include_types,
                     exclude_types=resolved_scope.exclude_types,
                 ):
@@ -917,15 +921,15 @@ class DirectoryCrawler(BaseCrawler):
         path: Path,
         origin: str,
         *,
-        include_patterns: Sequence[str],
-        exclude_patterns: Sequence[str],
+        include_matchers: Sequence[Callable[[str], bool]],
+        exclude_matchers: Sequence[Callable[[str], bool]],
         include_types: set[str],
         exclude_types: set[str],
     ) -> bool:
         if not _matches_patterns(
             origin,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
+            include_matchers=include_matchers,
+            exclude_matchers=exclude_matchers,
         ):
             return False
         if not include_types and not exclude_types:
@@ -1004,10 +1008,7 @@ class WebCrawler(BaseCrawler):
                     include_subdomains=resolved_scope.include_subdomains,
                 ):
                     continue
-                if _matches_exclude_patterns(
-                    origin,
-                    exclude_patterns=resolved_scope.exclude_patterns,
-                ):
+                if any(matcher(origin) for matcher in resolved_scope.exclude_matchers):
                     continue
                 visited.add(visit_key)
                 batch.append((origin, scope_origin, root_host))
@@ -1041,8 +1042,8 @@ class WebCrawler(BaseCrawler):
                     type_label = (source.metadata or {}).get("type_label")
                     matches_patterns = _matches_patterns(
                         origin,
-                        include_patterns=resolved_scope.include_patterns,
-                        exclude_patterns=resolved_scope.exclude_patterns,
+                        include_matchers=resolved_scope.include_matchers,
+                        exclude_matchers=resolved_scope.exclude_matchers,
                     )
                     matches_types = _matches_types(
                         type_label,
@@ -1481,8 +1482,8 @@ class CloudflareCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool,
         depth: int | None = None,
-        include_patterns: Sequence[str] | None = None,
-        exclude_patterns: Sequence[str] | None = None,
+        include_patterns: Sequence[PatternInput] | None = None,
+        exclude_patterns: Sequence[PatternInput] | None = None,
         include_external_links: bool,
         include_subdomains: bool,
         limit: int | None = None,
@@ -1497,8 +1498,8 @@ class CloudflareCrawler(BaseCrawler):
             resolved_depth,
             resolved_limit,
             apply_patterns,
-            tuple(resolved_include_patterns),
-            tuple(resolved_exclude_patterns),
+            tuple(_pattern_cache_token(p) for p in resolved_include_patterns),
+            tuple(_pattern_cache_token(p) for p in resolved_exclude_patterns),
             include_external_links,
             include_subdomains,
         )
@@ -1616,13 +1617,15 @@ class CloudflareCrawler(BaseCrawler):
                 record["url"] = canonical_url
             completed_records.append(record)
         if apply_patterns:
+            include_matchers = _compile_pattern_matchers(resolved_include_patterns)
+            exclude_matchers = _compile_pattern_matchers(resolved_exclude_patterns)
             completed_records = [
                 record
                 for record in completed_records
-                if _matches_cloudflare_patterns(
+                if _matches_patterns(
                     record["url"],
-                    include_patterns=resolved_include_patterns,
-                    exclude_patterns=resolved_exclude_patterns,
+                    include_matchers=include_matchers,
+                    exclude_matchers=exclude_matchers,
                 )
             ]
         fetched_at = _utcnow()
@@ -1654,8 +1657,8 @@ class CloudflareCrawler(BaseCrawler):
         *,
         depth: int,
         limit: int | None,
-        include_patterns: Sequence[str],
-        exclude_patterns: Sequence[str],
+        include_patterns: Sequence[PatternInput],
+        exclude_patterns: Sequence[PatternInput],
         include_external_links: bool,
         include_subdomains: bool,
         cache_force_refresh: bool,
@@ -1674,10 +1677,21 @@ class CloudflareCrawler(BaseCrawler):
         }
         if limit is not None:
             payload["limit"] = limit
-        if apply_patterns and include_patterns:
-            payload["options"]["includePatterns"] = list(include_patterns)
-        if apply_patterns and exclude_patterns:
-            payload["options"]["excludePatterns"] = list(exclude_patterns)
+        if apply_patterns:
+            # Only glob (str) patterns can be forwarded to the Cloudflare API;
+            # pre-compiled regexes are enforced client-side instead.
+            include_globs = [p for p in include_patterns if isinstance(p, str)]
+            exclude_globs = [p for p in exclude_patterns if isinstance(p, str)]
+            include_has_regex = any(isinstance(p, re.Pattern) for p in include_patterns)
+            # Excludes only ever remove pages, so forwarding the glob subset is
+            # always safe. Includes restrict the result set, so forwarding a
+            # glob subset alongside a regex include would wrongly drop the
+            # regex matches; omit includePatterns entirely in that case and let
+            # the client-side filter do the restriction.
+            if include_globs and not include_has_regex:
+                payload["options"]["includePatterns"] = include_globs
+            if exclude_globs:
+                payload["options"]["excludePatterns"] = exclude_globs
         if self.modified_since is not None:
             payload["modifiedSince"] = self.modified_since
         if cache_force_refresh:
@@ -1802,10 +1816,14 @@ def _coerce_roots(roots: RootsInput) -> list[RootInput]:
 
 
 def _resolve_crawl_scope(scope: CrawlScope) -> _ResolvedCrawlScope:
+    include_patterns = _coerce_pattern_sequence(scope.include_patterns)
+    exclude_patterns = _coerce_pattern_sequence(scope.exclude_patterns)
     return _ResolvedCrawlScope(
         roots=_coerce_roots(scope.roots),
-        include_patterns=_coerce_string_sequence(scope.include_patterns),
-        exclude_patterns=_coerce_string_sequence(scope.exclude_patterns),
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        include_matchers=_compile_pattern_matchers(include_patterns),
+        exclude_matchers=_compile_pattern_matchers(exclude_patterns),
         depth=_DEFAULT_CRAWL_DEPTH if scope.depth is None else scope.depth,
         limit=scope.limit,
         include_types=_normalize_types(scope.include_types),
@@ -1815,10 +1833,10 @@ def _resolve_crawl_scope(scope: CrawlScope) -> _ResolvedCrawlScope:
     )
 
 
-def _coerce_string_sequence(values: Sequence[str] | str | None) -> list[str]:
+def _coerce_pattern_sequence(values: PatternsInput) -> list[PatternInput]:
     if values is None:
         return []
-    if isinstance(values, str):
+    if isinstance(values, (str, re.Pattern)):
         return [values]
     return list(values)
 
@@ -2013,49 +2031,59 @@ def _normalize_types(types: Sequence[str] | None) -> set[str]:
     return {item.strip().lower() for item in types}
 
 
-def _matches_patterns(
-    origin: str,
-    *,
-    include_patterns: Sequence[str],
-    exclude_patterns: Sequence[str],
-) -> bool:
-    if _matches_exclude_patterns(origin, exclude_patterns=exclude_patterns):
-        return False
-    if not include_patterns:
-        return True
-    return any(re.search(pattern, origin) for pattern in include_patterns)
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a Cloudflare-style glob into a compiled regex.
 
-
-def _matches_exclude_patterns(
-    origin: str,
-    *,
-    exclude_patterns: Sequence[str],
-) -> bool:
-    return any(re.search(pattern, origin) for pattern in exclude_patterns)
-
-
-def _matches_cloudflare_patterns(
-    origin: str,
-    *,
-    include_patterns: Sequence[str],
-    exclude_patterns: Sequence[str],
-) -> bool:
-    for pattern in exclude_patterns:
-        if _wildcard_matches(origin, pattern):
-            return False
-    if not include_patterns:
-        return True
-    return any(_wildcard_matches(origin, pattern) for pattern in include_patterns)
-
-
-def _wildcard_matches(origin: str, pattern: str) -> bool:
+    ``*`` matches any characters except ``/`` and ``**`` matches any
+    characters including ``/``. A trailing ``/**`` also matches the bare
+    parent (so ``/docs/**`` matches ``/docs`` as well as ``/docs/page``).
+    """
     placeholder = "\0"
     regex = re.escape(pattern)
     regex = regex.replace(r"/\*\*", "(?:/.*)?")
     regex = regex.replace(r"\*\*", placeholder)
     regex = regex.replace(r"\*", "[^/]*")
     regex = regex.replace(placeholder, ".*")
-    return re.fullmatch(regex, origin) is not None
+    return re.compile(regex)
+
+
+def _compile_pattern_matchers(
+    patterns: Sequence[PatternInput],
+) -> list[Callable[[str], bool]]:
+    """Compile mixed glob/regex patterns into URL matcher callables.
+
+    ``str`` patterns are treated as globs and matched with ``fullmatch``.
+    Pre-compiled ``re.Pattern`` objects are treated as regexes and matched
+    with ``search`` (the historical behavior for regex patterns).
+    """
+    matchers: list[Callable[[str], bool]] = []
+    for pattern in patterns:
+        if isinstance(pattern, re.Pattern):
+            matchers.append(lambda url, p=pattern: p.search(url) is not None)
+        else:
+            compiled = _glob_to_regex(pattern)
+            matchers.append(lambda url, c=compiled: c.fullmatch(url) is not None)
+    return matchers
+
+
+def _pattern_cache_token(pattern: PatternInput) -> str:
+    """Return a stable, hashable token identifying a glob or regex pattern."""
+    if isinstance(pattern, re.Pattern):
+        return f"re:{pattern.flags}:{pattern.pattern}"
+    return pattern
+
+
+def _matches_patterns(
+    origin: str,
+    *,
+    include_matchers: Sequence[Callable[[str], bool]],
+    exclude_matchers: Sequence[Callable[[str], bool]],
+) -> bool:
+    if any(matcher(origin) for matcher in exclude_matchers):
+        return False
+    if not include_matchers:
+        return True
+    return any(matcher(origin) for matcher in include_matchers)
 
 
 def _matches_types(
