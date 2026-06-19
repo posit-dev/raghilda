@@ -94,15 +94,53 @@ TOutput = TypeVar("TOutput")
 
 @dataclass(frozen=True)
 class CrawlScope:
+    """Declarative description of what a crawler should discover.
+
+    A `CrawlScope` is the traversal policy shared by every crawler. It names
+    the starting points and the rules used to decide which origins are followed
+    and yielded. The same scope can be reused across `DirectoryCrawler`,
+    `WebCrawler`, and `CloudflareCrawler`, though a few fields are interpreted
+    slightly differently per backend.
+    """
+
     roots: RootsInput
+    """Starting files, directories, or URLs. May be a single value or a
+    sequence of values."""
+
     include_patterns: PatternsInput = None
+    """Patterns that an origin must match to be yielded. A `str` is treated as
+    a glob: `*` matches any run of characters except `/`, and `**` matches
+    across `/` (a trailing `/**` also matches the bare parent, so `/docs/**`
+    matches `/docs` too). Pass a compiled `re.Pattern` to match by regular
+    expression instead. Accepts a single pattern or a sequence; when `None`,
+    all origins are allowed."""
+
     exclude_patterns: PatternsInput = None
+    """Patterns that drop an origin from the crawl, taking precedence over
+    `include_patterns`. Uses the same glob-or-`re.Pattern` syntax."""
+
     depth: int | None = None
+    """Number of link or directory levels to follow beyond the roots. `0` means
+    only the roots themselves. When `None`, traversal is effectively unbounded.
+    Must be non-negative."""
+
     limit: int | None = None
+    """Maximum number of origins to yield. When `None`, no limit is applied.
+    Must be non-negative."""
+
     include_types: Sequence[str] | None = None
+    """Type labels to include, such as `"html"`, `"markdown"`, `"pdf"`,
+    `"python"`, or `"text"`. When `None` or empty, all types are allowed."""
+
     exclude_types: Sequence[str] | None = None
+    """Type labels to skip. Takes precedence over `include_types`."""
+
     include_external_links: bool = False
+    """Allow origins outside the root origin (a different scheme, host, or
+    port). Defaults to `False`."""
+
     include_subdomains: bool = False
+    """Allow origins on subdomains of the root host. Defaults to `False`."""
 
     def __post_init__(self) -> None:
         if self.depth is not None:
@@ -113,15 +151,46 @@ class CrawlScope:
 
 @dataclass(frozen=True)
 class FetchedSource:
+    """A fetched source document and its metadata, prior to conversion.
+
+    A `FetchedSource` is the intermediate result returned by a crawler's
+    `fetch_raw()`. It points at the raw body on disk and carries the metadata
+    needed to convert it to a `MarkdownDocument`. Custom `convert` callables
+    passed to `fetch_markdown()` or `markdown_documents()` receive an instance
+    of this class.
+    """
+
     origin: str
+    """The canonical origin the source was requested from (a `file://` URI for
+    local files, an `http(s)` URL for web sources)."""
+
     body_path: Path
+    """Filesystem path to the raw fetched body. For local files this is the
+    file itself; for web and Cloudflare sources it is a cached copy."""
+
     resolved_origin: str | None = None
+    """The final origin after any redirects, when it differs from `origin`."""
+
     content_type: str | None = None
+    """The reported MIME type, such as `"text/html"`, when available."""
+
     status_code: int | None = None
+    """The HTTP status code for web sources, when available."""
+
     metadata: dict[str, Any] | None = None
+    """Backend-specific metadata, such as the detected `type_label`, validators
+    (`etag`, `last_modified`), and source hashes."""
+
     fetched_at: datetime | None = None
+    """When the source body was fetched, when known."""
+
     revalidated_at: datetime | None = None
+    """When a cached body was last revalidated against the server, when
+    known."""
+
     markdown_path: Path | None = None
+    """Filesystem path to already-converted Markdown, when the backend produced
+    or cached it. `None` when conversion has not run."""
 
 
 @dataclass(frozen=True)
@@ -664,6 +733,27 @@ def _map_ordered(
 
 
 class BaseCrawler(ABC):
+    """Abstract base class for crawlers.
+
+    A crawler discovers source documents for a `CrawlScope` and converts them
+    into `MarkdownDocument` objects ready for chunking and ingestion. All
+    crawlers expose the same four public methods, so a scope and the
+    surrounding workflow can be reused across backends.
+
+    Subclasses provide a concrete discovery and fetching strategy:
+
+    - `DirectoryCrawler`: walk local files and directories.
+    - `WebCrawler`: fetch pages directly over HTTP and follow links.
+    - `CloudflareCrawler`: delegate discovery and rendering to Cloudflare's
+      Browser Rendering API.
+
+    Attributes
+    ----------
+    max_workers
+        Number of worker threads used to fetch and convert sources
+        concurrently in `markdown_documents()`.
+    """
+
     max_workers: int
 
     @abstractmethod
@@ -674,6 +764,23 @@ class BaseCrawler(ABC):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[str]:
+        """Discover the origins matched by a scope.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl.
+        progress
+            Whether to display crawl progress, when the backend supports it.
+        cache_force_refresh
+            When `True`, bypass any cached discovery results and re-crawl.
+
+        Returns
+        -------
+        Iterator[str]
+            A lazy iterator of source origins, in discovery order. Each origin
+            is unique within a single call.
+        """
         pass
 
     @abstractmethod
@@ -683,6 +790,21 @@ class BaseCrawler(ABC):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
+        """Fetch the raw body and metadata for one origin.
+
+        Parameters
+        ----------
+        origin
+            The origin to fetch, as produced by `origins()`.
+        cache_force_refresh
+            When `True`, bypass any cached body and re-fetch from the source.
+
+        Returns
+        -------
+        FetchedSource
+            The fetched source, with its body path and metadata. The raw body
+            is not yet converted to Markdown.
+        """
         pass
 
     def fetch_markdown(
@@ -692,6 +814,25 @@ class BaseCrawler(ABC):
         convert: Callable[[FetchedSource], MarkdownDocument] | None = None,
         cache_force_refresh: bool = False,
     ) -> MarkdownDocument:
+        """Fetch one origin and convert it to a Markdown document.
+
+        Parameters
+        ----------
+        origin
+            The origin to fetch and convert.
+        convert
+            Optional callable that turns a `FetchedSource` into a
+            `MarkdownDocument`. When omitted, the crawler's default conversion
+            is used. Use this to apply custom cleanup; keep chunking in
+            `store.ingest(prepare=...)` rather than in the converter.
+        cache_force_refresh
+            When `True`, bypass any cached body and re-fetch from the source.
+
+        Returns
+        -------
+        MarkdownDocument
+            The converted document for `origin`.
+        """
         source = self.fetch_raw(origin, cache_force_refresh=cache_force_refresh)
         converter = convert or self._default_convert
         return converter(source)
@@ -717,6 +858,31 @@ class BaseCrawler(ABC):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[MarkdownDocument]:
+        """Discover and convert all sources matched by a scope.
+
+        This is the primary entry point for crawling. It combines `origins()`
+        and `fetch_markdown()`, fetching and converting sources concurrently
+        using up to `max_workers` threads while preserving discovery order. The
+        result is intended to be passed directly to `store.ingest()`.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl.
+        convert
+            Optional callable that turns a `FetchedSource` into a
+            `MarkdownDocument`. When omitted, the crawler's default conversion
+            is used.
+        progress
+            Whether to display crawl progress, when the backend supports it.
+        cache_force_refresh
+            When `True`, bypass cached discovery and bodies and re-crawl.
+
+        Returns
+        -------
+        Iterator[MarkdownDocument]
+            A lazy iterator of converted documents, in discovery order.
+        """
         origins = self.origins(
             scope,
             progress=progress,
@@ -738,9 +904,39 @@ class BaseCrawler(ABC):
 class DirectoryCrawler(BaseCrawler):
     """Crawl local files and optionally cache converted markdown.
 
-    Directory traversal always reads the current filesystem state. The cache
-    stores converted markdown per file origin and is reused only when the
-    current file hash and modification time still match the cached metadata.
+    Use a `DirectoryCrawler` for local Markdown, notebooks, PDFs, text files,
+    and other formats supported by `read_as_markdown()`. Directory traversal
+    always reads the current filesystem state. The cache stores converted
+    Markdown per file origin and is reused only when the current file hash and
+    modification time still match the cached metadata. When the cache directory
+    lives inside a crawled root, the crawler skips its own cache files.
+
+    Parameters
+    ----------
+    cache_dir
+        Where to cache converted Markdown. `None` (default) disables caching.
+        `True` uses `.raghilda/cache/directory` under the current working
+        directory. A string or `Path` uses that location.
+    max_workers
+        Number of worker threads used to convert files concurrently in
+        `markdown_documents()`. Must be at least 1. Default is 1.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.crawl import CrawlScope, DirectoryCrawler
+
+    crawler = DirectoryCrawler(cache_dir=True, max_workers=4)
+    scope = CrawlScope(
+        roots=["docs"],
+        depth=3,
+        include_patterns=[r".*\\.(md|qmd|ipynb|pdf)$"],
+    )
+
+    for document in crawler.markdown_documents(scope):
+        print(document.origin)
+    ```
     """
 
     def __init__(
@@ -765,6 +961,31 @@ class DirectoryCrawler(BaseCrawler):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[str]:
+        """Discover local file origins matched by a scope.
+
+        Walks each root in the scope, descending up to `scope.depth`
+        directory levels, and yields a `file://` URI for every file that
+        passes the scope's pattern and type filters. Symlinked directories and
+        the crawler's own cache directory are skipped. Directory traversal
+        always reflects the current filesystem state, so `progress` and
+        `cache_force_refresh` have no effect here.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl.
+            `roots` may be directories or individual files.
+        progress
+            Unused; accepted for interface compatibility.
+        cache_force_refresh
+            Unused; accepted for interface compatibility.
+
+        Returns
+        -------
+        Iterator[str]
+            A lazy iterator of unique `file://` origins, in sorted traversal
+            order.
+        """
         del progress, cache_force_refresh
         resolved_scope = _resolve_crawl_scope(scope)
         if resolved_scope.limit == 0:
@@ -832,6 +1053,27 @@ class DirectoryCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
+        """Read one local file origin and return its source metadata.
+
+        The returned `FetchedSource` points at the
+        file on disk and records its size, modification time, content hash, and
+        detected type label. When caching is enabled and the file is unchanged
+        since the last conversion, the cached Markdown path is attached so that
+        conversion can be skipped.
+
+        Parameters
+        ----------
+        origin
+            A `file://` URI (or local path) identifying an existing file.
+        cache_force_refresh
+            When `True`, ignore any cached Markdown for this file so it will
+            be reconverted.
+
+        Returns
+        -------
+        FetchedSource
+            The source description for the file at `origin`.
+        """
         path = _path_from_file_origin(origin).resolve()
         assert path.is_file(), f"File origin must exist: {origin}"
         canonical_origin = path.as_uri()
@@ -876,6 +1118,30 @@ class DirectoryCrawler(BaseCrawler):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[MarkdownDocument]:
+        """Discover and convert all local files matched by a scope.
+
+        Combines `origins()` and `fetch_markdown()`, converting files
+        concurrently using up to `max_workers` threads while preserving
+        traversal order. When caching is enabled, converted Markdown is reused
+        for files whose hash and modification time are unchanged.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl.
+        convert
+            Optional callable that turns a `FetchedSource` into a
+            `MarkdownDocument`. When omitted, the default conversion is used.
+        progress
+            Unused; accepted for interface compatibility.
+        cache_force_refresh
+            When `True`, reconvert files even when cached Markdown is present.
+
+        Returns
+        -------
+        Iterator[MarkdownDocument]
+            A lazy iterator of converted documents, in traversal order.
+        """
         origins = self.origins(
             scope,
             progress=progress,
@@ -945,6 +1211,57 @@ class DirectoryCrawler(BaseCrawler):
 
 
 class WebCrawler(BaseCrawler):
+    """Crawl a website by fetching pages directly over HTTP.
+
+    A `WebCrawler` starts from one or more root URLs, fetches each page with
+    `requests`, follows discovered links up to `scope.depth`, and yields
+    matching pages as `MarkdownDocument` objects. Link following is constrained
+    by the scope's patterns, types, and the `include_external_links` /
+    `include_subdomains` flags.
+
+    Fetched response bodies are cached on disk. When `cache_stale_after` is
+    set, fresh cached responses are reused and stale ones are revalidated with
+    `ETag` / `Last-Modified` headers when the server provides them. Pass
+    `cache_force_refresh=True` to any method to bypass the cache for a run.
+
+    Parameters
+    ----------
+    session
+        A `requests.Session` to use for requests. When omitted, a new session
+        is created. A caller-supplied session also scopes the cache so entries
+        are not shared across sessions.
+    cache_dir
+        Where to cache fetched bodies. `None` (default) uses a temporary
+        directory. `True` uses `.raghilda/cache/web` under the current working
+        directory. A string or `Path` uses that location.
+    cache_stale_after
+        How long a cached body stays fresh before it must be revalidated. When
+        `None` (default), cached bodies are always considered fresh.
+    max_workers
+        Number of worker threads used to fetch pages concurrently. Must be at
+        least 1. Default is 1.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from datetime import timedelta
+
+    from raghilda.crawl import CrawlScope, WebCrawler
+
+    crawler = WebCrawler(cache_dir=True, cache_stale_after=timedelta(days=1))
+    scope = CrawlScope(
+        roots=["https://quarto.org/docs/guide/"],
+        depth=2,
+        include_patterns=[r"^https://quarto\\.org/docs/guide/"],
+        include_types=["html"],
+    )
+
+    for document in crawler.markdown_documents(scope):
+        print(document.origin)
+    ```
+    """
+
     def __init__(
         self,
         *,
@@ -974,6 +1291,31 @@ class WebCrawler(BaseCrawler):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[str]:
+        """Discover web origins reachable from the scope's roots.
+
+        Performs a breadth-first crawl: each root is fetched, its links are
+        extracted and canonicalized, and the frontier expands one level per
+        `scope.depth` until the depth or `scope.limit` is reached. Origins
+        outside the root scope are dropped unless `include_external_links` or
+        `include_subdomains` allow them. Only origins passing the scope's
+        pattern and type filters are yielded.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl.
+            `roots` must be `http` or `https` URLs.
+        progress
+            Unused; accepted for interface compatibility.
+        cache_force_refresh
+            When `True`, re-fetch pages instead of using cached bodies while
+            discovering links.
+
+        Returns
+        -------
+        Iterator[str]
+            A lazy iterator of unique canonical URLs, in crawl order.
+        """
         del progress
         resolved_scope = _resolve_crawl_scope(scope)
         if resolved_scope.limit == 0:
@@ -1101,6 +1443,27 @@ class WebCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
+        """Fetch one URL over HTTP and return its source metadata.
+
+        A fresh cached body is returned without a network request. A stale
+        cached body is revalidated with `If-None-Match` / `If-Modified-Since`
+        headers; on a `304 Not Modified` the cached body is reused. Otherwise
+        the body is downloaded, cached, and its content type and type label are
+        recorded on the returned source.
+
+        Parameters
+        ----------
+        origin
+            The URL to fetch. It is canonicalized before use and must be an
+            `http` or `https` URL.
+        cache_force_refresh
+            When `True`, ignore any cached body and re-fetch from the server.
+
+        Returns
+        -------
+        FetchedSource
+            The fetched source, with its cached body path and metadata.
+        """
         canonical_origin = _canonicalize_web_url(origin)
         assert canonical_origin is not None
         parsed = urlparse(canonical_origin)
@@ -1298,6 +1661,90 @@ class WebCrawler(BaseCrawler):
 
 
 class CloudflareCrawler(BaseCrawler):
+    """Crawl a website using Cloudflare's Browser Rendering API.
+
+    A `CloudflareCrawler` delegates page discovery, JavaScript rendering, and
+    Markdown extraction to Cloudflare. It submits a crawl job, polls until the
+    job completes, retrieves the rendered Markdown record for each discovered
+    page, and yields them as `MarkdownDocument` objects. This is useful for
+    single-page applications and other sites whose content only appears after
+    client-side rendering.
+
+    For Cloudflare crawls, `include_patterns` and `exclude_patterns` accept the
+    same glob strings (such as `"https://example.com/docs/**"`) or compiled
+    `re.Pattern` objects as the other crawlers. Glob strings are forwarded to
+    Cloudflare's crawl request; regex patterns are enforced locally on the
+    returned records. `include_external_links` / `include_subdomains` are
+    passed through to the crawl request. Cached entries are invalidated
+    automatically when `render`, `source`, or `modified_since` change between
+    runs.
+
+    Parameters
+    ----------
+    account_id
+        The Cloudflare account ID that owns the Browser Rendering subscription.
+    api_token
+        A Cloudflare API token with Browser Rendering permissions. Sent as a
+        bearer token on each request.
+    cache_dir
+        Where to cache crawl results and page records. `None` (default) uses a
+        temporary directory. `True` uses `.raghilda/cache/cloudflare` under the
+        current working directory. A string or `Path` uses that location.
+    session
+        A `requests.Session` to use for API calls. When omitted, a new session
+        is created.
+    source
+        How Cloudflare discovers pages: `"all"` (default) combines available
+        methods, `"sitemap"` reads the site's sitemap, and `"crawl"` follows
+        links from the rendered DOM.
+    render
+        Whether Cloudflare executes JavaScript before extracting content.
+        Defaults to `True`. Set to `False` for server-rendered sites to
+        reduce crawl time and API usage.
+    cache_stale_after
+        How long cached results stay fresh. When stale, the crawler requests
+        updated content with a `maxAge` hint. When `None` (default), cached
+        entries never expire.
+    modified_since
+        Restrict the crawl to pages modified after this Unix timestamp, for
+        incremental refreshes. When `None` (default), all pages are eligible.
+    poll_interval
+        Seconds to wait between job-status polls. Default is `5.0`.
+    max_poll_attempts
+        Maximum number of status polls before a `TimeoutError` is raised.
+        Default is `60` (a five-minute window at the default interval).
+    max_workers
+        Number of worker threads used to materialize page records
+        concurrently. Must be at least 1. Default is 1.
+    base_url
+        Base URL of the Cloudflare API. Defaults to the public endpoint and is
+        rarely overridden outside of testing.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    import os
+
+    from raghilda.crawl import CloudflareCrawler, CrawlScope
+
+    crawler = CloudflareCrawler(
+        account_id=os.environ["CLOUDFLARE_ACCOUNT_ID"],
+        api_token=os.environ["CLOUDFLARE_API_TOKEN"],
+        cache_dir=True,
+        render=True,
+    )
+    scope = CrawlScope(
+        roots=["https://example.com/docs/"],
+        depth=2,
+        include_patterns=["https://example.com/docs/**"],
+    )
+
+    for document in crawler.markdown_documents(scope):
+        print(document.origin)
+    ```
+    """
+
     def __init__(
         self,
         *,
@@ -1344,6 +1791,29 @@ class CloudflareCrawler(BaseCrawler):
         progress: bool = True,
         cache_force_refresh: bool = False,
     ) -> Iterator[str]:
+        """Discover origins by running a Cloudflare crawl for each root.
+
+        Submits a crawl job for each root in the scope and yields the canonical
+        URL of every completed page record that passes the scope's pattern and
+        type filters. Results are cached per root so repeated runs can avoid new
+        Cloudflare API calls while the cache is fresh.
+
+        Parameters
+        ----------
+        scope
+            The `CrawlScope` describing what to crawl. `roots` must be `http`
+            or `https` URLs.
+        progress
+            Unused; accepted for interface compatibility.
+        cache_force_refresh
+            When `True`, submit a fresh crawl job instead of reusing cached
+            results.
+
+        Returns
+        -------
+        Iterator[str]
+            A lazy iterator of unique canonical URLs returned by Cloudflare.
+        """
         del progress
         resolved_scope = _resolve_crawl_scope(scope)
         yielded = 0
@@ -1397,6 +1867,31 @@ class CloudflareCrawler(BaseCrawler):
         *,
         cache_force_refresh: bool = False,
     ) -> FetchedSource:
+        """Fetch the rendered Markdown record for one Cloudflare origin.
+
+        Returns a fresh in-memory or on-disk cached record when available.
+        Otherwise it runs a single-URL Cloudflare crawl to produce the record.
+        The returned source's body path points at the rendered Markdown, which
+        is already suitable for conversion without further processing.
+
+        Parameters
+        ----------
+        origin
+            The URL to fetch. It is canonicalized before use.
+        cache_force_refresh
+            When `True`, ignore cached records and request a fresh crawl.
+
+        Returns
+        -------
+        FetchedSource
+            The fetched source for `origin`, with its rendered Markdown body
+            path and metadata.
+
+        Raises
+        ------
+        ValueError
+            If Cloudflare does not return a record for `origin`.
+        """
         canonical_origin = _canonicalize_web_url(origin)
         assert canonical_origin is not None
         record_entry = (

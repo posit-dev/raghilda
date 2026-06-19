@@ -20,7 +20,9 @@ class ChunkLike(Protocol):
 class IntoChunk(Protocol):
     """Any object that can be converted into a Chunk via to_chunk()."""
 
-    def to_chunk(self) -> "Chunk": ...
+    def to_chunk(self) -> "Chunk":
+        """Convert this object into a `Chunk`."""
+        ...
 
 
 @runtime_checkable
@@ -42,13 +44,19 @@ class ChunkedDocumentLike(Protocol):
 class IntoDocument(Protocol):
     """Any object that can be converted into a Document via to_document()."""
 
-    def to_document(self) -> "Document": ...
+    def to_document(self) -> "Document":
+        """Convert this object into a `Document`."""
+        ...
 
 
 @runtime_checkable
 class ChunkerLike(Protocol):
     """Any chunker-like object (chonkie, raghilda, or custom)."""
 
-    def chunk(self, document: "Document") -> "ChunkedDocument": ...
+    def chunk(self, document: "Document") -> "ChunkedDocument":
+        """Chunk a document into a `ChunkedDocument`."""
+        ...
 
-    def chunk_text(self, text: str) -> Sequence["Chunk"]: ...
+    def chunk_text(self, text: str) -> Sequence["Chunk"]:
+        """Chunk raw text into a sequence of `Chunk` objects."""
+        ...
