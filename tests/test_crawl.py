@@ -1062,6 +1062,78 @@ def test_glob_pattern_matchers_segment_semantics() -> None:
     assert matches(deep, "https://example.com/docs")
 
 
+def _glob_matches(pattern: str, url: str) -> bool:
+    matchers = crawl_module._compile_pattern_matchers([pattern])
+    return crawl_module._matches_patterns(
+        url, include_matchers=matchers, exclude_matchers=[]
+    )
+
+
+@pytest.mark.parametrize(
+    ("pattern", "url", "expected"),
+    [
+        # Query strings: `*` stays within a segment, so it does not cross a `/`
+        # embedded in a query value, while `**` matches across everything.
+        ("https://example.com/api?key=*", "https://example.com/api?key=abc123", True),
+        ("https://example.com/api?key=*", "https://example.com/api?key=a/b", False),
+        (
+            "https://example.com/redirect?url=**",
+            "https://example.com/redirect?url=https://other.com/path",
+            True,
+        ),
+        # Regex metacharacters in the pattern are treated literally: `.` and `+`
+        # match only themselves, not "any character".
+        ("https://example.com/a.b+c/page", "https://example.com/a.b+c/page", True),
+        ("https://example.com/a.b+c/page", "https://example.com/aXbXc/page", False),
+        # Percent-encoded characters pass through untouched.
+        (
+            "https://example.com/path%20name/*",
+            "https://example.com/path%20name/file",
+            True,
+        ),
+        # Wildcards in the middle of the URL
+        (
+            "https://example.com/users/*/profile",
+            "https://example.com/users/alice/profile",
+            True,
+        ),
+        (
+            "https://example.com/users/*/profile",
+            "https://example.com/users/alice/extra/profile",
+            False,
+        ),
+        (
+            "https://example.com/docs/**/api",
+            "https://example.com/docs/v1/rest/api",
+            True,
+        ),
+        ("https://example.com/docs/**/api", "https://example.com/docs/api", True),
+    ],
+)
+def test_glob_pattern_matching_covers_complex_urls(
+    pattern: str, url: str, expected: bool
+) -> None:
+    assert _glob_matches(pattern, url) is expected
+
+
+def test_glob_pattern_include_exclude_interaction() -> None:
+    include = crawl_module._compile_pattern_matchers(["https://example.com/**"])
+    exclude = crawl_module._compile_pattern_matchers(["**/private/**", "**/*.pdf"])
+
+    def matches(url: str) -> bool:
+        return crawl_module._matches_patterns(
+            url, include_matchers=include, exclude_matchers=exclude
+        )
+
+    assert matches("https://example.com/public/page")
+
+    # `exclude_patterns` will win over `include_patterns` even though the include
+    # pattern also matches these URLs (so that users can exclude specific paths or
+    # file types from an otherwise broad crawl). 
+    assert not matches("https://example.com/private/notes")
+    assert not matches("https://example.com/docs/report.pdf")
+
+
 def test_web_markdown_documents_reuses_refreshed_sources(
     tmp_path: Path,
 ) -> None:
