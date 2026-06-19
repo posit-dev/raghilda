@@ -184,9 +184,9 @@ scope = CrawlScope(
 
 With `source="sitemap"` and `depth=0`, Cloudflare reads the sitemap from the root and returns all listed pages without further link-following.
 
-## Filtering with Cloudflare-style patterns
+## Filtering with glob patterns
 
-The `include_patterns=` and `exclude_patterns=` fields on `CrawlScope` behave differently depending on which crawler you use. With `WebCrawler`, they are Python regular expressions matched locally. With `CloudflareCrawler`, they are forwarded directly to the Cloudflare API as Cloudflare wildcard patterns, where `**` matches any number of path segments:
+The `include_patterns=` and `exclude_patterns=` fields on `CrawlScope` use the same glob syntax for every crawler, so a scope you tuned against `WebCrawler` behaves identically with `CloudflareCrawler`. A single `*` matches any characters except `/` (one path segment), and `**` matches any characters including `/` (any number of segments). Patterns are matched against the full URL:
 
 ```{python}
 #| eval: false
@@ -202,7 +202,22 @@ scope = CrawlScope(
 )
 ```
 
-The `include_patterns` list restricts the crawl to URLs matching at least one pattern. The `exclude_patterns` list removes URLs that match any pattern. The `limit=` field caps the total number of pages returned.
+The `include_patterns` list restricts the crawl to URLs matching at least one pattern. The `exclude_patterns` list removes URLs that match any pattern, and always takes priority over `include_patterns`. The `limit=` field caps the total number of pages returned.
+
+Because Cloudflare's crawl API speaks the same `*`/`**` wildcard language, glob patterns are forwarded directly to it so the filtering happens server-side. For matching that globs cannot express, pass a pre-compiled `re.Pattern` (matched with `re.search`) instead of a string:
+
+```{python}
+#| eval: false
+import re
+
+scope = CrawlScope(
+    roots=["https://example.com/"],
+    depth=2,
+    include_patterns=[re.compile(r"/docs/v\d+/")],
+)
+```
+
+Since the Cloudflare API cannot evaluate regexes, compiled patterns are not forwarded; `CloudflareCrawler` applies them locally to the records the crawl returns. You can mix glob strings and compiled regexes in the same list, and the glob portion is still pushed to the API for efficient server-side filtering.
 
 Two additional scope fields are relevant for Cloudflare crawls:
 
