@@ -108,8 +108,8 @@ def test_directory_crawler_discovers_and_converts_markdown_documents(
     scope = CrawlScope(
         roots=[tmp_path],
         depth=3,
-        include_patterns=[r".*/docs/.*"],
-        exclude_patterns=[r".*/skip\.py$"],
+        include_patterns=["**/docs/**"],
+        exclude_patterns=["**/skip.py"],
         include_types=["markdown", "jupyter-notebook"],
     )
 
@@ -333,8 +333,8 @@ def test_web_crawler_discovers_origins_and_revalidates_cache(tmp_path: Path) -> 
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_origin)}(?:/.*)?$"],
-            exclude_patterns=[r".*/skip$"],
+            include_patterns=[f"{root_origin}/**"],
+            exclude_patterns=["**/skip"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
@@ -786,7 +786,7 @@ def test_web_crawler_discovers_matching_descendants_from_filtered_seed(
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_url)}docs/.*"],
+            include_patterns=[f"{root_url}docs/**"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
@@ -812,7 +812,7 @@ def test_web_crawler_does_not_fetch_excluded_origins(tmp_path: Path) -> None:
     scope = CrawlScope(
         roots=[root],
         depth=1,
-        exclude_patterns=[r"/admin$"],
+        exclude_patterns=["**/admin"],
     )
 
     origins = list(crawler.origins(scope, progress=False))
@@ -961,7 +961,7 @@ def test_web_crawler_accepts_crawl_scope_for_roots_and_patterns(
         scope = CrawlScope(
             roots=[root_url],
             depth=1,
-            include_patterns=[rf"^{re.escape(root_url)}docs/.*"],
+            include_patterns=[f"{root_url}docs/**"],
         )
 
         origins = list(crawler.origins(scope, progress=False))
@@ -971,6 +971,289 @@ def test_web_crawler_accepts_crawl_scope_for_roots_and_patterns(
         assert documents == [
             MarkdownDocument(origin=f"{root_url}docs/guide", content="Guide")
         ]
+
+
+def test_web_crawler_single_star_does_not_cross_path_separator(
+    tmp_path: Path,
+) -> None:
+    with _serve(
+        {
+            "/": {
+                "body": (
+                    '<html><body><a href="/docs/guide">Guide</a>'
+                    '<a href="/docs/guide/intro">Intro</a></body></html>'
+                ),
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+            "/docs/guide": {
+                "body": "<html><body><main>Guide</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+            "/docs/guide/intro": {
+                "body": "<html><body><main>Intro</main></body></html>",
+                "content_type": "text/html; charset=utf-8",
+                "etag": None,
+            },
+        }
+    ) as server:
+        root_url = f"http://127.0.0.1:{server.server_port}/"
+        crawler = WebCrawler(cache_dir=tmp_path / "single-star-cache")
+        # `*` matches within a path segment only; `docs/guide/intro` is excluded.
+        scope = CrawlScope(
+            roots=[root_url],
+            depth=2,
+            include_patterns=[f"{root_url}docs/*"],
+        )
+
+        origins = list(crawler.origins(scope, progress=False))
+
+        assert origins == [f"{root_url}docs/guide"]
+
+
+def test_web_crawler_accepts_compiled_regex_pattern(tmp_path: Path) -> None:
+    root = "https://example.com"
+    guide = "https://example.com/guide"
+    admin = "https://example.com/admin"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    f'<html><body><a href="{guide}">Guide</a>'
+                    f'<a href="{admin}">Admin</a></body></html>'
+                ),
+            },
+            guide: {"body": "<html><body><main>Guide</main></body></html>"},
+            admin: {"body": "<html><body><main>Admin</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "regex-pattern-cache",
+        session=session,
+    )
+    # A pre-compiled regex is the escape hatch and uses `search` semantics.
+    scope = CrawlScope(
+        roots=[root],
+        depth=1,
+        include_patterns=[re.compile(r"/guide$")],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert guide in origins
+    assert admin not in origins
+
+
+def test_glob_pattern_matchers_segment_semantics() -> None:
+    single = crawl_module._compile_pattern_matchers(["https://example.com/docs/*"])
+    deep = crawl_module._compile_pattern_matchers(["https://example.com/docs/**"])
+
+    def matches(matchers, url: str) -> bool:
+        return crawl_module._matches_patterns(
+            url, include_matchers=matchers, exclude_matchers=[]
+        )
+
+    # `*` stays within a single path segment.
+    assert matches(single, "https://example.com/docs/page")
+    assert not matches(single, "https://example.com/docs/page/sub")
+    # `**` crosses path separators, and a trailing `/**` also matches the bare parent.
+    assert matches(deep, "https://example.com/docs/page/sub")
+    assert matches(deep, "https://example.com/docs")
+
+
+def _glob_matches(pattern: str, url: str) -> bool:
+    matchers = crawl_module._compile_pattern_matchers([pattern])
+    return crawl_module._matches_patterns(
+        url, include_matchers=matchers, exclude_matchers=[]
+    )
+
+
+@pytest.mark.parametrize(
+    ("pattern", "url", "expected"),
+    [
+        # Query strings: `*` stays within a segment, so it does not cross a `/`
+        # embedded in a query value, while `**` matches across everything.
+        ("https://example.com/api?key=*", "https://example.com/api?key=abc123", True),
+        ("https://example.com/api?key=*", "https://example.com/api?key=a/b", False),
+        (
+            "https://example.com/redirect?url=**",
+            "https://example.com/redirect?url=https://other.com/path",
+            True,
+        ),
+        # Regex metacharacters in the pattern are treated literally: `.` and `+`
+        # match only themselves, not "any character".
+        ("https://example.com/a.b+c/page", "https://example.com/a.b+c/page", True),
+        ("https://example.com/a.b+c/page", "https://example.com/aXbXc/page", False),
+        # Percent-encoded characters pass through untouched.
+        (
+            "https://example.com/path%20name/*",
+            "https://example.com/path%20name/file",
+            True,
+        ),
+        # Wildcards in the middle of the URL
+        (
+            "https://example.com/users/*/profile",
+            "https://example.com/users/alice/profile",
+            True,
+        ),
+        (
+            "https://example.com/users/*/profile",
+            "https://example.com/users/alice/extra/profile",
+            False,
+        ),
+        (
+            "https://example.com/docs/**/api",
+            "https://example.com/docs/v1/rest/api",
+            True,
+        ),
+        ("https://example.com/docs/**/api", "https://example.com/docs/api", True),
+    ],
+)
+def test_glob_pattern_matching_covers_complex_urls(
+    pattern: str, url: str, expected: bool
+) -> None:
+    assert _glob_matches(pattern, url) is expected
+
+
+def test_glob_pattern_include_exclude_interaction() -> None:
+    include = crawl_module._compile_pattern_matchers(["https://example.com/**"])
+    exclude = crawl_module._compile_pattern_matchers(["**/private/**", "**/*.pdf"])
+
+    def matches(url: str) -> bool:
+        return crawl_module._matches_patterns(
+            url, include_matchers=include, exclude_matchers=exclude
+        )
+
+    assert matches("https://example.com/public/page")
+
+    # `exclude_patterns` will win over `include_patterns` even though the include
+    # pattern also matches these URLs (so that users can exclude specific paths or
+    # file types from an otherwise broad crawl).
+    assert not matches("https://example.com/private/notes")
+    assert not matches("https://example.com/docs/report.pdf")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        # The query is kept; only the #fragment is dropped.
+        ("https://example.com/p?a=1#frag", "https://example.com/p?a=1"),
+        (
+            "https://example.com/p?a=1&b=2#section-3",
+            "https://example.com/p?a=1&b=2",
+        ),
+        # A fragment with no query leaves a clean path behind.
+        ("https://example.com/p#frag", "https://example.com/p"),
+        # A query with no fragment is untouched.
+        ("https://example.com/p?a=1", "https://example.com/p?a=1"),
+    ],
+)
+def test_canonicalize_web_url_drops_fragment_but_keeps_query(
+    url: str, expected: str
+) -> None:
+    assert crawl_module._canonicalize_web_url(url) == expected
+
+
+def test_web_crawler_preserves_query_string_during_discovery(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.com"
+    search = "https://example.com/search?q=python&page=2"
+    # Query and fragment together: the query stays, the fragment is dropped.
+    page = "https://example.com/p?a=1"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/search?q=python&page=2">Search</a>'
+                    '<a href="/p?a=1#frag">Page</a></body></html>'
+                ),
+            },
+            search: {"body": "<html><body><main>Results</main></body></html>"},
+            page: {"body": "<html><body><main>Page</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-discovery-cache",
+        session=session,
+    )
+
+    origins = list(crawler.origins(CrawlScope(roots=[root], depth=1), progress=False))
+
+    # The discovered link keeps its full query string end-to-end.
+    assert search in origins
+    # `https://example.com/p?a=1#frag` -> `https://example.com/p?a=1`: the query
+    # survives and only the fragment is dropped.
+    assert page in origins
+    assert "https://example.com/p?a=1#frag" not in origins
+    # The query-bearing URLs are the ones actually fetched.
+    fetched = {url for url, _ in session.requests}
+    assert {search, page} <= fetched
+
+
+def test_web_crawler_treats_query_variants_as_distinct_origins(
+    tmp_path: Path,
+) -> None:
+    root = "https://example.com/list"
+    page_one = "https://example.com/list?page=1"
+    page_two = "https://example.com/list?page=2"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/list?page=1">1</a>'
+                    '<a href="/list?page=2">2</a></body></html>'
+                ),
+            },
+            page_one: {"body": "<html><body><main>Page 1</main></body></html>"},
+            page_two: {"body": "<html><body><main>Page 2</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-variants-cache",
+        session=session,
+    )
+
+    origins = list(crawler.origins(CrawlScope(roots=[root], depth=1), progress=False))
+
+    # URLs that differ only by query string are crawled as separate origins.
+    assert page_one in origins
+    assert page_two in origins
+    fetched = {url for url, _ in session.requests}
+    assert {page_one, page_two} <= fetched
+
+
+def test_web_crawler_patterns_match_query_string_origins(tmp_path: Path) -> None:
+    root = "https://example.com/list"
+    keep = "https://example.com/list?page=1"
+    drop = "https://example.com/list?debug=1"
+    session: Any = _FakeWebSession(
+        {
+            root: {
+                "body": (
+                    '<html><body><a href="/list?page=1">keep</a>'
+                    '<a href="/list?debug=1">drop</a></body></html>'
+                ),
+            },
+            keep: {"body": "<html><body><main>Page 1</main></body></html>"},
+            drop: {"body": "<html><body><main>Debug</main></body></html>"},
+        }
+    )
+    crawler = WebCrawler(
+        cache_dir=tmp_path / "query-patterns-cache",
+        session=session,
+    )
+    # Glob patterns are matched against the full URL, query string included.
+    scope = CrawlScope(
+        roots=[root],
+        depth=1,
+        include_patterns=["https://example.com/list?page=*"],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == [keep]
 
 
 def test_web_markdown_documents_reuses_refreshed_sources(
@@ -2233,6 +2516,32 @@ def test_cloudflare_crawler_accepts_crawl_scope_for_roots_and_patterns(
     ]
 
 
+def test_cloudflare_crawler_applies_regex_includes_client_side(
+    tmp_path: Path,
+) -> None:
+    session = _ParameterizedCloudflareSession()
+    crawler = CloudflareCrawler(
+        account_id="account-123",
+        api_token="token-123",
+        cache_dir=tmp_path / "cloudflare-regex-cache",
+        session=session,
+        poll_interval=0,
+    )
+    # A pre-compiled regex cannot be sent to the Cloudflare API, so it must be
+    # enforced on the records returned by the crawl.
+    scope = CrawlScope(
+        roots=["https://example.com/docs"],
+        depth=1,
+        include_patterns=[re.compile(r".*/page$")],
+    )
+
+    origins = list(crawler.origins(scope, progress=False))
+
+    assert origins == ["https://example.com/docs/page"]
+    # Regex includes are not forwarded to the API.
+    assert "includePatterns" not in session.post_calls[0][1]["options"]
+
+
 def test_cloudflare_crawler_filters_returned_records_to_web_scope(
     tmp_path: Path,
 ) -> None:
@@ -2841,7 +3150,7 @@ def test_directory_crawler_coerces_scalar_patterns_and_types(
     crawler = DirectoryCrawler()
     scope = CrawlScope(
         roots=[tmp_path],
-        include_patterns=r".*/docs/.*",
+        include_patterns=re.compile(r".*/docs/.*"),
         include_types="markdown",
         exclude_types="python",
     )
@@ -2860,7 +3169,7 @@ def test_directory_crawler_accepts_crawl_scope_for_roots_and_patterns(
     scope = CrawlScope(
         roots=[tmp_path],
         depth=1,
-        include_patterns=[r".*/docs/.*"],
+        include_patterns=["**/docs/**"],
     )
 
     origins = list(crawler.origins(scope, progress=False))
