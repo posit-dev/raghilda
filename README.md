@@ -66,6 +66,11 @@ for chunk in chunks:
     print(chunk.text)
 ```
 
+## Requirements
+
+- **Python 3.11–3.13**
+- An embedding provider (such as OpenAI) is optional: semantic search needs one, but keyword search works with no API key.
+
 ## Links
 
 - [Documentation](https://posit-dev.github.io/raghilda/)
