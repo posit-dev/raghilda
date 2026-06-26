@@ -51,6 +51,7 @@ store = DuckDBStore.create(
 links = find_links("https://posit-dev.github.io/chatlas/")
 chunker = MarkdownChunker()
 
+# Read, chunk, and store each page
 for link in links:
     document = read_as_markdown(link)
     chunked_document = chunker.chunk(document)
