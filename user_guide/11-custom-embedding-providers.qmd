@@ -1,6 +1,6 @@
 ---
 title: "Custom Embedding Providers"
-guide-section: "Getting Started"
+guide-section: "Building a Store"
 ---
 
 raghilda includes built-in support for OpenAI and Cohere embeddings, but you can create custom providers for other embedding services or local models.
@@ -140,6 +140,20 @@ query_embedding = provider.embed([query], input_type=EmbedInputType.QUERY)
 Some models (like Cohere and Voyage) produce different embeddings for queries vs documents to optimize retrieval. Others (like OpenAI) ignore this parameter. Your provider should handle both cases appropriately.
 
 ## Local Models Example
+
+::: {.callout-tip}
+raghilda already ships a built-in `EmbeddingSentenceTransformers` provider. For
+real use you don't need to write your own — just install the extra
+(`pip install "raghilda[sentence-transformers]"`) and import it:
+
+```python
+from raghilda.embedding import EmbeddingSentenceTransformers
+```
+
+The example below is illustrative: it shows how an equivalent local provider is
+written from scratch, which is a useful template when you need to wrap a local
+model that raghilda does not support out of the box.
+:::
 
 Here's an example using a local model with sentence-transformers:
 

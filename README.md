@@ -2,7 +2,11 @@
 
 RAG made simple.
 
-raghilda is a Python package for implementing Retrieval-Augmented Generation (RAG) workflows. It provides a complete solution with sensible defaults while remaining transparent—not a black box.
+raghilda is a Python package for implementing Retrieval-Augmented Generation (RAG) workflows. It provides a complete solution with sensible defaults while remaining transparent (not a black box).
+
+## What you can build
+
+raghilda puts a question-answering layer over content you already have. Use it to chat over your documentation with cited sources, build internal knowledge assistants over runbooks, wikis, or policies (scoped per team or product with attribute filters), run research and Q&A across a directory of PDFs, notebooks, or reports, or power entity-scoped retrieval over customer records, product catalogs, and case timelines where every answer must stay within a single record.
 
 ## Installation
 
@@ -20,11 +24,13 @@ pip install git+https://github.com/posit-dev/raghilda.git
 
 raghilda handles the complete RAG pipeline:
 
-1. **Document Processing** — Convert documents to Markdown using MarkItDown
-2. **Text Chunking** — Split text at semantic boundaries (headings, paragraphs, sentences)
-3. **Embedding** — Generate vector representations via OpenAI or other providers
-4. **Storage** — Store chunks and embeddings in DuckDB, ChromaDB, or OpenAI Vector Stores
-5. **Retrieval** — Find relevant chunks using similarity search or BM25
+1. document Processing: convert documents to Markdown using MarkItDown
+2. text chunking: split text at semantic boundaries (headings, paragraphs, sentences)
+3. embedding: generate vector representations via OpenAI or other providers
+4. storage: store chunks and embeddings in DuckDB, ChromaDB, or OpenAI Vector Stores
+5. retrieval: find relevant chunks using similarity search or BM25
+
+Each step is an ordinary, inspectable Python object with sensible defaults, so you can run the whole pipeline as-is and customize any stage when you need to.
 
 ## Usage
 
@@ -45,6 +51,7 @@ store = DuckDBStore.create(
 links = find_links("https://posit-dev.github.io/chatlas/")
 chunker = MarkdownChunker()
 
+# Read, chunk, and store each page
 for link in links:
     document = read_as_markdown(link)
     chunked_document = chunker.chunk(document)
@@ -59,9 +66,28 @@ for chunk in chunks:
     print(chunk.text)
 ```
 
+## Requirements
+
+- **Python 3.11–3.13**
+- An embedding provider (such as OpenAI) is optional: semantic search needs one, but keyword search works with no API key.
+
 ## Links
 
 - [Documentation](https://posit-dev.github.io/raghilda/)
-- [Source Code](https://github.com/posit-dev/raghilda)
 - [PyPI](https://pypi.org/project/raghilda/)
-- [Report Issues](https://github.com/posit-dev/raghilda/issues)
+- [Report an issue](https://github.com/posit-dev/raghilda/issues)
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING](CONTRIBUTING.md) for setup and development guidelines.
+
+## License
+
+Released under the MIT License.
+
+---
+
+<p align="center">
+Developed by <strong>Daniel&nbsp;Falbel</strong> and <strong>Tomasz&nbsp;Kalinowski</strong>.<br>
+Supported by <a href="https://posit.co"><strong>Posit&nbsp;Software,&nbsp;PBC</strong></a>.
+</p>

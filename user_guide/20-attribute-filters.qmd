@@ -1,6 +1,6 @@
 ---
 title: "Attribute Filters"
-guide-section: "Getting Started"
+guide-section: "Using Your Store"
 ---
 
 RAG depends on retrieving relevant context, but real stores are usually broad

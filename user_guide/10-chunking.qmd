@@ -1,6 +1,6 @@
 ---
 title: "Chunking"
-guide-section: "Getting Started"
+guide-section: "Building a Store"
 ---
 
 Chunking is the process of splitting documents into smaller pieces for embedding and retrieval. Good chunking improves retrieval quality by ensuring each chunk contains a coherent, self-contained piece of information.

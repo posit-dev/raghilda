@@ -1,6 +1,6 @@
 ---
-title: "Getting Started"
-guide-section: "ChromaDB Store"
+title: "ChromaDB Store"
+guide-section: "Storage Backends"
 ---
 
 ChromaDB is an open-source vector database designed for AI applications. raghilda's
@@ -174,7 +174,7 @@ print(f"Documents in store: {store.size()}")
 ::: {.callout-note}
 When using ChromaDB's built-in embedding functions or raghilda's `EmbeddingOpenAI`/`EmbeddingCohere`,
 the embedding function is automatically restored from the stored configuration.
-See [Embedding Functions](51-chromadb-embedding-functions.qmd) for details.
+See [Embedding Functions](chromadb-embedding-functions.qmd) for details.
 :::
 
 ## Using a Remote ChromaDB Server
@@ -237,5 +237,5 @@ for i, chunk in enumerate(results, 1):
 
 ## Next Steps
 
-- Learn about [Embedding Functions](51-chromadb-embedding-functions.qmd) for advanced embedding configuration
+- Learn about [Embedding Functions](chromadb-embedding-functions.qmd) for advanced embedding configuration
 - Explore the [API Reference](/reference/store.ChromaDBStore.qmd) for all available methods
