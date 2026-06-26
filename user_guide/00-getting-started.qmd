@@ -272,4 +272,4 @@ for chunk in chunks:
 - Learn schema-based retrieval scoping with [Attribute Filters](03-attribute-filters.qmd)
 - Explore [ChromaDB Store](50-chromadb-store.qmd) for an alternative storage backend
 - See the [API Reference](/reference/index.qmd) for detailed documentation
-- Check out the [examples](https://github.com/dfalbel/py-ragnar/tree/main/examples) for more use cases
+- Check out the [examples](https://github.com/posit-dev/raghilda/tree/main/examples) for more use cases
