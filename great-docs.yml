@@ -57,6 +57,12 @@ funding:
 repo: https://github.com/posit-dev/raghilda
 github_style: widget  # "widget" shows star count, "icon" shows just the icon
 
+# Site URL
+# --------
+# Canonical address of the deployed documentation site. Used for the Skills page
+# install commands, .well-known/ discovery, and sitemaps.
+site_url: https://posit-dev.github.io/raghilda/
+
 # API Reference Structure
 # -----------------------
 # Customize the sections below to organize your API documentation.
