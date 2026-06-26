@@ -71,9 +71,7 @@ raghilda is deliberately narrower. It focuses on doing the retrieval pipeline
 really well and staying out of your way for everything else (including the
 conversation itself, which you wire up with whatever chat library you prefer). If
 you want a retrieval layer you can fully understand and a knowledge base that lives
-in a normal database, raghilda is a good fit. If you need a large catalog of
-pre-built agent integrations in one package, a broader framework might suit you
-better.
+in a normal database, raghilda is a good fit.
 
 ## What you can build
 
