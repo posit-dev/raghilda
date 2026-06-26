@@ -1,11 +1,11 @@
 ---
 title: "Using RAG with chatlas"
-guide-section: "Getting Started"
+guide-section: "Using Your Store"
 ---
 
 While raghilda builds the knowledge store, [chatlas](https://posit-dev.github.io/chatlas/) can handle the conversation part. The integration point between the two is a Python function that you register as a tool with chatlas. When the LLM decides it needs information from your store, it calls that function, receives the relevant chunks, and incorporates them into its answer.
 
-This page will walk you through the pattern step by step. It assumes you already have a populated store (look over [Core Concepts](00-getting-started.qmd) or [Crawling and Ingestion](04-crawling-and-ingestion.qmd) if you need to build one first).
+This page will walk you through the pattern step by step. It assumes you already have a populated store (look over [Core Concepts](getting-started.qmd) or [Crawling and Ingestion](crawling-and-ingestion.qmd) if you need to build one first).
 
 ## Connecting to a store
 
@@ -147,7 +147,7 @@ def search_guides(query: str) -> str:
     return json.dumps([{"text": chunk.text} for chunk in chunks])
 ```
 
-Here only chunks whose `section` attribute equals `'guide'` are considered. This keeps retrieval focused and avoids pulling in, for example, API reference text when the user asks a conceptual question. See [Attribute Filters](03-attribute-filters.qmd) for more on defining and using attribute schemas.
+Here only chunks whose `section` attribute equals `'guide'` are considered. This keeps retrieval focused and avoids pulling in, for example, API reference text when the user asks a conceptual question. See [Attribute Filters](attribute-filters.qmd) for more on defining and using attribute schemas.
 
 You can also register several tool functions on the same chat, each backed by a different filter or even a different store. The model decides which tool to invoke based on the docstrings, so give each function a clear description of what it covers:
 
@@ -307,7 +307,7 @@ This script separates store construction from chat setup so the expensive indexi
 
 ## Next steps
 
-- The [Core Concepts](00-getting-started.qmd) guide covers building a store from scratch.
-- The [Chunking](02-chunking.qmd) guide explains how to tune chunk size and overlap for better retrieval quality.
-- The [Attribute Filters](03-attribute-filters.qmd) guide shows how to scope retrieval by metadata.
+- The [Core Concepts](getting-started.qmd) guide covers building a store from scratch.
+- The [Chunking](chunking.qmd) guide explains how to tune chunk size and overlap for better retrieval quality.
+- The [Attribute Filters](attribute-filters.qmd) guide shows how to scope retrieval by metadata.
 - The [chatlas documentation](https://posit-dev.github.io/chatlas/get-started/tools.html) has more detail on tool calling, streaming, and structured output.

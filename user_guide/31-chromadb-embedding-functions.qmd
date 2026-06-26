@@ -1,6 +1,6 @@
 ---
-title: "Embedding Functions"
-guide-section: "ChromaDB Store"
+title: "ChromaDB Embedding Functions"
+guide-section: "Storage Backends"
 ---
 
 Embedding functions convert text into numerical vectors that capture semantic meaning.

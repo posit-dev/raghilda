@@ -1,6 +1,6 @@
 ---
 title: "Crawling and Ingestion"
-guide-section: "Getting Started"
+guide-section: "Building a Store"
 ---
 
 raghilda's core workflow is intentionally sequential: find a source, read it,

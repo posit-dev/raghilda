@@ -1,6 +1,6 @@
 ---
 title: "Cloudflare Browser Rendering Crawler"
-guide-section: "Store Backends"
+guide-section: "Building a Store"
 ---
 
 The `CloudflareCrawler` delegates all page fetching and rendering to [Cloudflare's Browser Rendering API](https://developers.cloudflare.com/browser-rendering/). This provides a lot of benefits if you have an account with Cloudflare:
@@ -9,7 +9,7 @@ The `CloudflareCrawler` delegates all page fetching and rendering to [Cloudflare
 - those websites that load their content entirely through JavaScript (which make text retrieval generally problematic) are handled by Cloudflare
 - you don't have to run a headless browser locally, you simply receive ready-to-chunk text from the paid service
 
-This guide covers how to set up and use `CloudflareCrawler` to build a store. It assumes some familiarity with the general crawling workflow described in [Crawling and Ingestion](04-crawling-and-ingestion.qmd).
+This guide covers how to set up and use `CloudflareCrawler` to build a store. It assumes some familiarity with the general crawling workflow described in [Crawling and Ingestion](crawling-and-ingestion.qmd).
 
 ## Prerequisites
 

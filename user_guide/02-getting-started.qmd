@@ -1,6 +1,6 @@
 ---
 title: "Core Concepts"
-guide-section: "Getting Started"
+guide-section: "Get Started"
 ---
 
 Large language models (LLMs) sometimes generate confident but incorrect information—a phenomenon known as hallucination. This happens because LLMs work by predicting the most likely next words based on patterns learned during training, without any inherent concept of truth or factual accuracy.
@@ -19,6 +19,20 @@ A RAG system has two main phases:
 2. **Retrieval**: Finding relevant content to augment LLM prompts
 
 Let's walk through building a RAG system using the [Quarto documentation](https://quarto.org/docs/guide/) as our knowledge base.
+
+::: {.callout-note}
+## Before you start
+
+The examples on this page use OpenAI embeddings, which read your API key from the
+`OPENAI_API_KEY` environment variable:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+Want to try raghilda without an API key first? The [Quickstart](quickstart.qmd)
+builds a working store using keyword search and no external services.
+:::
 
 ## Creating a Store
 
@@ -142,7 +156,7 @@ Common reasons to customize `prepare`:
 - **Adjust chunk size or overlap** — Smaller chunks for more precise retrieval, larger for more context.
 - **Set hard heading boundaries** — Use `segment_by_heading_levels=[1, 2]` to prevent chunks from crossing major sections.
 - **Control HTML extraction** — Pass `html_extract_selectors` or `html_zap_selectors` to `read_as_markdown()`.
-- **Use a different chunker** — Any chunker that returns a chunked document will work. See the [Chunking](02-chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
+- **Use a different chunker** — Any chunker that returns a chunked document will work. See the [Chunking](chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
 
 ## Building Indexes
 
@@ -268,8 +282,8 @@ for chunk in chunks:
 
 ## Next Steps
 
-- Learn about chunk sizing, overlap, and alternative chunkers in the [Chunking](02-chunking.qmd) guide
-- Learn schema-based retrieval scoping with [Attribute Filters](03-attribute-filters.qmd)
-- Explore [ChromaDB Store](50-chromadb-store.qmd) for an alternative storage backend
+- Learn about chunk sizing, overlap, and alternative chunkers in the [Chunking](chunking.qmd) guide
+- Learn schema-based retrieval scoping with [Attribute Filters](attribute-filters.qmd)
+- Explore [ChromaDB Store](chromadb-store.qmd) for an alternative storage backend
 - See the [API Reference](/reference/index.qmd) for detailed documentation
-- Check out the [examples](https://github.com/dfalbel/py-ragnar/tree/main/examples) for more use cases
+- Check out the [examples](https://github.com/posit-dev/raghilda/tree/main/examples) for more use cases
