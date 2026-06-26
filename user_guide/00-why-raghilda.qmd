@@ -1,0 +1,120 @@
+---
+title: "Why raghilda?"
+guide-section: "Get Started"
+---
+
+raghilda is a Python library for building Retrieval-Augmented Generation (RAG)
+systems: pipelines that let a large language model answer questions using *your*
+content instead of relying only on what it learned during training.
+
+If you are deciding whether raghilda is the right tool, this page explains the
+problem it solves, what makes it different from other RAG frameworks, and the
+kinds of applications it is built for. If you would rather just see it run, head
+on over to the [Quickstart](quickstart.qmd).
+
+## The problem
+
+Large language models are fluent but ungrounded. Ask one about your internal
+documentation, a recent release, or a private knowledge base, and it will often
+produce a confident answer that is subtly (or completely) wrong.
+
+RAG addresses this by retrieving relevant passages from a trusted source and placing
+them in the model's prompt, so the model summarizes vetted material instead of
+recalling from memory. Building that retrieval layer well means solving a chain
+of smaller problems:
+
+1. converting source documents to clean text
+2. splitting into well-sized chunks
+3. embedding those chunks
+4. storing them in a database that supports similarity search
+5. querying that database effectively
+
+raghilda handles every step of that process.
+
+## What makes raghilda different
+
+There are several capable RAG frameworks in the Python ecosystem. raghilda's
+design leans on three principles:
+
+**Complete, with sensible defaults.**
+
+The full pipeline (find, read, chunk,
+embed, store, retrieve) is covered completely. You can build a working store fairly
+easily, and the defaults (semantic boundary chunking, hybrid retrieval, automatic
+deduplication) are tuned to produce good results before you tune anything yourself.
+
+**Transparent, not a black box.**
+
+Every stage is an ordinary Python object you can inspect, print, and replace. The
+`read_as_markdown()` function returns a document you can read. With `chunker.chunk()`,
+you get chunks that you can examine. The `store.retrieve()` method returns
+scored results with their source and metrics attached. There is no hidden
+orchestration layer deciding things for you. When retrieval returns something
+surprising, you can see exactly why.
+
+**Built on storage you already trust.**
+
+raghilda can store chunks and embeddings in established databases like
+[DuckDB](https://duckdb.org) (by default), ChromaDB, PostgreSQL (with pgvector),
+or OpenAI Vector Stores. Your knowledge base is a real database file or server you
+can back up, inspect with standard tools, and move between machines. It's not a
+custom format locked inside the framework.
+
+## How it compares
+
+Frameworks like LangChain, LlamaIndex, and Haystack are broad orchestration
+toolkits that cover agents, chains, prompt management, and many integrations in
+addition to retrieval. They are indeed very powerful, but that breadth comes with
+abstraction layers and a larger surface area to learn.
+
+raghilda is deliberately narrower. It focuses on doing the retrieval pipeline
+really well and staying out of your way for everything else (including the
+conversation itself, which you wire up with whatever chat library you prefer). If
+you want a retrieval layer you can fully understand and a knowledge base that lives
+in a normal database, raghilda is a good fit. If you need a large catalog of
+pre-built agent integrations in one package, a broader framework might suit you
+better.
+
+## What you can build
+
+The same core workflow supports a range of applications:
+
+**Chat over your documentation.**
+
+Index a docs site or a folder of Markdown and give users an assistant that answers
+from it, with sources cited. This is the pattern in
+[Using RAG with chatlas](chatlas-integration.qmd).
+
+**Internal knowledge assistants.**
+
+Build a support tool over policy documents or wikis, and scope each query to the
+right subset using [attribute filters](attribute-filters.qmd) (filtering by team or
+by product).
+
+**Research and Q&A over a document collection.**
+
+Use raghilda with a directory of PDFs, notebooks, or reports and ask questions
+across all of them.
+
+**Entity-scoped retrieval.**
+
+Customer records, product catalogs, or case timelines where every answer must stay
+within one record (this can be handled cleanly with attribute schemas and filters).
+
+## When raghilda is a good fit
+
+raghilda is a strong choice when:
+
+- you want a complete RAG pipeline that you can read end to end
+- you value a knowledge base that lives in a familiar database
+- you would rather compose your own chat layer than adopt a full orchestration
+framework
+
+It is less suited to projects that primarily need a large library of off-the-shelf
+agent and tool integrations bundled together.
+
+## Next steps
+
+- try the [Quickstart](quickstart.qmd): a runnable example with no API key.
+- read [Core Concepts](getting-started.qmd) to build a real store with embeddings.
+- browse the [API Reference](/reference/index.qmd) for the full surface.
