@@ -68,6 +68,20 @@ for chunk in chunks:
 ## Links
 
 - [Documentation](https://posit-dev.github.io/raghilda/)
-- [Source Code](https://github.com/posit-dev/raghilda)
 - [PyPI](https://pypi.org/project/raghilda/)
-- [Report Issues](https://github.com/posit-dev/raghilda/issues)
+- [Report an issue](https://github.com/posit-dev/raghilda/issues)
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING](CONTRIBUTING.md) for setup and development guidelines.
+
+## License
+
+Released under the MIT License.
+
+---
+
+<p align="center">
+Developed by <strong>Daniel&nbsp;Falbel</strong> and <strong>Tomasz&nbsp;Kalinowski</strong>.<br>
+Supported by <a href="https://posit.co"><strong>Posit&nbsp;Software,&nbsp;PBC</strong></a>.
+</p>
