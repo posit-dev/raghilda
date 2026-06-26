@@ -2,7 +2,11 @@
 
 RAG made simple.
 
-raghilda is a Python package for implementing Retrieval-Augmented Generation (RAG) workflows. It provides a complete solution with sensible defaults while remaining transparent—not a black box.
+raghilda is a Python package for implementing Retrieval-Augmented Generation (RAG) workflows. It provides a complete solution with sensible defaults while remaining transparent (not a black box).
+
+## What you can build
+
+raghilda puts a question-answering layer over content you already have. Use it to chat over your documentation with cited sources, build internal knowledge assistants over runbooks, wikis, or policies (scoped per team or product with attribute filters), run research and Q&A across a directory of PDFs, notebooks, or reports, or power entity-scoped retrieval over customer records, product catalogs, and case timelines where every answer must stay within a single record.
 
 ## Installation
 
