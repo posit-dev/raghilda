@@ -1,0 +1,162 @@
+---
+title: "Quickstart"
+guide-section: "Get Started"
+---
+
+This page builds a tiny, working RAG store and searches it. No API key is
+required and no network access is needed either. It runs fairly quickly and is
+probably the fastest way for confirming whether raghilda does what you expect it
+to do (before setting up an embedding provider).
+
+The neat thing here is that raghilda's `DuckDBStore` can run fully in memory
+(with the `embed=None` option) and it can search with BM25 keyword retrieval,
+which needs no embedding model. Once you have a good working understanding of the
+workflow here, the [Core Concepts](getting-started.qmd) page will show you how to
+add embeddings for semantic search.
+
+## Installation
+
+raghilda is a single package on PyPI. The base install includes everything this
+quickstart needs (the [DuckDB](https://duckdb.org) storage backend and the BM25
+keyword search engine) so there are no separate services or databases to set up:
+
+```bash
+pip install raghilda
+```
+
+Other storage backends and embedding providers are available as optional extras
+(for example, `pip install "raghilda[chromadb]"`), but you won't need any of them
+in this guide page.
+
+## Build a store and search it
+
+We'll create a miniature knowledge base (three one-paragraph documents about
+planets) and then ask it a question. Everything runs in memory, so nothing is
+written to disk and no network service is contacted. Read through the code first
+to get a feel for the order of execution. Each piece of this code example will
+be explained below it.
+
+```{python}
+from raghilda.store import DuckDBStore
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+# Create an in-memory store with no embedding provider (keyword search only)
+store = DuckDBStore.create(location=":memory:", embed=None)
+
+# Create a chunker with default settings
+chunker = MarkdownChunker()
+
+# Define three short source documents (normally you'd load these from files or URLs)
+documents = [
+    MarkdownDocument(
+        origin="mars.md",
+        content="Mars is the fourth planet from the Sun. It is known as the "
+        "red planet because of iron oxide on its surface, and it has the "
+        "tallest volcano in the solar system, Olympus Mons.",
+    ),
+    MarkdownDocument(
+        origin="saturn.md",
+        content="Saturn is the sixth planet from the Sun and is famous for its "
+        "spectacular ring system, the largest and brightest of any planet, made "
+        "mostly of ice and rock.",
+    ),
+    MarkdownDocument(
+        origin="jupiter.md",
+        content="Jupiter is the largest planet in the solar system. It is a gas "
+        "giant with a Great Red Spot, a giant storm that has raged for centuries.",
+    ),
+]
+
+# Chunk each document and write the resulting chunks into the store
+for doc in documents:
+    store.upsert(chunker.chunk(doc))
+
+# Build the BM25 keyword index over the stored chunks
+store.build_index("bm25")
+
+# Search for the chunks most relevant to the query (at most two)
+results = store.retrieve("Which planet has the largest rings?", top_k=2, deoverlap=False)
+
+# Print each result with its source label
+for chunk in results:
+    print(f"{chunk.origin}: {chunk.text}")
+```
+
+The query never mentions "Saturn" yet the Saturn passage comes back first. That
+is not magic and the rest of this page explains exactly why.
+
+## The pieces
+
+Each object in the example maps to one step of the RAG workflow:
+
+`MarkdownDocument` represents a unit of source content plus a label for where it came
+from (its `origin`). Here we typed the text inline, but normally you would load
+documents from files or URLs with `read_as_markdown()`. The `origin` travels with
+the content all the way to your search results, so you always know where a passage
+came from.
+
+Let's now look at `MarkdownChunker` and `chunker.chunk(doc)`. A chunker splits a
+document into smaller passages called *chunks*. Our planet blurbs are short, so each
+becomes a single chunk. Now a real page would be split into several, and that's so a
+search can return one focused passage instead of a whole document. The
+[Chunking](chunking.qmd) guide covers how the splitting decisions are made.
+
+The `store.upsert(...)` statement writes chunks into the store. An *Upsert* is
+short for *update-or-insert*, so re-running it with the same document updates the
+existing entry instead of creating a duplicate (this makes re-indexing safe to
+repeat).
+
+Using `store.build_index("bm25")` builds the search index over everything stored.
+You build it once after loading your documents. Queries afterward are fast.
+
+The use of `store.retrieve("Which planet has the largest rings?", top_k=2, deoverlap=False)`
+runs the search. The `top_k=2` option asks for at most two results, and
+`deoverlap=False` keeps chunks separate (merging overlapping chunks only matters
+once documents are long enough to span several chunks). It returns a list of
+`RetrievedChunk` objects (ordered best match first), each carrying its `text`,
+its `origin`, and relevance `metrics` you can inspect.
+
+## How the search actually works
+
+The search here is BM25, a long-established keyword ranking algorithm from the
+same family that powers traditional search engines. Here's what it is essentially
+doing:
+
+- It compares the **words** in your query against the words in each stored chunk.
+- A chunk scores higher when it shares more of the query's words and when those
+shared words are **rare** across the collection (rare words are more distinctive
+than common ones). The score is also adjusted so a chunk is not rewarded simply
+for being long.
+- The chunks are returned in score order, highest first.
+
+That is why `"Which planet has the largest rings?"` returns the Saturn passage
+first: the query's meaningful words ("planet", "largest", and "ring") all appear
+in it. No understanding of astronomy (or even of your question) is involved. BM25
+is just matching and counting words.
+
+::: {.callout-note}
+## For the observant reader
+
+You may have spotted that the query asks about "rings" (plural) while the Saturn
+text says "ring system" (singular). The match still works because BM25 does not
+compare raw words. Before indexing (and again when you search) it normalizes the
+text: it lowercases everything, drops common *stop words* (such as *which*, *has*,
+and *the*), and **stems** each remaining word down to a root form. DuckDB's
+full-text search uses the Porter stemmer by default, which reduces both *ring* and
+*rings* to the stem *ring*, so the singular and the plural are treated as the same
+term.
+:::
+
+Knowing that also makes BM25's main limitation clear. If you were to ask instead
+`"Which planet has the most prominent halo?"`, the word halo never appears in any
+document, so the Saturn passage ranks no higher than the others (even though halo and
+rings mean nearly the same thing here). Bridging that gap, matching on meaning rather
+than exact words, is what embeddings and semantic search add, and it is the subject
+of [Core Concepts](getting-started.qmd).
+
+## Next steps
+
+- [Core Concepts](getting-started.qmd): add an embedding provider for semantic
+(meaning-based) search and hybrid retrieval, and index a real documentation site.
+- [Chunking](chunking.qmd): tune chunk size and overlap for retrieval quality.
