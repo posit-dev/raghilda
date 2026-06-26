@@ -24,11 +24,13 @@ pip install git+https://github.com/posit-dev/raghilda.git
 
 raghilda handles the complete RAG pipeline:
 
-1. **Document Processing** — Convert documents to Markdown using MarkItDown
-2. **Text Chunking** — Split text at semantic boundaries (headings, paragraphs, sentences)
-3. **Embedding** — Generate vector representations via OpenAI or other providers
-4. **Storage** — Store chunks and embeddings in DuckDB, ChromaDB, or OpenAI Vector Stores
-5. **Retrieval** — Find relevant chunks using similarity search or BM25
+1. document Processing: convert documents to Markdown using MarkItDown
+2. text chunking: split text at semantic boundaries (headings, paragraphs, sentences)
+3. embedding: generate vector representations via OpenAI or other providers
+4. storage: store chunks and embeddings in DuckDB, ChromaDB, or OpenAI Vector Stores
+5. retrieval: find relevant chunks using similarity search or BM25
+
+Each step is an ordinary, inspectable Python object with sensible defaults, so you can run the whole pipeline as-is and customize any stage when you need to.
 
 ## Usage
 
