@@ -102,10 +102,31 @@ class Chunk:
 class MarkdownChunk(Chunk):
     """A chunk extracted from a Markdown document.
 
-    MarkdownChunk extends Chunk for use with Markdown content.
-    It typically preserves heading context from the source document,
-    allowing retrieval results to show where in the document hierarchy
-    each chunk originated.
+    `MarkdownChunker` produces `MarkdownChunk`s. It behaves exactly like a
+    [Chunk](chunk.Chunk.qmd); the one thing to note is that its `context` field
+    holds the Markdown heading hierarchy in effect at the chunk's position (the
+    `#`/`##` headings the passage falls under). That context lets retrieval
+    results show where in a document a passage came from, which helps both with
+    ranking and with citing sources back to the user.
+
+    Parameters
+    ----------
+    text
+        The text content of the chunk.
+    start_index
+        Character position where this chunk begins in the source document.
+    end_index
+        Character position where this chunk ends in the source document.
+    char_count
+        Number of characters in this chunk.
+    context
+        The Markdown heading hierarchy in effect at this chunk's position, or
+        `None` if there is none.
+    origin
+        Origin of the parent document this chunk belongs to.
+    attributes
+        Optional user-defined attributes associated with the chunk, used for
+        retrieval filtering and downstream prompt construction.
     """
 
     pass
