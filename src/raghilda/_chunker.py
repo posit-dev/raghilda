@@ -26,7 +26,7 @@ class BaseChunker:
     """
 
     def chunk(self, document: Document) -> ChunkedDocument:
-        """Chunk a document into a :py:class:`~raghilda.document.ChunkedDocument`.
+        """Split a document into a `ChunkedDocument`.
 
         Parameters
         ----------
@@ -36,12 +36,15 @@ class BaseChunker:
         Returns
         -------
         ChunkedDocument
-            The document with chunks attached.
+            The same document with its `chunks` attached.
         """
         raise NotImplementedError
 
     def chunk_text(self, text: str) -> Sequence[Chunk]:
-        """Chunk raw text into a sequence of :py:class:`~raghilda.chunk.Chunk` objects.
+        """Split raw text into a sequence of `Chunk` objects.
+
+        Use this when you have a bare string rather than a `Document`. Most
+        callers use `chunk()` instead, which preserves document metadata.
 
         Parameters
         ----------
@@ -51,7 +54,7 @@ class BaseChunker:
         Returns
         -------
         Sequence[Chunk]
-            The resulting chunks with positional information.
+            The resulting chunks, each with positional information.
         """
         raise NotImplementedError
 
