@@ -18,8 +18,11 @@ __all__ = [
 class Document:
     """A document containing text content to be chunked and indexed.
 
-    Documents are the primary input for RAG stores. Each document has
-    text content and an optional origin identifier.
+    Documents are the primary input for RAG stores. Each document holds the full
+    text to be indexed plus an optional `origin` identifying where it came from.
+    A document is chunked into a `ChunkedDocument` before being embedded and
+    written to a store. `Document` is the base type; `MarkdownDocument` is the
+    common concrete variant produced by `read_as_markdown()`.
 
     Attributes
     ----------
