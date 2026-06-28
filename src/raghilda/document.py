@@ -253,6 +253,20 @@ class ChunkedMarkdownDocument(MarkdownDocument, ChunkedDocument):
     `MarkdownChunker.chunk()` returns, and what you pass to a store's `upsert()`.
     Like `ChunkedDocument`, it can be iterated, sized with `len()`, and indexed to
     reach its chunks.
+
+    Parameters
+    ----------
+    content
+        The Markdown text of the document.
+    origin
+        Where the content came from (a URL or file path), used for citation and
+        provenance. Stores require a populated origin at upsert time.
+    attributes
+        Optional user-defined attributes applied at insertion time. Chunks can
+        inherit them, and they are returned during retrieval for filtering and
+        downstream prompt/context use.
+    chunks
+        The chunks produced from this document's content, in document order.
     """
 
     @classmethod
