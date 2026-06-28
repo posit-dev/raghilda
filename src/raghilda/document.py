@@ -103,8 +103,17 @@ class Document:
 class ChunkedDocument(Document):
     """A document with an attached sequence of chunks.
 
-    This is the explicit chunked variant of `Document`, used by stores and
-    chunkers that operate on pre-segmented content.
+    This is the chunked variant of `Document`, the result of running a chunker
+    over a document. It keeps all of the original `Document` fields (`content`,
+    `origin`, `attributes`) and adds the `chunks` produced from that content.
+    Stores accept a `ChunkedDocument` directly in `upsert()`. It is also a
+    sequence: you can iterate over it, take its `len()`, and index into it to
+    reach the underlying chunks.
+
+    Parameters
+    ----------
+    chunks
+        The chunks produced from this document's content, in document order.
     """
 
     chunks: list[Chunk]
