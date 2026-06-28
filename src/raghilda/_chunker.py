@@ -87,6 +87,11 @@ class MarkdownChunker(BaseChunker):
 
     Examples
     --------
+    The example below chunks a short Markdown document with a deliberately small
+    `chunk_size` so the splitting is easy to see. With
+    `segment_by_heading_levels=[1, 2]`, no chunk crosses an `h1` or `h2`, so each
+    section is chunked on its own:
+
     ```{python}
     from raghilda.chunker import MarkdownChunker
 
@@ -110,6 +115,11 @@ class MarkdownChunker(BaseChunker):
     for chunk in chunks:
         print(f"[{chunk.start_index}:{chunk.end_index}] {chunk.text[:40]}...")
     ```
+
+    Each printed line shows a chunk's character span (`start_index:end_index`)
+    and the start of its text. To chunk a whole document instead of a bare
+    string (preserving its `origin` and metadata), use `chunk()`, which returns
+    a `ChunkedDocument`.
 
     Notes
     -----
