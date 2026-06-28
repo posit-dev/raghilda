@@ -8,17 +8,21 @@ from .document import ChunkedDocument, Document
 
 
 class BaseChunker:
-    """Base class for chunkers.
+    """Abstract base class for chunkers.
 
-    A chunker splits a :py:class:`raghilda.document.Document` into a
-    :py:class:`raghilda.document.ChunkedDocument` containing
-    smaller text segments suitable for embedding and retrieval.
+    Chunking is the step that splits a document into smaller, retrievable
+    passages. Good chunks are large enough to stand on their own but small enough
+    that a search can return just the relevant part of a document rather than the
+    whole thing. A chunker turns a `Document` into a `ChunkedDocument` whose
+    `chunks` are ready to embed, index, and retrieve.
 
-    Subclasses must implement :py:meth:`chunk` and :py:meth:`chunk_text`
-    to provide a concrete chunking strategy:
-
-    - :py:class:`raghilda.chunker.MarkdownChunker`: splits Markdown documents
-      at semantic boundaries (headings, paragraphs, sentences).
+    `BaseChunker` only defines the interface; it is not used directly. A concrete
+    chunker implements a strategy by overriding `chunk()` and `chunk_text()`.
+    raghilda ships [`MarkdownChunker`](chunker.MarkdownChunker.qmd), which splits
+    Markdown at semantic boundaries (headings, paragraphs, sentences). Any object
+    implementing this interface (including third-party chunkers such as
+    [chonkie](https://github.com/chonkie-inc/chonkie)'s) can be used wherever
+    raghilda expects a chunker.
     """
 
     def chunk(self, document: Document) -> ChunkedDocument:
