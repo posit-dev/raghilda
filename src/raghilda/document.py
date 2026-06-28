@@ -167,12 +167,30 @@ class ChunkedDocument(Document):
 class MarkdownDocument(Document):
     """A Markdown document with source tracking.
 
-    MarkdownDocument extends Document with markdown-specific semantics for
-    content that comes from a source origin (e.g., URL or file path). This is useful
-    for citation and provenance tracking in RAG applications.
+    `MarkdownDocument` is the everyday document type in raghilda: `read_as_markdown()`
+    returns one, and the crawlers yield them. It has the same fields as
+    [Document](document.Document.qmd) (`content`, `origin`, `attributes`), with the
+    understanding that `content` is Markdown and `origin` records where that
+    content came from (a URL or file path) for citation and provenance. Chunking a
+    `MarkdownDocument` yields a `ChunkedMarkdownDocument`.
+
+    Parameters
+    ----------
+    content
+        The Markdown text of the document.
+    origin
+        Where the content came from (a URL or file path), used for citation and
+        provenance. Stores require a populated origin at upsert time.
+    attributes
+        Optional user-defined attributes applied at insertion time. Chunks can
+        inherit them, and they are returned during retrieval for filtering and
+        downstream prompt/context use.
 
     Examples
     --------
+    You usually get one from `read_as_markdown()`, but you can also build one
+    directly from text you already have:
+
     ```{python}
     from raghilda.document import MarkdownDocument
 
