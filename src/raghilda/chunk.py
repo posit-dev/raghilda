@@ -11,9 +11,11 @@ class Chunk:
 
     Chunks are the fundamental unit for retrieval in RAG applications.
     Each chunk contains the text content along with positional information
-    that allows mapping back to the original document.
+    that allows mapping back to the original document. A chunker produces
+    `Chunk` objects from a document, the store embeds and indexes them, and
+    retrieval returns them (as `RetrievedChunk`s) ranked against a query.
 
-    Attributes
+    Parameters
     ----------
     text
         The actual text content of the chunk.
@@ -60,18 +62,33 @@ class Chunk:
 
     @classmethod
     def from_any(cls, chunk: Union[ChunkLike, IntoChunk]) -> "Chunk":
-        """Convert any chunk-like or IntoChunk object to a raghilda Chunk.
+        """Coerce a chunk from another library into a raghilda `Chunk`.
+
+        This is the interoperability entry point for chunks produced outside
+        raghilda, for example by [chonkie](https://github.com/chonkie-inc/chonkie)
+        or your own chunker. It accepts either:
+
+        - an object satisfying the `ChunkLike` protocol (it has `text`,
+          `start_index`, and `end_index`; `char_count`, `context`, `origin`, and
+          `attributes` are read when present), or
+        - an `IntoChunk` object that exposes a `to_chunk()` method returning a
+          `Chunk`.
 
         Parameters
         ----------
         chunk
-            An object that implements the ChunkLike protocol or has a
-            `to_chunk()` method.
+            The chunk-like or `IntoChunk` object to convert.
 
         Returns
         -------
         Chunk
-            A raghilda Chunk instance.
+            A raghilda `Chunk` with the fields copied from the source object.
+
+        Raises
+        ------
+        TypeError
+            If `chunk` is neither `ChunkLike` nor `IntoChunk`, or if a
+            `to_chunk()` method does not return a `Chunk`.
         """
         if isinstance(chunk, IntoChunk):
             if not callable(chunk.to_chunk):
@@ -139,7 +156,7 @@ class Metric:
     Metrics are used to store retrieval scores and other measurements
     that describe how well a chunk matches a query.
 
-    Attributes
+    Parameters
     ----------
     name
         The name of the metric (e.g., "similarity", "bm25_score").
