@@ -101,45 +101,50 @@ class CrawlScope:
     and yielded. The same scope can be reused across `DirectoryCrawler`,
     `WebCrawler`, and `CloudflareCrawler`, though a few fields are interpreted
     slightly differently per backend.
+
+    Parameters
+    ----------
+    roots
+        Starting files, directories, or URLs. May be a single value or a
+        sequence of values.
+    include_patterns
+        Patterns that an origin must match to be yielded. A `str` is treated as
+        a glob: `*` matches any run of characters except `/`, and `**` matches
+        across `/` (a trailing `/**` also matches the bare parent, so `/docs/**`
+        matches `/docs` too). Pass a compiled `re.Pattern` to match by regular
+        expression instead. Accepts a single pattern or a sequence; when `None`,
+        all origins are allowed.
+    exclude_patterns
+        Patterns that drop an origin from the crawl, taking precedence over
+        `include_patterns`. Uses the same glob-or-`re.Pattern` syntax.
+    depth
+        Number of link or directory levels to follow beyond the roots. `0` means
+        only the roots themselves. When `None`, traversal is effectively
+        unbounded. Must be non-negative.
+    limit
+        Maximum number of origins to yield. When `None`, no limit is applied.
+        Must be non-negative.
+    include_types
+        Type labels to include, such as `"html"`, `"markdown"`, `"pdf"`,
+        `"python"`, or `"text"`. When `None` or empty, all types are allowed.
+    exclude_types
+        Type labels to skip. Takes precedence over `include_types`.
+    include_external_links
+        Allow origins outside the root origin (a different scheme, host, or
+        port). Defaults to `False`.
+    include_subdomains
+        Allow origins on subdomains of the root host. Defaults to `False`.
     """
 
     roots: RootsInput
-    """Starting files, directories, or URLs. May be a single value or a
-    sequence of values."""
-
     include_patterns: PatternsInput = None
-    """Patterns that an origin must match to be yielded. A `str` is treated as
-    a glob: `*` matches any run of characters except `/`, and `**` matches
-    across `/` (a trailing `/**` also matches the bare parent, so `/docs/**`
-    matches `/docs` too). Pass a compiled `re.Pattern` to match by regular
-    expression instead. Accepts a single pattern or a sequence; when `None`,
-    all origins are allowed."""
-
     exclude_patterns: PatternsInput = None
-    """Patterns that drop an origin from the crawl, taking precedence over
-    `include_patterns`. Uses the same glob-or-`re.Pattern` syntax."""
     depth: int | None = None
-    """Number of link or directory levels to follow beyond the roots. `0` means
-    only the roots themselves. When `None`, traversal is effectively unbounded.
-    Must be non-negative."""
-
     limit: int | None = None
-    """Maximum number of origins to yield. When `None`, no limit is applied.
-    Must be non-negative."""
-
     include_types: Sequence[str] | None = None
-    """Type labels to include, such as `"html"`, `"markdown"`, `"pdf"`,
-    `"python"`, or `"text"`. When `None` or empty, all types are allowed."""
-
     exclude_types: Sequence[str] | None = None
-    """Type labels to skip. Takes precedence over `include_types`."""
-
     include_external_links: bool = False
-    """Allow origins outside the root origin (a different scheme, host, or
-    port). Defaults to `False`."""
-
     include_subdomains: bool = False
-    """Allow origins on subdomains of the root host. Defaults to `False`."""
 
     def __post_init__(self) -> None:
         if self.depth is not None:
@@ -157,39 +162,42 @@ class FetchedSource:
     needed to convert it to a `MarkdownDocument`. Custom `convert` callables
     passed to `fetch_markdown()` or `markdown_documents()` receive an instance
     of this class.
+
+    Parameters
+    ----------
+    origin
+        The canonical origin the source was requested from (a `file://` URI for
+        local files, an `http(s)` URL for web sources).
+    body_path
+        Filesystem path to the raw fetched body. For local files this is the
+        file itself; for web and Cloudflare sources it is a cached copy.
+    resolved_origin
+        The final origin after any redirects, when it differs from `origin`.
+    content_type
+        The reported MIME type, such as `"text/html"`, when available.
+    status_code
+        The HTTP status code for web sources, when available.
+    metadata
+        Backend-specific metadata, such as the detected `type_label`, validators
+        (`etag`, `last_modified`), and source hashes.
+    fetched_at
+        When the source body was fetched, when known.
+    revalidated_at
+        When a cached body was last revalidated against the server, when known.
+    markdown_path
+        Filesystem path to already-converted Markdown, when the backend produced
+        or cached it. `None` when conversion has not run.
     """
 
     origin: str
-    """The canonical origin the source was requested from (a `file://` URI for
-    local files, an `http(s)` URL for web sources)."""
-
     body_path: Path
-    """Filesystem path to the raw fetched body. For local files this is the
-    file itself; for web and Cloudflare sources it is a cached copy."""
-
     resolved_origin: str | None = None
-    """The final origin after any redirects, when it differs from `origin`."""
-
     content_type: str | None = None
-    """The reported MIME type, such as `"text/html"`, when available."""
-
     status_code: int | None = None
-    """The HTTP status code for web sources, when available."""
-
     metadata: dict[str, Any] | None = None
-    """Backend-specific metadata, such as the detected `type_label`, validators
-    (`etag`, `last_modified`), and source hashes."""
-
     fetched_at: datetime | None = None
-    """When the source body was fetched, when known."""
-
     revalidated_at: datetime | None = None
-    """When a cached body was last revalidated against the server, when
-    known."""
-
     markdown_path: Path | None = None
-    """Filesystem path to already-converted Markdown, when the backend produced
-    or cached it. `None` when conversion has not run."""
 
 
 @dataclass(frozen=True)
