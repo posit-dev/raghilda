@@ -26,7 +26,13 @@ class ChunkLike(Protocol):
 
 @runtime_checkable
 class IntoChunk(Protocol):
-    """Any object that can be converted into a Chunk via to_chunk()."""
+    """Structural type for objects that convert themselves into a `Chunk`.
+
+    Implement `to_chunk()` returning a raghilda `Chunk` to let raghilda accept
+    your type directly; `Chunk.from_any()` calls it when given an `IntoChunk`.
+    This is the explicit alternative to `ChunkLike`: rather than exposing chunk
+    fields, the object knows how to build a `Chunk` itself.
+    """
 
     def to_chunk(self) -> "Chunk":
         """Convert this object into a `Chunk`."""
@@ -35,7 +41,12 @@ class IntoChunk(Protocol):
 
 @runtime_checkable
 class DocumentLike(Protocol):
-    """Any document-like object."""
+    """Structural type for any unchunked document raghilda can consume.
+
+    A `DocumentLike` exposes a document's `content` (and optionally `origin` and
+    `attributes`). raghilda normalizes such objects with `Document.from_any()`.
+    Use `ChunkedDocumentLike` instead for objects that already carry chunks.
+    """
 
     content: str
 
