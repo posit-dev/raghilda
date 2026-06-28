@@ -9,7 +9,15 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class ChunkLike(Protocol):
-    """Any chunk-like object (chonkie, raghilda, or custom)."""
+    """Structural type for any chunk raghilda can consume.
+
+    A `ChunkLike` is any object that exposes a chunk's essential fields, whether
+    it comes from raghilda, [chonkie](https://github.com/chonkie-inc/chonkie), or
+    your own code. raghilda accepts such objects wherever a chunk is expected and
+    normalizes them with `Chunk.from_any()`. The required fields are `text`,
+    `start_index`, and `end_index`; `char_count`, `context`, `origin`, and
+    `attributes` are read when present.
+    """
 
     text: str
     start_index: int
