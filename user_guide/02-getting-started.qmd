@@ -156,7 +156,7 @@ Common reasons to customize `prepare`:
 - **Adjust chunk size or overlap** — Smaller chunks for more precise retrieval, larger for more context.
 - **Set hard heading boundaries** — Use `segment_by_heading_levels=[1, 2]` to prevent chunks from crossing major sections.
 - **Control HTML extraction** — Pass `html_extract_selectors` or `html_zap_selectors` to `read_as_markdown()`.
-- **Use a different chunker** — Any chunker that returns a chunked document will work. See the [Chunking](chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-ai/chonkie) integration.
+- **Use a different chunker** — Any chunker that returns a chunked document will work. See the [Chunking](chunking.qmd) guide for more options, including [chonkie](https://github.com/chonkie-inc/chonkie) integration.
 
 ## Building Indexes
 
