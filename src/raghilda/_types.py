@@ -53,7 +53,12 @@ class DocumentLike(Protocol):
 
 @runtime_checkable
 class ChunkedDocumentLike(Protocol):
-    """Any chunked document-like object."""
+    """Structural type for a document that already carries its chunks.
+
+    Like `DocumentLike`, but it also exposes a `chunks` sequence of `ChunkLike`
+    objects. `ChunkedDocument.from_any()` normalizes such objects into a raghilda
+    `ChunkedDocument`.
+    """
 
     content: str
     chunks: Sequence[ChunkLike]
@@ -61,7 +66,12 @@ class ChunkedDocumentLike(Protocol):
 
 @runtime_checkable
 class IntoDocument(Protocol):
-    """Any object that can be converted into a Document via to_document()."""
+    """Structural type for objects that convert themselves into a `Document`.
+
+    Implement `to_document()` returning a raghilda `Document` (or
+    `ChunkedDocument`) so raghilda can accept your type directly;
+    `Document.from_any()` and `ChunkedDocument.from_any()` call it.
+    """
 
     def to_document(self) -> "Document":
         """Convert this object into a `Document`."""
@@ -70,7 +80,14 @@ class IntoDocument(Protocol):
 
 @runtime_checkable
 class ChunkerLike(Protocol):
-    """Any chunker-like object (chonkie, raghilda, or custom)."""
+    """Structural type for any chunker raghilda can use.
+
+    A `ChunkerLike` provides `chunk(document)` returning a `ChunkedDocument` and
+    `chunk_text(text)` returning a sequence of `Chunk`s. raghilda's own
+    `MarkdownChunker` satisfies this, as do third-party chunkers such as
+    [chonkie](https://github.com/chonkie-inc/chonkie)'s, so they can be used
+    wherever raghilda expects a chunker.
+    """
 
     def chunk(self, document: "Document") -> "ChunkedDocument":
         """Chunk a document into a `ChunkedDocument`."""
