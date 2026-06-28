@@ -24,7 +24,7 @@ class Document:
     written to a store. `Document` is the base type; `MarkdownDocument` is the
     common concrete variant produced by `read_as_markdown()`.
 
-    Attributes
+    Parameters
     ----------
     content
         The full text content of the document.
