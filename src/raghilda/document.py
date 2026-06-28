@@ -246,7 +246,14 @@ class MarkdownDocument(Document):
 
 @dataclass(kw_only=True)
 class ChunkedMarkdownDocument(MarkdownDocument, ChunkedDocument):
-    """A Markdown document with an attached sequence of chunks."""
+    """A Markdown document with an attached sequence of chunks.
+
+    This is the chunked form of `MarkdownDocument`, combining its Markdown source
+    tracking with the `chunks` of a `ChunkedDocument`. It is what
+    `MarkdownChunker.chunk()` returns, and what you pass to a store's `upsert()`.
+    Like `ChunkedDocument`, it can be iterated, sized with `len()`, and indexed to
+    reach its chunks.
+    """
 
     @classmethod
     def from_any(
