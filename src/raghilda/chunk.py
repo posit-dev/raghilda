@@ -164,21 +164,30 @@ class Metric:
 class RetrievedChunk(Chunk):
     """A chunk returned from a retrieval operation with associated metrics.
 
-    RetrievedChunk extends Chunk with retrieval metrics that indicate
-    how well the chunk matched the query. Common metrics include
-    similarity scores and BM25 scores.
+    `store.retrieve()` returns `RetrievedChunk` objects rather than plain
+    `Chunk`s. Each one is an ordinary `Chunk` (text, position, context, origin,
+    attributes) extended with the scores that explain *why* it was returned, so
+    you can rank, threshold, or display results and still trace each passage back
+    to its source.
 
-    Attributes
+    In addition to the inherited `Chunk` fields, `RetrievedChunk` adds:
+
+    Parameters
     ----------
     metrics
-        List of Metric objects containing retrieval scores.
+        Retrieval scores for this chunk, as a list of `Metric` objects. With the
+        default hybrid retrieval a chunk may carry several (for example a vector
+        similarity score and a BM25 score); higher values indicate a better match.
     chunk_ids
-        Backend chunk identifiers represented by this retrieved chunk.
-        For non-deoverlapped results this usually contains one id. For
-        deoverlapped chunks it may include multiple source chunk ids.
+        Backend chunk identifiers represented by this retrieved chunk. A normal
+        result contains a single id; a deoverlapped result that merged several
+        adjacent chunks lists all of their ids.
 
     Examples
     --------
+    Construct one directly to see its shape (in practice `store.retrieve()`
+    builds these for you). Here we attach two scores and then read them back:
+
     ```{python}
     from raghilda.chunk import RetrievedChunk, Metric
 
@@ -193,6 +202,7 @@ class RetrievedChunk(Chunk):
         ],
     )
 
+    # Each Metric carries a name and a numeric score
     for metric in chunk.metrics:
         print(f"{metric.name}: {metric.value}")
     ```
