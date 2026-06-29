@@ -58,12 +58,14 @@ def find_links(
     """Discover links by crawling one or more starting pages.
 
     `find_links()` is the simple way to gather a set of URLs to index: give it a
-    starting page (or several) and it follows links up to `depth` levels,
+    starting page (or several) and it follows links up to `depth` levels before
     returning the URLs it finds. It reads both HTML pages (following `<a href>`
-    links) and XML sitemaps (collecting their `<loc>` entries), which makes it a
-    convenient first step before reading and chunking each page with
-    `read_as_markdown()`. For larger or repeatable crawls with caching and
-    concurrency, see the [`crawl`](crawl.WebCrawler.qmd) module.
+    links) and XML sitemaps (collecting their `<loc>` entries).
+
+    This function is eager: it completes the crawl before returning the list of
+    discovered URLs. For larger websites, repeatable crawl jobs, or ingestion
+    workflows that benefit from caching, concurrency, and lazy document
+    streaming, consider using the [`crawl`](crawl.WebCrawler.qmd) module.
 
     Parameters
     ----------
@@ -93,7 +95,8 @@ def find_links(
     Returns
     -------
     list[str]
-        A deduplicated list of absolute URLs discovered during the crawl.
+        A deduplicated list of absolute URLs discovered during the crawl. The
+        crawl completes before this list is returned.
 
     Examples
     --------
