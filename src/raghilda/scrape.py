@@ -63,9 +63,8 @@ def find_links(
     links) and XML sitemaps (collecting their `<loc>` entries).
 
     This function is eager: it completes the crawl before returning the list of
-    discovered URLs. For larger websites, repeatable crawl jobs, or ingestion
-    workflows that benefit from caching, concurrency, and lazy document
-    streaming, consider using the [`crawl`](crawl.WebCrawler.qmd) module.
+    discovered URLs. For a lazy version of this same URL discovery step, see
+    [`WebCrawler.origins()`](crawl.WebCrawler.qmd#raghilda.crawl.WebCrawler.origins).
 
     Parameters
     ----------
