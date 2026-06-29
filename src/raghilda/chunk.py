@@ -15,7 +15,7 @@ class Chunk:
     `Chunk` objects from a document, the store embeds and indexes them, and
     retrieval returns them (as `RetrievedChunk`s) ranked against a query.
 
-    Parameters
+    Attributes
     ----------
     text
         The actual text content of the chunk.
