@@ -8,21 +8,25 @@ from .document import ChunkedDocument, Document
 
 
 class BaseChunker:
-    """Base class for chunkers.
+    """Abstract base class for chunkers.
 
-    A chunker splits a :py:class:`raghilda.document.Document` into a
-    :py:class:`raghilda.document.ChunkedDocument` containing
-    smaller text segments suitable for embedding and retrieval.
+    Chunking is the step that splits a document into smaller, retrievable
+    passages. Good chunks are large enough to stand on their own but small enough
+    that a search can return just the relevant part of a document rather than the
+    whole thing. A chunker turns a `Document` into a `ChunkedDocument` whose
+    `chunks` are ready to embed, index, and retrieve.
 
-    Subclasses must implement :py:meth:`chunk` and :py:meth:`chunk_text`
-    to provide a concrete chunking strategy:
-
-    - :py:class:`raghilda.chunker.MarkdownChunker`: splits Markdown documents
-      at semantic boundaries (headings, paragraphs, sentences).
+    `BaseChunker` only defines the interface; it is not used directly. A concrete
+    chunker implements a strategy by overriding `chunk()` and `chunk_text()`.
+    raghilda ships [`MarkdownChunker`](chunker.MarkdownChunker.qmd), which splits
+    Markdown at semantic boundaries (headings, paragraphs, sentences). Any object
+    implementing this interface (including third-party chunkers such as
+    [chonkie](https://github.com/chonkie-inc/chonkie)'s) can be used wherever
+    raghilda expects a chunker.
     """
 
     def chunk(self, document: Document) -> ChunkedDocument:
-        """Chunk a document into a :py:class:`~raghilda.document.ChunkedDocument`.
+        """Split a document into a `ChunkedDocument`.
 
         Parameters
         ----------
@@ -32,12 +36,15 @@ class BaseChunker:
         Returns
         -------
         ChunkedDocument
-            The document with chunks attached.
+            The same document with its `chunks` attached.
         """
         raise NotImplementedError
 
     def chunk_text(self, text: str) -> Sequence[Chunk]:
-        """Chunk raw text into a sequence of :py:class:`~raghilda.chunk.Chunk` objects.
+        """Split raw text into a sequence of `Chunk` objects.
+
+        Use this when you have a bare string rather than a `Document`. Most
+        callers use `chunk()` instead, which preserves document metadata.
 
         Parameters
         ----------
@@ -47,7 +54,7 @@ class BaseChunker:
         Returns
         -------
         Sequence[Chunk]
-            The resulting chunks with positional information.
+            The resulting chunks, each with positional information.
         """
         raise NotImplementedError
 
@@ -83,6 +90,11 @@ class MarkdownChunker(BaseChunker):
 
     Examples
     --------
+    The example below chunks a short Markdown document with a deliberately small
+    `chunk_size` so the splitting is easy to see. With
+    `segment_by_heading_levels=[1, 2]`, no chunk crosses an `h1` or `h2`, so each
+    section is chunked on its own:
+
     ```{python}
     from raghilda.chunker import MarkdownChunker
 
@@ -106,6 +118,11 @@ class MarkdownChunker(BaseChunker):
     for chunk in chunks:
         print(f"[{chunk.start_index}:{chunk.end_index}] {chunk.text[:40]}...")
     ```
+
+    Each printed line shows a chunk's character span (`start_index:end_index`)
+    and the start of its text. To chunk a whole document instead of a bare
+    string (preserving its `origin` and metadata), use `chunk()`, which returns
+    a `ChunkedDocument`.
 
     Notes
     -----

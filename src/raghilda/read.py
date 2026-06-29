@@ -23,43 +23,55 @@ def read_as_markdown(
     *args,
     **kwargs,
 ) -> MarkdownDocument:
-    """
-    Read a markdown file from a URI and return its content as a string.
+    """Read a document from a path or URL and convert it to Markdown.
+
+    This is raghilda's entry point for turning a source into a `MarkdownDocument`
+    ready for chunking. It reads the URI (a local file or an HTTP(S) URL) and
+    converts it to Markdown using
+    [MarkItDown](https://github.com/microsoft/markitdown), so it handles far more
+    than Markdown files: HTML pages, PDFs, Word (`.docx`) documents, and the other
+    formats MarkItDown supports are all converted to Markdown. For HTML, it keeps
+    the `<main>` element and removes `<nav>` by default; use the selector
+    arguments to change that.
 
     Parameters
     ----------
     uri
-        The URI of the markdown file to read. Supported schemes are:
+        Path or URL of the source to read. Supported forms include:
 
-        - path/to/file.md
-        - http://example.com/file.md
-        - https://example.com/file.md
+        - `path/to/file.md` (or `.html`, `.pdf`, `.docx`, and so on)
+        - `http://example.com/page`
+        - `https://example.com/page`
 
     html_extract_selectors
-        A list of CSS selectors to extract specific parts of the HTML content
-        when the URI points to an HTML page. Defaults to ['main'].
+        CSS selectors naming the parts of an HTML page to keep. Defaults to
+        `['main']`.
     html_zap_selectors
-        A list of CSS selectors to remove specific parts of the HTML content
-        when the URI points to an HTML page. Defaults to ['nav'].
+        CSS selectors naming the parts of an HTML page to remove before
+        conversion. Defaults to `['nav']`.
 
     Returns
     -------
     MarkdownDocument
-        The content of the markdown file as a MarkdownDocument object.
+        The converted content, with `origin` set to `uri` so the source is
+        tracked through chunking and retrieval.
 
     Examples
     --------
+    Read a local file or a web page. In both cases you get a `MarkdownDocument`
+    whose `.content` holds the Markdown text:
+
     ```{python}
     #| eval: false
     from raghilda.read import read_as_markdown
 
-    # Read from a local file
-    md_content = read_as_markdown("path/to/file.md")
-    print(md_content)
+    # Read a local Markdown file
+    doc = read_as_markdown("path/to/file.md")
+    print(doc.content)
 
-    # Read from an HTTP URL
-    md_content = read_as_markdown("https://raw.githubusercontent.com/user/repo/branch/file.md")
-    print(md_content)
+    # Read and convert an HTML page
+    doc = read_as_markdown("https://example.com/page.html")
+    print(doc.content)
     ```
     """
 

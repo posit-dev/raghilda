@@ -135,7 +135,7 @@ for uri in files:
 
 ## Using Chonkie Chunkers
 
-raghilda is compatible with [chonkie](https://github.com/chonkie-ai/chonkie), a library providing various chunking strategies. Any chonkie chunker can be used with raghilda:
+raghilda is compatible with [chonkie](https://github.com/chonkie-inc/chonkie), a library providing various chunking strategies. Any chonkie chunker can be used with raghilda:
 
 ```{python}
 #| eval: false

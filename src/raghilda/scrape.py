@@ -55,37 +55,62 @@ def find_links(
     validate: bool = False,
     **request_kwargs: Any,
 ) -> list[str]:
-    """
-    Discover hyperlinks starting from one or many documents and return them as URLs.
+    """Discover links by crawling one or more starting pages.
+
+    `find_links()` is the simple way to gather a set of URLs to index: give it a
+    starting page (or several) and it follows links up to `depth` levels before
+    returning the URLs it finds. It reads both HTML pages (following `<a href>`
+    links) and XML sitemaps (collecting their `<loc>` entries).
+
+    This function is eager: it completes the crawl before returning the list of
+    discovered URLs. For a lazy version of this same URL discovery step, see
+    [`WebCrawler.origins()`](crawl.WebCrawler.qmd#raghilda.crawl.WebCrawler.origins).
 
     Parameters
     ----------
     x
-        Starting URL(s). Accepts strings or paths; inputs must expand to HTTP(S)
-        URLs.
+        Starting URL(s) or path(s): a single string or `Path`, or a sequence of
+        them.
     depth
-        Maximum traversal depth from each starting document. ``0`` inspects the
-        starting pages only, ``1`` also inspects their direct children, and so on.
+        Maximum traversal depth from each starting page. `0` inspects the starting
+        pages only, `1` also follows their direct links, and so on.
     children_only
-        When ``True``, only links that stay under the originating host are
-        returned and traversed.
+        When `True`, only links at or below the starting URL are kept and
+        followed (for example links under `https://site/docs/` when you start
+        there). This is the easiest way to stay within one section of a site.
     progress
-        Whether to display a progress bar while traversing links. Falls back to
-        a no-op when :mod:`tqdm` is not available.
+        Whether to display a `tqdm` progress bar while crawling.
     url_filter
-        Receives a list of URL's and decides returns a list of urls that should
-        be kept. POssibly smaller.
+        Optional callback that receives the set of links found on a page and
+        returns the (possibly smaller) list of URLs to keep and follow. Use it to
+        apply custom include/exclude rules.
     validate
-        When ``True``, perform a lightweight validation to ensure targets are
-        reachable before including them in the results.
+        When `True`, check that each URL is reachable (with an HTTP `HEAD`
+        request) before including it in the results.
     request_kwargs
-        Additional keyword arguments forwarded to :func:`requests.Session.get`
-        (and ``head`` during validation) when fetching HTTP resources.
+        Extra keyword arguments forwarded to `requests.Session.get` (and to
+        `head` during validation) when fetching pages.
 
     Returns
     -------
-    Iterator[str]
-        Yields absolute link targets, deduplicated and ordered as discovered.
+    list[str]
+        A deduplicated list of absolute URLs discovered during the crawl. The
+        crawl completes before this list is returned.
+
+    Examples
+    --------
+    ```{python}
+    #| eval: false
+    from raghilda.scrape import find_links
+
+    # Discover pages under a documentation section, one level deep
+    links = find_links(
+        "https://quarto.org/docs/guide/",
+        depth=1,
+        children_only=True,
+    )
+    print(f"Found {len(links)} pages")
+    ```
     """
     if isinstance(x, (str, Path)):
         entries: list[str] = [str(x)]

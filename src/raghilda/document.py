@@ -18,10 +18,13 @@ __all__ = [
 class Document:
     """A document containing text content to be chunked and indexed.
 
-    Documents are the primary input for RAG stores. Each document has
-    text content and an optional origin identifier.
+    Documents are the primary input for RAG stores. Each document holds the full
+    text to be indexed plus an optional `origin` identifying where it came from.
+    A document is chunked into a `ChunkedDocument` before being embedded and
+    written to a store. `Document` is the base type; `MarkdownDocument` is the
+    common concrete variant produced by `read_as_markdown()`.
 
-    Attributes
+    Parameters
     ----------
     content
         The full text content of the document.
@@ -100,8 +103,17 @@ class Document:
 class ChunkedDocument(Document):
     """A document with an attached sequence of chunks.
 
-    This is the explicit chunked variant of `Document`, used by stores and
-    chunkers that operate on pre-segmented content.
+    This is the chunked variant of `Document`, the result of running a chunker
+    over a document. It keeps all of the original `Document` fields (`content`,
+    `origin`, `attributes`) and adds the `chunks` produced from that content.
+    Stores accept a `ChunkedDocument` directly in `upsert()`. It is also a
+    sequence: you can iterate over it, take its `len()`, and index into it to
+    reach the underlying chunks.
+
+    Parameters
+    ----------
+    chunks
+        The chunks produced from this document's content, in document order.
     """
 
     chunks: list[Chunk]
@@ -155,12 +167,30 @@ class ChunkedDocument(Document):
 class MarkdownDocument(Document):
     """A Markdown document with source tracking.
 
-    MarkdownDocument extends Document with markdown-specific semantics for
-    content that comes from a source origin (e.g., URL or file path). This is useful
-    for citation and provenance tracking in RAG applications.
+    `MarkdownDocument` is the everyday document type in raghilda: `read_as_markdown()`
+    returns one, and the crawlers yield them. It has the same fields as
+    [Document](document.Document.qmd) (`content`, `origin`, `attributes`), with the
+    understanding that `content` is Markdown and `origin` records where that
+    content came from (a URL or file path) for citation and provenance. Chunking a
+    `MarkdownDocument` yields a `ChunkedMarkdownDocument`.
+
+    Parameters
+    ----------
+    content
+        The Markdown text of the document.
+    origin
+        Where the content came from (a URL or file path), used for citation and
+        provenance. Stores require a populated origin at upsert time.
+    attributes
+        Optional user-defined attributes applied at insertion time. Chunks can
+        inherit them, and they are returned during retrieval for filtering and
+        downstream prompt/context use.
 
     Examples
     --------
+    You usually get one from `read_as_markdown()`, but you can also build one
+    directly from text you already have:
+
     ```{python}
     from raghilda.document import MarkdownDocument
 
@@ -216,7 +246,28 @@ class MarkdownDocument(Document):
 
 @dataclass(kw_only=True)
 class ChunkedMarkdownDocument(MarkdownDocument, ChunkedDocument):
-    """A Markdown document with an attached sequence of chunks."""
+    """A Markdown document with an attached sequence of chunks.
+
+    This is the chunked form of `MarkdownDocument`, combining its Markdown source
+    tracking with the `chunks` of a `ChunkedDocument`. It is what
+    `MarkdownChunker.chunk()` returns, and what you pass to a store's `upsert()`.
+    Like `ChunkedDocument`, it can be iterated, sized with `len()`, and indexed to
+    reach its chunks.
+
+    Parameters
+    ----------
+    content
+        The Markdown text of the document.
+    origin
+        Where the content came from (a URL or file path), used for citation and
+        provenance. Stores require a populated origin at upsert time.
+    attributes
+        Optional user-defined attributes applied at insertion time. Chunks can
+        inherit them, and they are returned during retrieval for filtering and
+        downstream prompt/context use.
+    chunks
+        The chunks produced from this document's content, in document order.
+    """
 
     @classmethod
     def from_any(

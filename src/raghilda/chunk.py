@@ -11,7 +11,9 @@ class Chunk:
 
     Chunks are the fundamental unit for retrieval in RAG applications.
     Each chunk contains the text content along with positional information
-    that allows mapping back to the original document.
+    that allows mapping back to the original document. A chunker produces
+    `Chunk` objects from a document, the store embeds and indexes them, and
+    retrieval returns them (as `RetrievedChunk`s) ranked against a query.
 
     Attributes
     ----------
@@ -60,18 +62,33 @@ class Chunk:
 
     @classmethod
     def from_any(cls, chunk: Union[ChunkLike, IntoChunk]) -> "Chunk":
-        """Convert any chunk-like or IntoChunk object to a raghilda Chunk.
+        """Coerce a chunk from another library into a raghilda `Chunk`.
+
+        This is the interoperability entry point for chunks produced outside
+        raghilda, for example by [chonkie](https://github.com/chonkie-inc/chonkie)
+        or your own chunker. It accepts either:
+
+        - an object satisfying the `ChunkLike` protocol (it has `text`,
+          `start_index`, and `end_index`; `char_count`, `context`, `origin`, and
+          `attributes` are read when present), or
+        - an `IntoChunk` object that exposes a `to_chunk()` method returning a
+          `Chunk`.
 
         Parameters
         ----------
         chunk
-            An object that implements the ChunkLike protocol or has a
-            `to_chunk()` method.
+            The chunk-like or `IntoChunk` object to convert.
 
         Returns
         -------
         Chunk
-            A raghilda Chunk instance.
+            A raghilda `Chunk` with the fields copied from the source object.
+
+        Raises
+        ------
+        TypeError
+            If `chunk` is neither `ChunkLike` nor `IntoChunk`, or if a
+            `to_chunk()` method does not return a `Chunk`.
         """
         if isinstance(chunk, IntoChunk):
             if not callable(chunk.to_chunk):
@@ -102,10 +119,31 @@ class Chunk:
 class MarkdownChunk(Chunk):
     """A chunk extracted from a Markdown document.
 
-    MarkdownChunk extends Chunk for use with Markdown content.
-    It typically preserves heading context from the source document,
-    allowing retrieval results to show where in the document hierarchy
-    each chunk originated.
+    `MarkdownChunker` produces `MarkdownChunk`s. It behaves exactly like a
+    [Chunk](chunk.Chunk.qmd); the one thing to note is that its `context` field
+    holds the Markdown heading hierarchy in effect at the chunk's position (the
+    `#`/`##` headings the passage falls under). That context lets retrieval
+    results show where in a document a passage came from, which helps both with
+    ranking and with citing sources back to the user.
+
+    Parameters
+    ----------
+    text
+        The text content of the chunk.
+    start_index
+        Character position where this chunk begins in the source document.
+    end_index
+        Character position where this chunk ends in the source document.
+    char_count
+        Number of characters in this chunk.
+    context
+        The Markdown heading hierarchy in effect at this chunk's position, or
+        `None` if there is none.
+    origin
+        Origin of the parent document this chunk belongs to.
+    attributes
+        Optional user-defined attributes associated with the chunk, used for
+        retrieval filtering and downstream prompt construction.
     """
 
     pass
@@ -118,7 +156,7 @@ class Metric:
     Metrics are used to store retrieval scores and other measurements
     that describe how well a chunk matches a query.
 
-    Attributes
+    Parameters
     ----------
     name
         The name of the metric (e.g., "similarity", "bm25_score").
@@ -143,21 +181,30 @@ class Metric:
 class RetrievedChunk(Chunk):
     """A chunk returned from a retrieval operation with associated metrics.
 
-    RetrievedChunk extends Chunk with retrieval metrics that indicate
-    how well the chunk matched the query. Common metrics include
-    similarity scores and BM25 scores.
+    `store.retrieve()` returns `RetrievedChunk` objects rather than plain
+    `Chunk`s. Each one is an ordinary `Chunk` (text, position, context, origin,
+    attributes) extended with the scores that explain *why* it was returned, so
+    you can rank, threshold, or display results and still trace each passage back
+    to its source.
 
-    Attributes
+    In addition to the inherited `Chunk` fields, `RetrievedChunk` adds:
+
+    Parameters
     ----------
     metrics
-        List of Metric objects containing retrieval scores.
+        Retrieval scores for this chunk, as a list of `Metric` objects. With the
+        default hybrid retrieval a chunk may carry several (for example a vector
+        similarity score and a BM25 score); higher values indicate a better match.
     chunk_ids
-        Backend chunk identifiers represented by this retrieved chunk.
-        For non-deoverlapped results this usually contains one id. For
-        deoverlapped chunks it may include multiple source chunk ids.
+        Backend chunk identifiers represented by this retrieved chunk. A normal
+        result contains a single id; a deoverlapped result that merged several
+        adjacent chunks lists all of their ids.
 
     Examples
     --------
+    Construct one directly to see its shape (in practice `store.retrieve()`
+    builds these for you). Here we attach two scores and then read them back:
+
     ```{python}
     from raghilda.chunk import RetrievedChunk, Metric
 
@@ -172,6 +219,7 @@ class RetrievedChunk(Chunk):
         ],
     )
 
+    # Each Metric carries a name and a numeric score
     for metric in chunk.metrics:
         print(f"{metric.name}: {metric.value}")
     ```
