@@ -1,6 +1,6 @@
 [project]
 name = "raghilda"
-version = "0.1.1"
+version = "0.2.0"
 description = "RAG made simple"
 license = "MIT"
 readme = "README.md"
@@ -36,7 +36,6 @@ postgres = ["psycopg2-binary"]
 dev = [
     "dotenv>=0.9.9",
     "great-docs",
-    "griffe>=1.5.0,<2.0",
     "taskipy>=1.14.1",
 ]
 
