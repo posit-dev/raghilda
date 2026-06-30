@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-## 0.2
+## 0.2.0
 
-raghilda 0.2 expands the package from the core RAG workflow into a more
+raghilda 0.2.0 expands the package from the core RAG workflow into a more
 complete toolkit for building and maintaining retrieval stores. The release
 adds crawl and ingest APIs with caching and concurrency, a Cloudflare-backed
 crawler for JavaScript-rendered sites, a PostgreSQL store backend, and NVIDIA
