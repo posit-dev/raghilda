@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import mimetypes
 import os
-from pathlib import Path
 import re
 import shutil
 import tempfile
-import time
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 import threading
+import time
 import unicodedata
+from abc import ABC, abstractmethod
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, ClassVar, TypeVar
 from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
 from urllib.request import url2pathname
 
@@ -34,11 +35,11 @@ except ImportError:  # pragma: no cover - optional at runtime
 
 __all__ = [
     "BaseCrawler",
+    "CloudflareCrawler",
     "CrawlScope",
+    "DirectoryCrawler",
     "FetchedSource",
     "WebCrawler",
-    "DirectoryCrawler",
-    "CloudflareCrawler",
 ]
 
 _TYPE_ALIASES = {
@@ -253,7 +254,7 @@ class _FilesystemCrawlerCache:
     _HASH_LEN = 12
     _MAX_STEM_LEN = 180
 
-    _WINDOWS_RESERVED = {
+    _WINDOWS_RESERVED: ClassVar[set[str]] = {
         "CON",
         "PRN",
         "AUX",
@@ -661,9 +662,8 @@ class _FilesystemCrawlerCache:
         return "--" not in name[len(prefix) :]
 
     def _write_content(self, content_path: Path, content: bytes | str | Path) -> None:
-        if isinstance(content, Path):
-            if content == content_path:
-                return
+        if isinstance(content, Path) and content == content_path:
+            return
 
         temporary_path: Path | None = None
         try:
@@ -788,7 +788,6 @@ class BaseCrawler(ABC):
             A lazy iterator of source origins, in discovery order. Each origin
             is unique within a single call.
         """
-        pass
 
     @abstractmethod
     def fetch_raw(
@@ -812,7 +811,6 @@ class BaseCrawler(ABC):
             The fetched source, with its body path and metadata. The raw body
             is not yet converted to Markdown.
         """
-        pass
 
     def fetch_markdown(
         self,
@@ -1112,7 +1110,7 @@ class DirectoryCrawler(BaseCrawler):
                 "source_hash": source_hash,
                 "type_label": type_label,
             },
-            fetched_at=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc),
+            fetched_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
             body_path=path,
             markdown_path=markdown_path,
         )
@@ -2358,7 +2356,7 @@ def _canonicalize_web_url(target: str, *, base: str | None = None) -> str | None
     if not parsed.netloc:
         return None
     try:
-        parsed.port
+        _ = parsed.port
     except ValueError:
         return None
     netloc = _canonical_netloc(parsed)
@@ -2677,7 +2675,7 @@ def _type_hint_path(origin: str, *, content_type: str | None) -> Path:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

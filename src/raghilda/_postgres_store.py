@@ -1,31 +1,34 @@
-from ._store import BaseStore, WriteResult
 import json
-import threading
-from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
-from .document import Document, ChunkedMarkdownDocument
-from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from ._deoverlap import deoverlap_chunks
-from typing import Any, Mapping, Optional, Sequence, Union
-from enum import StrEnum
-import psycopg2
 import logging
+import threading
+from collections.abc import Mapping, Sequence
+from enum import StrEnum
+from typing import Any
+
+import psycopg2
+
+from ._attribute_filters import compile_filter_to_sql, pg_column_expression
+from ._attribute_schema import AttributeFilter, filterable_attribute_paths
 from ._attributes import (
     AttributeFloatVectorType,
+    AttributesSchemaSpec,
     AttributeStructType,
     AttributeType,
     AttributeValue,
-    AttributesSchemaSpec,
     attributes_spec_from_json_dict,
     attributes_spec_to_json_dict,
     merge_attribute_values,
     normalize_attributes_spec,
 )
-from ._attribute_schema import AttributeFilter, filterable_attribute_paths
-from ._attribute_filters import compile_filter_to_sql, pg_column_expression
+from ._deoverlap import deoverlap_chunks
+from ._store import BaseStore, WriteResult
+from .chunk import Chunk, MarkdownChunk, Metric, RetrievedChunk
+from .document import ChunkedMarkdownDocument, Document
+from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 
 logger = logging.getLogger(__name__)
 
-ConnectionLike = Union[str, psycopg2.extensions.connection]
+ConnectionLike = str | psycopg2.extensions.connection
 
 _FILTERABLE_BASE_COLUMNS = {
     "chunk_id",
@@ -148,11 +151,11 @@ class PostgreSQLStore(BaseStore):
     @staticmethod
     def create(
         con: ConnectionLike,
-        embed: Optional[EmbeddingProvider],
-        name: Optional[str] = None,
-        title: Optional[str] = None,
-        attributes: Optional[AttributesSchemaSpec] = None,
-        vss_index: Optional[str] = "cosine_distance",
+        embed: EmbeddingProvider | None,
+        name: str | None = None,
+        title: str | None = None,
+        attributes: AttributesSchemaSpec | None = None,
+        vss_index: str | None = "cosine_distance",
         schema: str = "raghilda",
         overwrite: bool = False,
     ) -> "PostgreSQLStore":
@@ -262,9 +265,9 @@ class PostgreSQLStore(BaseStore):
                         f"A store already exists in schema {schema!r}. "
                         "Use overwrite=True to replace it."
                     )
-                cur.execute("DROP SCHEMA %s CASCADE;" % schema_id)
+                cur.execute(f"DROP SCHEMA {schema_id} CASCADE;")
 
-            cur.execute("CREATE SCHEMA IF NOT EXISTS %s;" % schema_id)
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_id};")
 
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {schema_id}.metadata (
@@ -623,7 +626,7 @@ class PostgreSQLStore(BaseStore):
         top_k: int = 3,
         *,
         deoverlap: bool = True,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> list[RetrievedChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -686,7 +689,7 @@ class PostgreSQLStore(BaseStore):
         text: str,
         top_k: int = 3,
         *,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using PostgreSQL full-text search.
 
@@ -769,8 +772,8 @@ class PostgreSQLStore(BaseStore):
         query: str | Sequence[float],
         top_k: int = 3,
         *,
-        method: Optional[str] = None,
-        attributes_filter: Optional[AttributeFilter] = None,
+        method: str | None = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> list[RetrievedChunk]:
         """Retrieve chunks using pgvector similarity search.
 

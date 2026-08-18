@@ -1,6 +1,6 @@
-import os
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -8,21 +8,23 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
+
 import httpx
 import openai
 import pytest
-from tests import helpers as test_helpers
-from raghilda.store import DuckDBStore, OpenAIStore
-from raghilda.document import MarkdownDocument
-from raghilda.chunk import MarkdownChunk, RetrievedChunk
+
 from raghilda._attributes import AttributeFloatVectorType
 from raghilda._duckdb_store import (
     RetrievedDuckDBMarkdownChunk,
     VSSMethod,
 )  # internal implementation
-from raghilda._openai_store import _normalize_openai_attributes
-from raghilda.embedding import EmbeddingOpenAI
 from raghilda._embedding import EmbeddingProvider, EmbedInputType
+from raghilda._openai_store import _normalize_openai_attributes
+from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda.document import MarkdownDocument
+from raghilda.embedding import EmbeddingOpenAI
+from raghilda.store import DuckDBStore, OpenAIStore
+from tests import helpers as test_helpers
 
 
 class CountingEmbedding(EmbeddingProvider):
@@ -1731,7 +1733,7 @@ class TestOpenAIStore:
         )
 
         with pytest.raises(
-            ValueError, match="OpenAIStore does not support chunked documents"
+            TypeError, match="OpenAIStore does not support chunked documents"
         ):
             store_with_attributes.upsert(doc)
 
@@ -2525,7 +2527,7 @@ def test_openai_store_insert_serializes_replacement_for_same_origin():
                 ),
                 skip_if_unchanged=False,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             errors.append(error)
 
     t1 = threading.Thread(target=do_insert, args=("content thread one",))
@@ -2883,7 +2885,7 @@ def test_openai_store_insert_updates_when_snapshot_download_forbidden():
 
 def test_openai_store_insert_updates_when_snapshot_download_connection_error():
     new_content = "hello world updated"
-    old_hash = hashlib.sha256("hello world".encode("utf-8")).hexdigest()
+    old_hash = hashlib.sha256(b"hello world").hexdigest()
 
     class FakeVectorStoreFiles:
         def __init__(self):
@@ -3131,13 +3133,13 @@ def test_build_index_waits_for_db_lock():
     store.upsert(doc)
 
     attempted = threading.Event()
-    thread_error: list[BaseException] = []
+    thread_error: list[Exception] = []
 
     def build_index():
         attempted.set()
         try:
             store.build_index("bm25")
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001
             thread_error.append(exc)
 
     store._db_lock.acquire()
@@ -3178,12 +3180,12 @@ def test_retrieve_waits_for_in_progress_bm25_build(monkeypatch):
 
     monkeypatch.setattr(store, "_create_fts_index", blocking_create_fts_index)
 
-    thread_error: list[BaseException] = []
+    thread_error: list[Exception] = []
 
     def build_index():
         try:
             store.build_index("bm25")
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001
             thread_error.append(exc)
 
     thread = threading.Thread(target=build_index)
@@ -3193,14 +3195,14 @@ def test_retrieve_waits_for_in_progress_bm25_build(monkeypatch):
     retrieve_started = threading.Event()
     retrieve_finished = threading.Event()
     retrieved_results: list[RetrievedDuckDBMarkdownChunk] = []
-    retrieve_error: list[BaseException] = []
+    retrieve_error: list[Exception] = []
 
     def retrieve():
         retrieve_started.set()
         try:
             results = store.retrieve("hello", top_k=1)
             retrieved_results.extend(results)
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001
             retrieve_error.append(exc)
         finally:
             retrieve_finished.set()
@@ -3328,6 +3330,7 @@ def test_duckdb_store_does_not_require_pandas():
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
+        check=False,
         cwd=repo_root,
         env=env,
         text=True,
@@ -3373,6 +3376,7 @@ def test_chroma_store_is_optional_dependency():
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
+        check=False,
         cwd=repo_root,
         env=env,
         text=True,

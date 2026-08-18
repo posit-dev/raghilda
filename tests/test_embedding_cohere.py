@@ -1,6 +1,7 @@
 import pytest
-from tests import helpers as test_helpers
+
 from raghilda.embedding import EmbeddingCohere, EmbedInputType
+from tests import helpers as test_helpers
 
 
 def test_embedding_cohere_does_not_use_chroma_cohere_api_key_env_var(

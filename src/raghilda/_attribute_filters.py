@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Any, Callable, Iterable, Mapping, Optional, cast
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, cast
 
 from ._attribute_schema import AttributeFilter, AttributeFilterValue, AttributeScalar
 
@@ -17,18 +18,18 @@ class FilterComparison:
 @dataclass(frozen=True)
 class FilterLogical:
     operator: str
-    children: list["FilterNode"]
+    children: list[FilterNode]
 
 
 FilterNode = FilterComparison | FilterLogical
 
 
 def compile_filter_to_sql(
-    attributes_filter: Optional[AttributeFilter],
+    attributes_filter: AttributeFilter | None,
     *,
-    allowed_columns: Optional[Iterable[str]] = None,
-    column_expr: Optional[Callable[[str], str]] = None,
-) -> Optional[str]:
+    allowed_columns: Iterable[str] | None = None,
+    column_expr: Callable[[str], str] | None = None,
+) -> str | None:
     node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
     if node is None:
         return None
@@ -37,10 +38,10 @@ def compile_filter_to_sql(
 
 
 def compile_filter_to_chroma_where(
-    attributes_filter: Optional[AttributeFilter],
+    attributes_filter: AttributeFilter | None,
     *,
-    allowed_columns: Optional[Iterable[str]] = None,
-) -> Optional[dict[str, Any]]:
+    allowed_columns: Iterable[str] | None = None,
+) -> dict[str, Any] | None:
     node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
     if node is None:
         return None
@@ -48,10 +49,10 @@ def compile_filter_to_chroma_where(
 
 
 def compile_filter_to_openai_filters(
-    attributes_filter: Optional[AttributeFilter],
+    attributes_filter: AttributeFilter | None,
     *,
-    allowed_columns: Optional[Iterable[str]] = None,
-) -> Optional[dict[str, Any]]:
+    allowed_columns: Iterable[str] | None = None,
+) -> dict[str, Any] | None:
     node = _parse_filter_or_none(attributes_filter, allowed_columns=allowed_columns)
     if node is None:
         return None
@@ -59,10 +60,10 @@ def compile_filter_to_openai_filters(
 
 
 def _parse_filter_or_none(
-    attributes_filter: Optional[AttributeFilter],
+    attributes_filter: AttributeFilter | None,
     *,
-    allowed_columns: Optional[Iterable[str]],
-) -> Optional[FilterNode]:
+    allowed_columns: Iterable[str] | None,
+) -> FilterNode | None:
     allowed_column_set = None if allowed_columns is None else set(allowed_columns)
     if attributes_filter is None:
         return None
@@ -83,7 +84,7 @@ def _parse_filter_or_none(
 
 
 def _parse_filter_mapping_node(
-    node: Mapping[str, Any], *, allowed_columns: Optional[set[str]]
+    node: Mapping[str, Any], *, allowed_columns: set[str] | None
 ) -> FilterNode:
     node_type = node.get("type")
     if not isinstance(node_type, str) or not node_type:
@@ -99,7 +100,7 @@ def _parse_filter_mapping_node(
         children: list[FilterNode] = []
         for child in filters:
             if not isinstance(child, Mapping):
-                raise ValueError("Each item in 'filters' must be a mapping")
+                raise TypeError("Each item in 'filters' must be a mapping")
             children.append(
                 _parse_filter_mapping_node(child, allowed_columns=allowed_columns)
             )
@@ -161,7 +162,7 @@ def _validate_null_comparison_operator(
 
 
 def _validate_allowed_filter_column(
-    column: str, allowed_columns: Optional[set[str]]
+    column: str, allowed_columns: set[str] | None
 ) -> None:
     if allowed_columns is None:
         return
@@ -173,7 +174,7 @@ def _validate_allowed_filter_column(
 
 
 class _FilterParser:
-    def __init__(self, text: str, *, allowed_columns: Optional[set[str]]):
+    def __init__(self, text: str, *, allowed_columns: set[str] | None):
         self._tokens = _tokenize_filter(text)
         self._idx = 0
         self._allowed_columns = allowed_columns
@@ -298,14 +299,14 @@ class _FilterParser:
             return True
         return False
 
-    def _expect(self, kind: str) -> "_Token":
+    def _expect(self, kind: str) -> _Token:
         token = self._peek()
         if token.kind != kind:
             raise ValueError(f"Expected {kind}, got '{token.raw}'")
         self._idx += 1
         return token
 
-    def _peek(self) -> "_Token":
+    def _peek(self) -> _Token:
         return self._tokens[self._idx]
 
 
@@ -483,16 +484,14 @@ def _emit_openai_filters(node: FilterNode) -> dict[str, Any]:
         for item in value:
             # bool is a subclass of int, but OpenAI IN/NIN does not support booleans.
             if isinstance(item, bool):
-                raise ValueError(
+                raise TypeError(
                     "Boolean values are not supported in IN/NIN for OpenAI filters"
                 )
             if not isinstance(item, (str, int, float)):
-                raise ValueError(
-                    f"Unsupported filter value type: {type(item).__name__}"
-                )
+                raise TypeError(f"Unsupported filter value type: {type(item).__name__}")
         value = cast(list[str | int | float], value)
     elif not isinstance(value, (bool, str, int, float)):
-        raise ValueError(f"Unsupported filter value type: {type(value).__name__}")
+        raise TypeError(f"Unsupported filter value type: {type(value).__name__}")
 
     return {
         "type": node.operator,

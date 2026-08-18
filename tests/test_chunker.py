@@ -1,4 +1,6 @@
+import itertools
 import textwrap
+
 from raghilda.chunker import MarkdownChunker
 from raghilda.document import ChunkedMarkdownDocument, MarkdownDocument
 
@@ -52,7 +54,7 @@ def test_chunker_overlap() -> None:
     assert len(chunks) == 5
     for c in chunks:
         assert c.end_index - c.start_index == 10
-    for prev, nxt in zip(chunks, chunks[1:]):
+    for prev, nxt in itertools.pairwise(chunks):
         assert prev.end_index - nxt.start_index == 5
         assert prev.text[-5:] == nxt.text[:5]
 

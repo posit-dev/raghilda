@@ -1,6 +1,7 @@
 """Protocol types for raghilda."""
 
-from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .chunk import Chunk

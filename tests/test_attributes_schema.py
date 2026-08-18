@@ -3,8 +3,8 @@ from typing import Annotated
 import pytest
 
 from raghilda._attributes import (
-    AttributeSpec,
     AttributeFloatVectorType,
+    AttributeSpec,
     AttributeStructType,
     attributes_schema_from_json_dict,
     attributes_schema_to_json_dict,

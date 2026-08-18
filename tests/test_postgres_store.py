@@ -1,11 +1,11 @@
-import pytest
 import psycopg2
-from raghilda._postgres_store import PostgreSQLStore
-from raghilda._embedding import EmbeddingProvider, EmbedInputType
-from raghilda.embedding import register_embedding_provider
-from raghilda.document import MarkdownDocument
-from raghilda.chunker import MarkdownChunker
+import pytest
 
+from raghilda._embedding import EmbeddingProvider, EmbedInputType
+from raghilda._postgres_store import PostgreSQLStore
+from raghilda.chunker import MarkdownChunker
+from raghilda.document import MarkdownDocument
+from raghilda.embedding import register_embedding_provider
 
 POSTGRES_URL = "postgresql://raghilda:raghilda@localhost:5432/raghilda"
 
@@ -291,12 +291,10 @@ def test_upsert_with_wrong_attribute_type(pg_con):
 
 
 def test_upsert_with_optional_attribute(pg_con):
-    from typing import Optional
-
     store = PostgreSQLStore.create(
         con=pg_con,
         embed=FakeEmbedding(),
-        attributes={"tenant": Optional[str]},
+        attributes={"tenant": str | None},
     )
     doc = _make_chunked_doc()
     # No attributes set — should use default None

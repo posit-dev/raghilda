@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Optional, Sequence, Type, TypeVar
+from typing import Any, TypeVar
 
 from openai import OpenAI
 
 # Global registry for embedding providers
-_EMBEDDING_REGISTRY: dict[str, Type["EmbeddingProvider"]] = {}
+_EMBEDDING_REGISTRY: dict[str, type["EmbeddingProvider"]] = {}
 
 
 T = TypeVar("T", bound="EmbeddingProvider")
@@ -46,7 +47,7 @@ def register_embedding_provider(name: str):
     ```
     """
 
-    def decorator(cls: Type[T]) -> Type[T]:
+    def decorator(cls: type[T]) -> type[T]:
         _EMBEDDING_REGISTRY[name] = cls
         return cls
 
@@ -165,7 +166,7 @@ class EmbeddingProvider(ABC):
             A sequence of embeddings (the same length as `x`), where each embedding is
             a sequence of floats.
         """
-        NotImplementedError("embed method is not implemented")
+        raise NotImplementedError("embed method is not implemented")
 
     @abstractmethod
     def get_config(self) -> dict[str, Any]:
@@ -181,7 +182,7 @@ class EmbeddingProvider(ABC):
         dict
             Configuration dict that can be passed to `from_config()`.
         """
-        NotImplementedError("get_config method is not implemented")
+        raise NotImplementedError("get_config method is not implemented")
 
     @classmethod
     @abstractmethod
@@ -199,7 +200,7 @@ class EmbeddingProvider(ABC):
         EmbeddingProvider
             A new instance of the provider.
         """
-        NotImplementedError("from_config method is not implemented")
+        raise NotImplementedError("from_config method is not implemented")
 
 
 @register_embedding_provider("EmbeddingOpenAI")
@@ -238,7 +239,7 @@ class EmbeddingOpenAI(EmbeddingProvider):
         self,
         model: str = "text-embedding-3-small",
         base_url: str = "https://api.openai.com/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         batch_size: int = 20,
     ) -> None:
         self.model = model
@@ -436,7 +437,7 @@ class EmbeddingCohere(EmbeddingProvider):
     def __init__(
         self,
         model: str = "embed-english-v3.0",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         batch_size: int = 96,
     ) -> None:
         import cohere

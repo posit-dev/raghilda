@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence, Union
+from typing import Any
 
-from .types import ChunkedDocumentLike, DocumentLike, IntoDocument
 from .chunk import Chunk
+from .types import ChunkedDocumentLike, DocumentLike, IntoDocument
 
 __all__ = [
-    "Document",
     "ChunkedDocument",
-    "MarkdownDocument",
     "ChunkedMarkdownDocument",
+    "Document",
+    "MarkdownDocument",
 ]
 
 
@@ -39,11 +40,11 @@ class Document:
     """
 
     content: str
-    origin: Optional[str] = None
-    attributes: Optional[dict[str, Any]] = None
+    origin: str | None = None
+    attributes: dict[str, Any] | None = None
 
     @classmethod
-    def from_any(cls, doc: Union[DocumentLike, IntoDocument]) -> "Document":
+    def from_any(cls, doc: DocumentLike | IntoDocument) -> Document:
         """Convert any document-like or IntoDocument object to a raghilda Document.
 
         This conversion only accepts unchunked inputs. If the source object
@@ -89,7 +90,7 @@ class Document:
             )
         raise TypeError(f"Cannot convert {type(doc).__name__} to Document")
 
-    def to_chunked(self, chunks: Sequence[Chunk]) -> "ChunkedDocument":
+    def to_chunked(self, chunks: Sequence[Chunk]) -> ChunkedDocument:
         """Return a ChunkedDocument with the same fields and supplied chunks."""
         return ChunkedDocument(
             content=self.content,
@@ -120,8 +121,8 @@ class ChunkedDocument(Document):
 
     @classmethod
     def from_any(
-        cls, doc: Union[DocumentLike, ChunkedDocumentLike, IntoDocument]
-    ) -> "ChunkedDocument":
+        cls, doc: DocumentLike | ChunkedDocumentLike | IntoDocument
+    ) -> ChunkedDocument:
         """Convert any chunked document-like object to a raghilda ChunkedDocument.
 
         Use `Document.from_any()` for unchunked inputs.
@@ -206,8 +207,8 @@ class MarkdownDocument(Document):
 
     @classmethod
     def from_any(
-        cls, doc: Union[DocumentLike, IntoDocument], origin: Optional[str] = None
-    ) -> "MarkdownDocument":
+        cls, doc: DocumentLike | IntoDocument, origin: str | None = None
+    ) -> MarkdownDocument:
         """Convert any document-like or IntoDocument object to a MarkdownDocument.
 
         This conversion only accepts unchunked inputs. If the source object
@@ -234,7 +235,7 @@ class MarkdownDocument(Document):
             attributes=base.attributes,
         )
 
-    def to_chunked(self, chunks: Sequence[Chunk]) -> "ChunkedMarkdownDocument":
+    def to_chunked(self, chunks: Sequence[Chunk]) -> ChunkedMarkdownDocument:
         """Return a ChunkedMarkdownDocument with the same fields and chunks."""
         return ChunkedMarkdownDocument(
             content=self.content,
@@ -272,9 +273,9 @@ class ChunkedMarkdownDocument(MarkdownDocument, ChunkedDocument):
     @classmethod
     def from_any(
         cls,
-        doc: Union[DocumentLike, ChunkedDocumentLike, IntoDocument],
-        origin: Optional[str] = None,
-    ) -> "ChunkedMarkdownDocument":
+        doc: DocumentLike | ChunkedDocumentLike | IntoDocument,
+        origin: str | None = None,
+    ) -> ChunkedMarkdownDocument:
         """Convert any chunked document-like object to a ChunkedMarkdownDocument.
 
         Use `MarkdownDocument.from_any()` for unchunked inputs.

@@ -1,21 +1,21 @@
 from ._embedding import (
-    EmbeddingProvider,
-    EmbeddingOpenAI,
     EmbeddingCohere,
+    EmbeddingOpenAI,
+    EmbeddingProvider,
     EmbedInputType,
-    register_embedding_provider,
     embedding_from_config,
+    register_embedding_provider,
 )
 from ._embedding_nvidia import EmbeddingNVIDIA
 from ._embedding_sentence_transformers import EmbeddingSentenceTransformers
 
 __all__ = [
-    "EmbeddingProvider",
-    "EmbeddingOpenAI",
+    "EmbedInputType",
     "EmbeddingCohere",
     "EmbeddingNVIDIA",
+    "EmbeddingOpenAI",
+    "EmbeddingProvider",
     "EmbeddingSentenceTransformers",
-    "EmbedInputType",
-    "register_embedding_provider",
     "embedding_from_config",
+    "register_embedding_provider",
 ]

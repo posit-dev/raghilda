@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
 import types
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import (
     Annotated,
     Any,
-    Iterable,
-    Mapping,
-    Optional,
-    Union,
     TypeAlias,
+    Union,
     cast,
     get_args,
     get_origin,
@@ -29,7 +27,7 @@ class AttributeFloatVectorType:
 
 @dataclass(frozen=True)
 class AttributeStructType:
-    fields: dict[str, "AttributeType"]
+    fields: dict[str, AttributeType]
 
 
 AttributeObjectValue: TypeAlias = dict[str, "AttributeValue"]
@@ -89,7 +87,7 @@ _ATTRIBUTE_FILTER_RESERVED_KEYWORDS = {
 
 
 def normalize_attributes_schema(
-    attributes: Optional[AttributesSchemaSpec],
+    attributes: AttributesSchemaSpec | None,
     *,
     reserved_columns: Iterable[str],
     allow_vector_types: bool = True,
@@ -107,7 +105,7 @@ def normalize_attributes_schema(
 
 
 def normalize_attributes_spec(
-    attributes: Optional[AttributesSchemaSpec],
+    attributes: AttributesSchemaSpec | None,
     *,
     reserved_columns: Iterable[str],
     allow_vector_types: bool = True,
@@ -147,7 +145,7 @@ def normalize_attributes_spec(
 
 
 def _attributes_schema_items(
-    attributes: Optional[AttributesSchemaSpec],
+    attributes: AttributesSchemaSpec | None,
 ) -> dict[str, _SchemaItem]:
     if attributes is None:
         return {}
@@ -174,10 +172,10 @@ def _attributes_schema_items(
     if isinstance(attributes, type):
         try:
             annotations = get_type_hints(attributes, include_extras=True)
-        except Exception as e:
+        except (NameError, TypeError) as exc:
             raise ValueError(
-                f"Failed to parse attribute annotations from '{attributes.__name__}': {e}"
-            )
+                f"Failed to parse attribute annotations from '{attributes.__name__}': {exc}"
+            ) from exc
         class_vars = vars(attributes)
         out: dict[str, _SchemaItem] = {}
         for key, annotation in annotations.items():
@@ -308,7 +306,7 @@ def _parse_struct_annotation(
 
 def _parse_vector_annotation(
     base: Any, extras: tuple[Any, ...]
-) -> Optional[AttributeType]:
+) -> AttributeType | None:
     base_origin = get_origin(base)
     base_args = get_args(base)
     if base_origin is not list or len(base_args) != 1 or base_args[0] is not float:
@@ -379,7 +377,7 @@ def _attribute_type_to_name(attribute_type: AttributeType) -> str:
     if isinstance(attribute_type, AttributeFloatVectorType):
         return f"float_vector[{attribute_type.dimension}]"
     if isinstance(attribute_type, AttributeStructType):
-        raise ValueError("Structured object attributes are serialized as mappings")
+        raise TypeError("Structured object attributes are serialized as mappings")
     return _ATTRIBUTE_SCALAR_TYPE_TO_NAME[attribute_type]
 
 
@@ -441,22 +439,22 @@ def attributes_spec_from_json_dict(
     for key, payload in attributes_spec_json.items():
         _validate_attribute_name(key, kind="Attribute column")
         if not isinstance(payload, Mapping):
-            raise ValueError(
+            raise TypeError(
                 f"Attribute spec for '{key}' must be a mapping with keys: type, nullable, required, default"
             )
         type_value = payload.get("type")
         if not isinstance(type_value, (str, Mapping)):
-            raise ValueError(
+            raise TypeError(
                 f"Attribute spec for '{key}' must include 'type' as a string or mapping"
             )
         nullable = payload.get("nullable")
         if not isinstance(nullable, bool):
-            raise ValueError(
+            raise TypeError(
                 f"Attribute spec for '{key}' must include boolean 'nullable'"
             )
         required = payload.get("required")
         if not isinstance(required, bool):
-            raise ValueError(
+            raise TypeError(
                 f"Attribute spec for '{key}' must include boolean 'required'"
             )
         if not allow_optional_values and not required:
@@ -484,7 +482,7 @@ def attributes_spec_from_json_dict(
     return out
 
 
-def _parse_attribute_type_name(type_name: str) -> Optional[AttributeType]:
+def _parse_attribute_type_name(type_name: str) -> AttributeType | None:
     match = _FLOAT_VECTOR_TYPE_PATTERN.fullmatch(type_name)
     if match is not None:
         return AttributeFloatVectorType(dimension=int(match.group(1)))
@@ -525,7 +523,7 @@ def _attribute_type_from_json_value(
             )
         fields_value = value.get("fields")
         if not isinstance(fields_value, Mapping):
-            raise ValueError(
+            raise TypeError(
                 f"Attribute struct type for '{key}' must include mapping 'fields'"
             )
 
@@ -571,7 +569,7 @@ def duckdb_sql_type_for_attribute_type(attribute_type: AttributeType) -> str:
 def merge_attribute_values(
     *,
     attributes_spec: Mapping[str, AttributeSpec],
-    sources: Iterable[Optional[Mapping[str, Any]]],
+    sources: Iterable[Mapping[str, Any] | None],
 ) -> dict[str, AttributeValue]:
     merged: dict[str, AttributeValue | object] = {
         key: _MISSING for key in attributes_spec
@@ -631,7 +629,7 @@ def _normalize_attribute_value(
 
     if isinstance(attribute_type, AttributeFloatVectorType):
         if not isinstance(value, (list, tuple)):
-            raise ValueError(
+            raise TypeError(
                 f"Invalid value for {context} '{key}': expected list[float] with length {attribute_type.dimension}, got {type(value).__name__}"
             )
         if len(value) != attribute_type.dimension:
@@ -641,7 +639,7 @@ def _normalize_attribute_value(
         normalized: list[float] = []
         for item in value:
             if isinstance(item, bool) or not isinstance(item, (int, float)):
-                raise ValueError(
+                raise TypeError(
                     f"Invalid value for {context} '{key}': expected list[float], got element of type {type(item).__name__}"
                 )
             normalized.append(float(item))
@@ -649,7 +647,7 @@ def _normalize_attribute_value(
 
     if isinstance(attribute_type, AttributeStructType):
         if not isinstance(value, Mapping):
-            raise ValueError(
+            raise TypeError(
                 f"Invalid value for {context} '{key}': expected object mapping, got {type(value).__name__}"
             )
         extra_fields = set(value) - set(attribute_type.fields)

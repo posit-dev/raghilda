@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import fnmatch
 import hashlib
 import http.server
 import json
 import os
-from pathlib import Path
 import re
 import socketserver
 import threading
-from typing import Any
 import unicodedata
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, ClassVar
 
 import pytest
+
 import raghilda.crawl as crawl_module
 from raghilda.crawl import (
-    CrawlScope,
     CloudflareCrawler,
+    CrawlScope,
     DirectoryCrawler,
     FetchedSource,
     WebCrawler,
@@ -347,7 +348,7 @@ def test_web_crawler_discovers_origins_and_revalidates_cache(tmp_path: Path) -> 
         first = crawler.fetch_raw(root_url)
         second = crawler.fetch_raw(root_url)
         third = crawler.fetch_raw(root_url, cache_force_refresh=True)
-        server_requests = getattr(server, "requests")
+        server_requests = getattr(server, "requests")  # noqa: B009
         root_requests = [
             request for request in server_requests if request["path"] == "/"
         ]
@@ -1277,7 +1278,9 @@ def test_web_markdown_documents_reuses_refreshed_sources(
 
         documents = list(crawler.markdown_documents(scope, cache_force_refresh=True))
         root_requests = [
-            request for request in getattr(server, "requests") if request["path"] == "/"
+            request
+            for request in getattr(server, "requests")  # noqa: B009
+            if request["path"] == "/"
         ]
 
         assert documents == [MarkdownDocument(origin=root_origin, content="Root")]
@@ -1306,7 +1309,9 @@ def test_web_markdown_documents_reuses_immediately_stale_discovery_cache(
 
         documents = list(crawler.markdown_documents(scope, progress=False))
         root_requests = [
-            request for request in getattr(server, "requests") if request["path"] == "/"
+            request
+            for request in getattr(server, "requests")  # noqa: B009
+            if request["path"] == "/"
         ]
 
         assert documents == [MarkdownDocument(origin=root_origin, content="Root")]
@@ -1384,9 +1389,9 @@ def test_web_crawler_treats_304_revalidation_as_fresh_cache_hit(
         root_url = f"http://127.0.0.1:{server.server_port}/"
         times = iter(
             [
-                datetime(2026, 1, 1, tzinfo=timezone.utc),
-                datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
-                datetime(2026, 1, 1, 0, 0, 2, 500000, tzinfo=timezone.utc),
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC),
+                datetime(2026, 1, 1, 0, 0, 2, 500000, tzinfo=UTC),
             ]
         )
         monkeypatch.setattr(crawl_module, "_utcnow", lambda: next(times))
@@ -1399,7 +1404,9 @@ def test_web_crawler_treats_304_revalidation_as_fresh_cache_hit(
         second = crawler.fetch_raw(root_url)
         third = crawler.fetch_raw(root_url)
         root_requests = [
-            request for request in getattr(server, "requests") if request["path"] == "/"
+            request
+            for request in getattr(server, "requests")  # noqa: B009
+            if request["path"] == "/"
         ]
 
         assert first.body_path == second.body_path == third.body_path
@@ -1746,7 +1753,7 @@ def test_web_crawler_cache_writes_for_different_keys_do_not_contend(
     first_started = threading.Event()
     release_first = threading.Event()
     second_finished = threading.Event()
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
     original_write_content = crawl_module._FilesystemCrawlerCache._write_content
 
     def blocking_write_content(
@@ -1770,7 +1777,7 @@ def test_web_crawler_cache_writes_for_different_keys_do_not_contend(
     def fetch(origin: str) -> None:
         try:
             crawler.fetch_raw(origin)
-        except BaseException as exc:
+        except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
     first_thread = threading.Thread(target=fetch, args=(first_origin,))
@@ -1815,7 +1822,7 @@ def test_web_crawler_type_filters_use_sniffed_cache_extension(
 ) -> None:
     class _FakeMagikaOutput:
         label = "html"
-        extensions = ["html"]
+        extensions: ClassVar[list[str]] = ["html"]
 
     class _FakeMagikaResult:
         output = _FakeMagikaOutput()
@@ -2659,10 +2666,10 @@ def test_cloudflare_crawler_rechecks_stale_in_memory_records(
     session = _ParameterizedCloudflareSession()
     times = iter(
         [
-            datetime(2026, 1, 1, tzinfo=timezone.utc),
-            datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
-            datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
-            datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC),
+            datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC),
+            datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC),
         ]
     )
     monkeypatch.setattr(crawl_module, "_utcnow", lambda: next(times))
@@ -3400,7 +3407,7 @@ def test_web_crawler_returns_no_origins_or_requests_when_limit_is_zero(
         origins = list(crawler.origins(scope, progress=False))
 
         assert origins == []
-        assert getattr(server, "requests") == []
+        assert getattr(server, "requests") == []  # noqa: B009
 
 
 def test_web_crawler_does_not_fetch_extra_root_once_limit_is_reached(
@@ -3432,7 +3439,10 @@ def test_web_crawler_does_not_fetch_extra_root_once_limit_is_reached(
         )
 
         origins = list(crawler.origins(scope, progress=False))
-        requests = [request["path"] for request in getattr(server, "requests")]
+        requests = [
+            request["path"]
+            for request in getattr(server, "requests")  # noqa: B009
+        ]
 
         assert origins == [f"{root_url}/first"]
         assert requests == ["/first"]

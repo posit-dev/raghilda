@@ -1,24 +1,29 @@
-import pytest
+import hashlib
+import json
 import threading
 import time
-import json
-import hashlib
-from typing import Annotated
+from typing import Annotated, ClassVar
+
+import pytest
+
 from tests import helpers as test_helpers
 
 pytest.importorskip("chromadb")
 
-from raghilda.store import ChromaDBStore
-from raghilda.document import MarkdownDocument
+from chromadb import (  # pyright: ignore[reportMissingImports]
+    Documents,
+    EmbeddingFunction,
+    Embeddings,
+)
+
 from raghilda.chunk import MarkdownChunk, RetrievedChunk
+from raghilda.document import MarkdownDocument
 from raghilda.embedding import (
     EmbeddingProvider,
     EmbedInputType,
     register_embedding_provider,
 )
-
-
-from chromadb import EmbeddingFunction, Embeddings, Documents  # pyright: ignore[reportMissingImports]
+from raghilda.store import ChromaDBStore
 
 
 class DummyEmbeddingFunction(EmbeddingFunction):
@@ -61,7 +66,7 @@ class DummyEmbeddingFunction(EmbeddingFunction):
 
 @register_embedding_provider("HashTestProvider")
 class HashTestProvider(EmbeddingProvider):
-    calls: list[dict] = []
+    calls: ClassVar[list[dict]] = []
 
     def __init__(self, salt: str):
         self.salt = salt
@@ -88,7 +93,7 @@ class HashTestProvider(EmbeddingProvider):
         embeddings = []
         for text in x:
             digest = hashlib.sha256(
-                f"{self.salt}:{input_type.value}:{text}".encode("utf-8")
+                f"{self.salt}:{input_type.value}:{text}".encode()
             ).digest()
             vector = [
                 float(int.from_bytes(digest[0:4], "big") % 1000),
@@ -154,6 +159,9 @@ def test_create_store_uses_chroma_default_embedding_when_embed_is_none():
     captured_kwargs = None
 
     class FakeClient:
+        def delete_collection(self, *, name):
+            return None
+
         def create_collection(self, **kwargs):
             nonlocal captured_kwargs
             captured_kwargs = kwargs
@@ -840,7 +848,9 @@ def test_connect_rejects_internal_attribute_names_from_metadata():
     )
 
     class FakeCollection:
-        metadata = {"raghilda_attributes_schema_json": schema_json}
+        metadata: ClassVar[dict[str, str]] = {
+            "raghilda_attributes_schema_json": schema_json
+        }
 
     class FakeClient:
         def get_collection(self, *, name, embedding_function=None):
@@ -1065,7 +1075,10 @@ class TestChromaEmbeddingConversion:
 
     def test_embedding_openai_is_converted_internally(self):
         """EmbeddingOpenAI should convert to a working native ChromaDB function."""
-        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction  # pyright: ignore[reportMissingImports]
+        from chromadb.utils.embedding_functions import (
+            OpenAIEmbeddingFunction,  # pyright: ignore[reportMissingImports]
+        )
+
         from raghilda._chroma_store import _to_chroma_embedding_function
         from raghilda.embedding import EmbeddingOpenAI
 
@@ -1083,7 +1096,10 @@ class TestChromaEmbeddingConversion:
 
     def test_embedding_cohere_is_converted_internally(self):
         """EmbeddingCohere should convert to a working native ChromaDB function."""
-        from chromadb.utils.embedding_functions import CohereEmbeddingFunction  # pyright: ignore[reportMissingImports]
+        from chromadb.utils.embedding_functions import (
+            CohereEmbeddingFunction,  # pyright: ignore[reportMissingImports]
+        )
+
         from raghilda._chroma_store import _to_chroma_embedding_function
         from raghilda.embedding import EmbeddingCohere
 
@@ -1166,9 +1182,10 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_call_generates_embeddings(self):
         """Adapter.__call__ should generate document embeddings."""
+        import numpy as np
+
         from raghilda._chroma_store import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
-        import numpy as np
 
         class MockProvider(EmbeddingProvider):
             def __init__(self):
@@ -1196,9 +1213,10 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_embed_query_generates_query_embeddings(self):
         """Adapter.embed_query should generate query embeddings."""
+        import numpy as np
+
         from raghilda._chroma_store import ChromaEmbeddingAdapter
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
-        import numpy as np
 
         class MockProvider(EmbeddingProvider):
             def __init__(self):
@@ -1269,15 +1287,15 @@ class TestChromaEmbeddingAdapter:
 
     def test_adapter_name(self):
         """Adapter.name() should return the registered name."""
-        from raghilda._chroma_store import ChromaEmbeddingAdapter, _ADAPTER_NAME
+        from raghilda._chroma_store import _ADAPTER_NAME, ChromaEmbeddingAdapter
 
         assert ChromaEmbeddingAdapter.name() == _ADAPTER_NAME
 
     def test_adapter_used_for_non_convertible_provider(self):
         """Adapter should be used for providers without to_chroma()."""
         from raghilda._chroma_store import (
-            _to_chroma_embedding_function,
             ChromaEmbeddingAdapter,
+            _to_chroma_embedding_function,
         )
         from raghilda._embedding import EmbeddingProvider, EmbedInputType
 
@@ -1302,8 +1320,8 @@ class TestChromaEmbeddingAdapter:
     def test_adapter_used_for_embedding_openai_subclass(self):
         """Subclasses should not be coerced to a native Chroma implementation."""
         from raghilda._chroma_store import (
-            _to_chroma_embedding_function,
             ChromaEmbeddingAdapter,
+            _to_chroma_embedding_function,
         )
         from raghilda.embedding import EmbeddingOpenAI
 

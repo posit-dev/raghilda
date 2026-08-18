@@ -1,5 +1,6 @@
 import os
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from openai import OpenAI
 
@@ -77,7 +78,7 @@ class EmbeddingNVIDIA(EmbeddingProvider):
         self,
         model: str = "nvidia/llama-nemotron-embed-1b-v2",
         base_url: str = "https://integrate.api.nvidia.com/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         batch_size: int = 20,
         truncate: str = "NONE",
     ) -> None:

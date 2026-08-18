@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import CancelledError
 from dataclasses import replace
 from pathlib import Path
-import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -33,11 +33,11 @@ class _RecordingStore(BaseStore):
         self.in_flight = 0
 
     @staticmethod
-    def connect(*args, **kwargs) -> "_RecordingStore":
+    def connect(*args, **kwargs) -> _RecordingStore:
         return _RecordingStore()
 
     @staticmethod
-    def create(*args, **kwargs) -> "_RecordingStore":
+    def create(*args, **kwargs) -> _RecordingStore:
         return _RecordingStore()
 
     def upsert(
@@ -79,11 +79,11 @@ class _BlockingFailureStore(BaseStore):
         self.blocking_finished = threading.Event()
 
     @staticmethod
-    def connect(*args, **kwargs) -> "_BlockingFailureStore":
+    def connect(*args, **kwargs) -> _BlockingFailureStore:
         return _BlockingFailureStore()
 
     @staticmethod
-    def create(*args, **kwargs) -> "_BlockingFailureStore":
+    def create(*args, **kwargs) -> _BlockingFailureStore:
         return _BlockingFailureStore()
 
     def upsert(
@@ -118,11 +118,11 @@ class _CancelledSiblingStore(BaseStore):
         self.release_cancelled = threading.Event()
 
     @staticmethod
-    def connect(*args, **kwargs) -> "_CancelledSiblingStore":
+    def connect(*args, **kwargs) -> _CancelledSiblingStore:
         return _CancelledSiblingStore()
 
     @staticmethod
-    def create(*args, **kwargs) -> "_CancelledSiblingStore":
+    def create(*args, **kwargs) -> _CancelledSiblingStore:
         return _CancelledSiblingStore()
 
     def upsert(
@@ -207,11 +207,11 @@ def test_base_store_ingest_starts_writes_before_input_is_exhausted() -> None:
             self.started_origins: list[str] = []
 
         @staticmethod
-        def connect(*args, **kwargs) -> "_StreamingStore":
+        def connect(*args, **kwargs) -> _StreamingStore:
             return _StreamingStore()
 
         @staticmethod
-        def create(*args, **kwargs) -> "_StreamingStore":
+        def create(*args, **kwargs) -> _StreamingStore:
             return _StreamingStore()
 
         def upsert(
@@ -335,7 +335,6 @@ def test_base_store_ingest_ignores_cancelled_sibling_when_worker_failed(
 
         def shutdown(self, *, wait: bool, cancel_futures: bool) -> None:
             del wait, cancel_futures
-            return None
 
     def fake_wait(pending, return_when):
         del pending, return_when

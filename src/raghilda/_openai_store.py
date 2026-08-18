@@ -1,18 +1,18 @@
-import openai
-import json
 import hashlib
-import threading
+import json
 import logging
+import threading
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from ._store import BaseStore, WriteResult
-from .chunk import MarkdownChunk, RetrievedChunk, Metric
-from .document import ChunkedDocument, Document, MarkdownDocument
-from typing import Any, Mapping, Optional, Sequence
 from dataclasses import dataclass
+from typing import Any
+
+import openai
+
 from ._attributes import (
     AttributeFilter,
-    AttributesSchemaSpec,
     AttributeSpec,
+    AttributesSchemaSpec,
     AttributeType,
     AttributeValue,
     attributes_spec_from_json_dict,
@@ -21,6 +21,9 @@ from ._attributes import (
     merge_attribute_values,
     normalize_attributes_spec,
 )
+from ._store import BaseStore, WriteResult
+from .chunk import MarkdownChunk, Metric, RetrievedChunk
+from .document import ChunkedDocument, Document, MarkdownDocument
 
 _ATTRIBUTES_SCHEMA_METADATA_KEY = "raghilda_attributes_schema_json"
 _INTERNAL_ORIGIN_ATTRIBUTE_KEY = "_raghilda_origin"
@@ -55,7 +58,7 @@ class OpenAIMarkdownChunk(MarkdownChunk):
         self,
         text: str,
         start_index: int = 0,
-        end_index: Optional[int] = None,
+        end_index: int | None = None,
         context=None,
         char_count=None,
         origin=None,
@@ -86,7 +89,7 @@ class RetrievedOpenAIMarkdownChunk(OpenAIMarkdownChunk, RetrievedChunk):
         self,
         text: str,
         start_index: int = 0,
-        end_index: Optional[int] = None,
+        end_index: int | None = None,
         context=None,
         char_count=None,
         origin=None,
@@ -145,10 +148,10 @@ class OpenAIStore(BaseStore):
     @staticmethod
     def create(
         base_url: str = "https://api.openai.com/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         *,
-        attributes: Optional[AttributesSchemaSpec] = None,
-        metadata: Optional[Mapping[str, str]] = None,
+        attributes: AttributesSchemaSpec | None = None,
+        metadata: Mapping[str, str] | None = None,
         **kwargs,
     ):
         """Create a new OpenAI vector store.
@@ -205,7 +208,7 @@ class OpenAIStore(BaseStore):
     def connect(
         store_id: str,
         base_url: str = "https://api.openai.com/v1",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
     ):
         """Connect to an existing OpenAI vector store.
 
@@ -256,8 +259,8 @@ class OpenAIStore(BaseStore):
         client: Any,
         store_id: str,
         *,
-        attributes_spec: Optional[Mapping[str, AttributeSpec]] = None,
-        attributes: Optional[Mapping[str, AttributeType]] = None,
+        attributes_spec: Mapping[str, AttributeSpec] | None = None,
+        attributes: Mapping[str, AttributeType] | None = None,
     ):
         self.client = client
         self.store_id = store_id
@@ -297,12 +300,12 @@ class OpenAIStore(BaseStore):
         # Upload the document content as a file to the vector store
         # create a temporary file, write the content to it, and upload it
         if not isinstance(document, MarkdownDocument):
-            raise ValueError("Only MarkdownDocument is supported for OpenAIStore")
+            raise TypeError("Only MarkdownDocument is supported for OpenAIStore")
         if not isinstance(document.origin, str) or not document.origin:
             raise ValueError("document.origin must be a non-empty string for upsert().")
 
         if isinstance(document, ChunkedDocument):
-            raise ValueError("OpenAIStore does not support chunked documents.")
+            raise TypeError("OpenAIStore does not support chunked documents.")
 
         resolved_attributes = merge_attribute_values(
             attributes_spec=self.attributes_spec,
@@ -342,7 +345,7 @@ class OpenAIStore(BaseStore):
                             file_id=vector_store_file.id,
                             vector_store_id=self.store_id,
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "Skipping duplicate managed file cleanup for origin '%s' "
                             "because delete failed for file '%s': %s",
@@ -401,8 +404,13 @@ class OpenAIStore(BaseStore):
                             file_id=uploaded_file_id,
                             vector_store_id=self.store_id,
                         )
-                    except Exception:
-                        pass
+                    except Exception as cleanup_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to remove uploaded OpenAI file '%s' after "
+                            "replacement cleanup failed: %s",
+                            uploaded_file_id,
+                            cleanup_error,
+                        )
                     raise
             current_document = MarkdownDocument(
                 origin=document.origin,
@@ -473,7 +481,7 @@ class OpenAIStore(BaseStore):
         text: str,
         top_k: int,
         *,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
         **kwargs,
     ) -> Sequence[RetrievedOpenAIMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
@@ -538,19 +546,18 @@ class OpenAIStore(BaseStore):
             limit=100,
         )
         while True:
-            for vector_store_file in page.data:
-                yield vector_store_file
+            yield from page.data
             if not page.has_next_page():
                 break
             page = page.get_next_page()
 
     def _snapshot_document_from_file(
         self, vector_store_file: Any
-    ) -> Optional[MarkdownDocument]:
+    ) -> MarkdownDocument | None:
         attributes = dict(getattr(vector_store_file, "attributes", None) or {})
         origin = self._origin_from_vector_store_file(vector_store_file)
         if not origin:
-            origin = getattr(vector_store_file, "id")
+            origin = vector_store_file.id
 
         try:
             response = self.client.files.content(file_id=vector_store_file.id)
@@ -569,7 +576,7 @@ class OpenAIStore(BaseStore):
             attributes=user_attributes or None,
         )
 
-    def _origin_from_vector_store_file(self, vector_store_file: Any) -> Optional[str]:
+    def _origin_from_vector_store_file(self, vector_store_file: Any) -> str | None:
         attributes = dict(getattr(vector_store_file, "attributes", None) or {})
         origin = attributes.get(_INTERNAL_ORIGIN_ATTRIBUTE_KEY)
         if origin:
@@ -589,16 +596,10 @@ def _normalize_openai_attributes(
     for key, value in attributes.items():
         if value is None:
             continue
-        if isinstance(value, bool):
-            out[key] = value
-        elif isinstance(value, str):
-            out[key] = value
-        elif isinstance(value, int):
-            out[key] = value
-        elif isinstance(value, float):
+        if isinstance(value, (bool, str, int, float)):
             out[key] = value
         else:
-            raise ValueError(
+            raise TypeError(
                 f"Unsupported OpenAI attribute type for '{key}': {type(value).__name__}"
             )
     return out

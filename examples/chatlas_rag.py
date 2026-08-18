@@ -17,11 +17,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from raghilda.store import DuckDBStore
-from raghilda.embedding import EmbeddingOpenAI
 from raghilda.chunker import MarkdownChunker
+from raghilda.embedding import EmbeddingOpenAI
 from raghilda.read import read_as_markdown
 from raghilda.scrape import find_links
+from raghilda.store import DuckDBStore
 
 load_dotenv()
 

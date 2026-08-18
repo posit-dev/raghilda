@@ -1,17 +1,15 @@
-from ._store import BaseStore, WriteResult
 import json
+import logging
 import os
 import threading
-from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
-from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .document import ChunkedMarkdownDocument, Document
-from typing import Any, Mapping, Optional, Sequence
-import duckdb
-from dataclasses import dataclass, asdict
-import logging
-from pathlib import Path
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
 from enum import StrEnum
-from ._deoverlap import deoverlap_chunks
+from pathlib import Path
+from typing import Any
+
+import duckdb
+
 from ._attributes import (
     AttributeFilter,
     AttributeSpec,
@@ -24,14 +22,18 @@ from ._attributes import (
     compile_filter_to_sql,
     duckdb_sql_type_for_attribute_type,
     filterable_attribute_paths,
-    normalize_attributes_spec,
     merge_attribute_values,
+    normalize_attributes_spec,
 )
+from ._deoverlap import deoverlap_chunks
+from ._store import BaseStore, WriteResult
 from ._store_metadata import (
     EmbeddedAttributesStoreMetadata,
     attributes_schema_from_spec,
 )
-
+from .chunk import Chunk, MarkdownChunk, Metric, RetrievedChunk
+from .document import ChunkedMarkdownDocument, Document
+from .embedding import EmbeddingProvider, EmbedInputType, embedding_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +128,7 @@ class RetrievedDuckDBMarkdownChunk(DuckDBMarkdownChunk, RetrievedChunk):
 class DuckDBStoreMetadata(EmbeddedAttributesStoreMetadata):
     name: str
     title: str
-    embed: Optional[EmbeddingProvider]
+    embed: EmbeddingProvider | None
     attributes: dict[str, AttributeSpec]
 
     @property
@@ -245,11 +247,11 @@ class DuckDBStore(BaseStore):
     @staticmethod
     def create(
         location: str | Path,
-        embed: Optional[EmbeddingProvider],
+        embed: EmbeddingProvider | None,
         overwrite: bool = False,
-        name: Optional[str] = None,
-        title: Optional[str] = None,
-        attributes: Optional[AttributesSchemaSpec] = None,
+        name: str | None = None,
+        title: str | None = None,
+        attributes: AttributesSchemaSpec | None = None,
     ):
         """Create a new DuckDB store.
 
@@ -526,8 +528,11 @@ class DuckDBStore(BaseStore):
             except Exception:
                 try:
                     self.con.rollback()
-                except Exception:
-                    pass
+                except duckdb.Error as rollback_error:
+                    logger.warning(
+                        "Failed to roll back DuckDB transaction: %s",
+                        rollback_error,
+                    )
                 raise
 
             current_document = self._load_document_snapshot(
@@ -753,7 +758,7 @@ class DuckDBStore(BaseStore):
         top_k: int = 3,
         *,
         deoverlap: bool = True,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> Sequence[RetrievedDuckDBMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
 
@@ -830,7 +835,7 @@ class DuckDBStore(BaseStore):
         top_k: int,
         *,
         method: VSSMethod = VSSMethod.COSINE_DISTANCE,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
         """Retrieve chunks using vector similarity search.
 
@@ -954,7 +959,7 @@ class DuckDBStore(BaseStore):
         k: float = 1.2,
         b: float = 0.75,
         conjunctive: bool = False,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
     ) -> list[RetrievedDuckDBMarkdownChunk]:
         """Retrieve chunks using BM25 full-text search.
 
@@ -1077,7 +1082,7 @@ class DuckDBStore(BaseStore):
 
     def build_index(
         self,
-        type: Optional[IndexType | str | list[IndexType | str]] = None,
+        type: IndexType | str | list[IndexType | str] | None = None,
     ):
         """
         Build the specified index types on the embeddings table.
@@ -1105,9 +1110,9 @@ class DuckDBStore(BaseStore):
                     _set_bm25_index_state(self.con, True)
                     self.con.commit()
                     self._has_bm25_index = True
-                except Exception as e:
+                except Exception:
                     self.con.rollback()
-                    raise e
+                    raise
 
             if IndexType.HNSW in index_types:
                 self.con.execute("INSTALL vss; LOAD vss;")
@@ -1115,9 +1120,9 @@ class DuckDBStore(BaseStore):
                     self.con.begin()
                     self._create_hnsw_index()
                     self.con.commit()
-                except Exception as e:
+                except Exception:
                     self.con.rollback()
-                    raise e
+                    raise
 
     def _create_fts_index(self):
         self.con.execute(

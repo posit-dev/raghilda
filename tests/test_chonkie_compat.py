@@ -1,5 +1,4 @@
 """Tests for compatibility with chonkie types and chunkers."""
-# ruff: noqa: E402
 
 import pytest
 
@@ -8,14 +7,17 @@ chonkie = pytest.importorskip("chonkie")
 
 from chonkie.types import (
     Chunk as ChonkieChunk,
+)
+from chonkie.types import (
     Document as ChonkieDocument,
-)  # noqa: E402
-from raghilda.chunk import Chunk  # noqa: E402
-from raghilda.document import ChunkedDocument, Document, MarkdownDocument  # noqa: E402
-from raghilda.types import ChunkLike, ChunkedDocumentLike, DocumentLike  # noqa: E402
-from raghilda.store import DuckDBStore  # noqa: E402
+)
 
-TokenChunker = getattr(chonkie, "TokenChunker")
+from raghilda.chunk import Chunk
+from raghilda.document import ChunkedDocument, Document, MarkdownDocument
+from raghilda.store import DuckDBStore
+from raghilda.types import ChunkedDocumentLike, ChunkLike, DocumentLike
+
+TokenChunker = chonkie.TokenChunker
 
 
 class TestChonkieChunkCompatibility:

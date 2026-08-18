@@ -1,6 +1,8 @@
-from typing import Any, List, Optional, Sequence
 import bisect
 import re
+from collections.abc import Sequence
+from typing import Any
+
 import commonmark
 
 from .chunk import Chunk, MarkdownChunk
@@ -145,7 +147,7 @@ class MarkdownChunker(BaseChunker):
         target_overlap: float = 0.5,
         *,
         max_snap_distance: int = 20,
-        segment_by_heading_levels: Optional[list[int]] = None,
+        segment_by_heading_levels: list[int] | None = None,
     ) -> None:
         self.chunk_size = chunk_size
         self.target_overlap = target_overlap
@@ -156,12 +158,12 @@ class MarkdownChunker(BaseChunker):
     @staticmethod
     def _make_segment_chunk_targets(
         start: int, end: int, chunk_size: int, overlap: float
-    ) -> List[tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         if end - start <= chunk_size:
             return [(start, end)]
-        stride = max(int(round(chunk_size * (1 - overlap))), 1)
+        stride = max(round(chunk_size * (1 - overlap)), 1)
         starts = list(range(start, end - chunk_size, stride))
         last_start = end - chunk_size
         if not starts or starts[-1] != last_start:
@@ -169,11 +171,11 @@ class MarkdownChunker(BaseChunker):
         return [(s, s + chunk_size) for s in starts]
 
     def _make_chunk_targets(
-        self, md_len: int, segment_breaks: List[int]
-    ) -> List[tuple[int, int]]:
+        self, md_len: int, segment_breaks: list[int]
+    ) -> list[tuple[int, int]]:
         seg_starts = [0] + sorted(segment_breaks)
         seg_ends = seg_starts[1:] + [md_len]
-        out: List[tuple[int, int]] = []
+        out: list[tuple[int, int]] = []
         for s, e in zip(seg_starts, seg_ends, strict=False):
             out.extend(
                 self._make_segment_chunk_targets(
@@ -184,12 +186,12 @@ class MarkdownChunker(BaseChunker):
 
     @staticmethod
     def _snap_nearest(
-        x: List[int], candidates: List[int], max_dist: Optional[int]
-    ) -> List[Optional[int]]:
+        x: list[int], candidates: list[int], max_dist: int | None
+    ) -> list[int | None]:
         if not candidates:
             return [None] * len(x)
         candidates = sorted(set(candidates))
-        out: List[Optional[int]] = []
+        out: list[int | None] = []
         for xi in x:
             idx = bisect.bisect_left(candidates, xi)
             if idx == 0:
@@ -208,15 +210,15 @@ class MarkdownChunker(BaseChunker):
 
     @staticmethod
     def _markdown_node_positions(
-        md: str, node_types: Optional[Sequence[str]] = None
-    ) -> List[dict[str, Any]]:
+        md: str, node_types: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
         if md == "":
             return []
         parser = commonmark.Parser(options={"sourcepos": True})
         ast = parser.parse(md)
         line_starts = [0] + [m.end() for m in re.finditer("\n", md)]
 
-        def walk(node: Any, out: List[dict[str, Any]]) -> None:
+        def walk(node: Any, out: list[dict[str, Any]]) -> None:
             while node:
                 if node.sourcepos and (node_types is None or node.t in node_types):
                     (sl, sc), (el, ec) = node.sourcepos
@@ -234,41 +236,41 @@ class MarkdownChunker(BaseChunker):
                     walk(node.first_child, out)
                 node = node.nxt
 
-        results: List[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         walk(ast, results)
         results.sort(key=lambda d: (d["start"], d["end"]))
         return results
 
     @staticmethod
-    def _heading_positions(text: str) -> List[dict[str, Any]]:
+    def _heading_positions(text: str) -> list[dict[str, Any]]:
         headings = MarkdownChunker._markdown_node_positions(text, ["heading"])
         for h in headings:
             h["text"] = text[h["start"] : h["end"]].strip()
         return headings
 
     @staticmethod
-    def _paragraph_starts(text: str) -> List[int]:
+    def _paragraph_starts(text: str) -> list[int]:
         paragraphs = MarkdownChunker._markdown_node_positions(text, ["paragraph"])
         starts = [0, *[p["start"] for p in paragraphs]]
         return sorted(set(starts))
 
     @staticmethod
-    def _sentence_starts(text: str) -> List[int]:
+    def _sentence_starts(text: str) -> list[int]:
         starts = []
         for m in re.finditer(r"[.!?]\s+", text):
             starts.append(m.end())
         return starts
 
     @staticmethod
-    def _line_starts(text: str) -> List[int]:
+    def _line_starts(text: str) -> list[int]:
         return [0] + [m.end() for m in re.finditer("\n", text)]
 
     @staticmethod
-    def _word_starts(text: str) -> List[int]:
+    def _word_starts(text: str) -> list[int]:
         return [m.end() for m in re.finditer(r"\s+", text)]
 
     @staticmethod
-    def _heading_context(headings: List[dict[str, Any]], pos: int) -> List[str]:
+    def _heading_context(headings: list[dict[str, Any]], pos: int) -> list[str]:
         """Return the hierarchy of headings active at ``pos``.
 
         This walks the list of headings in order, maintaining a stack of the
@@ -279,7 +281,7 @@ class MarkdownChunker(BaseChunker):
         already present in the chunk text, but they still affect the
         hierarchy by removing same-level headings from the context.
         """
-        stack: List[dict[str, Any]] = []
+        stack: list[dict[str, Any]] = []
         for h in headings:
             if h["start"] > pos:
                 break
@@ -304,7 +306,7 @@ class MarkdownChunker(BaseChunker):
             chunk.origin = document.origin
         return document.to_chunked(chunks)
 
-    def chunk_text(self, text: str) -> List[MarkdownChunk]:
+    def chunk_text(self, text: str) -> list[MarkdownChunk]:
         md_len = len(text)
         headings = self._heading_positions(text)
 
@@ -349,7 +351,7 @@ class MarkdownChunker(BaseChunker):
         }
 
         # build chunks ------------------------------------------------------
-        chunks: List[MarkdownChunk] = []
+        chunks: list[MarkdownChunk] = []
         sorted_snaps = sorted(snap_table_int.values())
         for start, end in chunk_targets:
             s = snap_table_int[start]

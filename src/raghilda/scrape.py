@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from collections import deque
+from collections.abc import Callable, Sequence
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, Sequence
-from urllib.parse import urldefrag, urljoin, urlparse, unquote
-import xml.etree.ElementTree as ET
+from typing import Any
+from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
 import requests
 from tqdm.auto import tqdm
@@ -26,12 +27,9 @@ class _AnchorParser(HTMLParser):
 
 def _extract_links(txt: str) -> set[str]:
     links = set()
-    try:
-        parser = _AnchorParser()
-        parser.feed(txt)
-        links.update(parser.links)
-    except Exception:
-        pass
+    parser = _AnchorParser()
+    parser.feed(txt)
+    links.update(parser.links)
 
     # Now try to parse as a sitemap and get
     try:
@@ -39,7 +37,7 @@ def _extract_links(txt: str) -> set[str]:
         for loc in root.findall(".//{*}url/{*}loc"):
             if loc is not None and loc.text:
                 links.add(loc.text.strip())
-    except Exception:
+    except ET.ParseError:
         pass
 
     return links
@@ -177,7 +175,7 @@ def find_links(
                 response = session.get(url, **request_kwargs)
                 response.raise_for_status()
                 text = response.text
-        except Exception:
+        except (OSError, requests.RequestException):
             continue
 
         links = _extract_links(text)

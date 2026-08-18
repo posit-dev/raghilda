@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, fields
-from typing import Any, Optional, Union
+from typing import Any
+
 from .types import ChunkLike, IntoChunk
 
 __all__ = ["Chunk", "MarkdownChunk", "Metric", "RetrievedChunk"]
@@ -40,9 +41,9 @@ class Chunk:
     start_index: int
     end_index: int
     char_count: int
-    context: Optional[str] = None
-    origin: Optional[str] = None
-    attributes: Optional[dict[str, Any]] = None
+    context: str | None = None
+    origin: str | None = None
+    attributes: dict[str, Any] | None = None
 
     def __repr__(self) -> str:
         from pprint import pformat
@@ -61,7 +62,7 @@ class Chunk:
     __str__ = __repr__
 
     @classmethod
-    def from_any(cls, chunk: Union[ChunkLike, IntoChunk]) -> "Chunk":
+    def from_any(cls, chunk: ChunkLike | IntoChunk) -> "Chunk":
         """Coerce a chunk from another library into a raghilda `Chunk`.
 
         This is the interoperability entry point for chunks produced outside
@@ -145,8 +146,6 @@ class MarkdownChunk(Chunk):
         Optional user-defined attributes associated with the chunk, used for
         retrieval filtering and downstream prompt construction.
     """
-
-    pass
 
 
 @dataclass

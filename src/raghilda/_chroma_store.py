@@ -1,25 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from contextlib import contextmanager
 import hashlib
 import importlib
 import json
-from pathlib import Path
 import threading
+from collections.abc import Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from typing import (
-    Any,
-    Optional,
-    Sequence,
     TYPE_CHECKING,
+    Any,
     TypeAlias,
     cast,
     overload,
 )
 
-from ._store import BaseStore, WriteResult
-from .chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
-from .document import ChunkedMarkdownDocument, Document
+from ._attributes import (
+    AttributeFilter,
+    AttributeSpec,
+    AttributesSchemaSpec,
+    AttributeType,
+    attributes_spec_from_json_dict,
+    attributes_spec_to_json_dict,
+    compile_filter_to_chroma_where,
+    merge_attribute_values,
+    normalize_attributes_spec,
+)
 from ._deoverlap import deoverlap_chunks
 from ._embedding import (
     EmbeddingCohere,
@@ -28,23 +35,18 @@ from ._embedding import (
     EmbedInputType,
     embedding_from_config,
 )
-from ._attributes import (
-    AttributeFilter,
-    AttributesSchemaSpec,
-    AttributeSpec,
-    AttributeType,
-    attributes_spec_from_json_dict,
-    attributes_spec_to_json_dict,
-    compile_filter_to_chroma_where,
-    merge_attribute_values,
-    normalize_attributes_spec,
-)
+from ._store import BaseStore, WriteResult
 from ._store_metadata import AttributesStoreMetadata, attributes_schema_from_spec
+from .chunk import Chunk, MarkdownChunk, Metric, RetrievedChunk
+from .document import ChunkedMarkdownDocument, Document
 
 if TYPE_CHECKING:
-    import numpy as np
     import chromadb.api.types  # pyright: ignore[reportMissingImports]
-    from chromadb.api.types import Documents, EmbeddingFunction  # pyright: ignore[reportMissingImports]
+    import numpy as np
+    from chromadb.api.types import (  # pyright: ignore[reportMissingImports]
+        Documents,
+        EmbeddingFunction,
+    )
 
     ChromaEmbeddingFunction: TypeAlias = EmbeddingFunction[Documents]
 
@@ -87,8 +89,12 @@ def _ensure_no_reserved_attributes(
 
 # ChromaEmbeddingAdapter is only defined when chromadb is installed
 try:
-    from chromadb import EmbeddingFunction as _EmbeddingFunctionBase  # pyright: ignore[reportMissingImports]
-    from chromadb.utils.embedding_functions import register_embedding_function  # pyright: ignore[reportMissingImports]
+    from chromadb import (
+        EmbeddingFunction as _EmbeddingFunctionBase,  # pyright: ignore[reportMissingImports]
+    )
+    from chromadb.utils.embedding_functions import (
+        register_embedding_function,  # pyright: ignore[reportMissingImports]
+    )
 
     class ChromaEmbeddingAdapter(_EmbeddingFunctionBase):
         """Adapter to use any raghilda EmbeddingProvider with ChromaDB.
@@ -148,7 +154,7 @@ try:
             }
 
         @staticmethod
-        def build_from_config(config: dict[str, Any]) -> "ChromaEmbeddingAdapter":
+        def build_from_config(config: dict[str, Any]) -> ChromaEmbeddingAdapter:
             """Restore the adapter from a configuration dict.
 
             This reconstructs both the adapter and the wrapped provider.
@@ -176,7 +182,9 @@ def _chroma_embedding_from_openai(
 ) -> ChromaEmbeddingFunction:
     import os
 
-    from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction  # pyright: ignore[reportMissingImports]
+    from chromadb.utils.embedding_functions import (
+        OpenAIEmbeddingFunction,  # pyright: ignore[reportMissingImports]
+    )
 
     if os.getenv("CHROMA_OPENAI_API_KEY"):
         return cast(
@@ -210,7 +218,9 @@ def _chroma_embedding_from_cohere(
 ) -> ChromaEmbeddingFunction:
     import os
 
-    from chromadb.utils.embedding_functions import CohereEmbeddingFunction  # pyright: ignore[reportMissingImports]
+    from chromadb.utils.embedding_functions import (
+        CohereEmbeddingFunction,  # pyright: ignore[reportMissingImports]
+    )
 
     if os.getenv("CHROMA_COHERE_API_KEY"):
         return cast(
@@ -406,15 +416,15 @@ class ChromaDBStore(BaseStore):
         location: str | Path | None = None,
         *,
         overwrite: bool = False,
-        name: Optional[str] = None,
-        title: Optional[str] = None,
+        name: str | None = None,
+        title: str | None = None,
         embed: (
             EmbeddingProvider
             | chromadb.api.types.EmbeddingFunction[chromadb.api.types.Documents]
             | None
         ) = None,
-        collection_metadata: Optional[dict[str, Any]] = None,
-        attributes: Optional[AttributesSchemaSpec] = None,
+        collection_metadata: dict[str, Any] | None = None,
+        attributes: AttributesSchemaSpec | None = None,
         client: Any = None,
     ):
         """Create a new ChromaDB store.
@@ -469,9 +479,10 @@ class ChromaDBStore(BaseStore):
             client = _get_client(location)
 
         if overwrite:
+            chromadb = _import_chromadb()
             try:
                 client.delete_collection(name=name)
-            except Exception:
+            except chromadb.errors.NotFoundError:
                 pass
 
         store_metadata = {
@@ -484,10 +495,10 @@ class ChromaDBStore(BaseStore):
         merged_metadata = dict(collection_metadata or {})
         merged_metadata.update(store_metadata)
 
-        collection_kwargs: dict[str, Any] = dict(
-            name=name,
-            metadata=merged_metadata,
-        )
+        collection_kwargs: dict[str, Any] = {
+            "name": name,
+            "metadata": merged_metadata,
+        }
         if embedding_function is not None:
             collection_kwargs["embedding_function"] = embedding_function
 
@@ -563,7 +574,7 @@ class ChromaDBStore(BaseStore):
         # Temporary workaround for ChromaDB's non-thread-safe telemetry batching.
         # See https://github.com/chroma-core/chroma/issues/6512
         self._collection_lock = threading.Lock()
-        self._next_chunk_id: Optional[int] = None
+        self._next_chunk_id: int | None = None
 
     def upsert(
         self,
@@ -572,7 +583,7 @@ class ChromaDBStore(BaseStore):
         skip_if_unchanged: bool = True,
     ) -> WriteResult[ChunkedMarkdownDocument]:
         if not isinstance(document, ChunkedMarkdownDocument):
-            raise ValueError(
+            raise TypeError(
                 "Only ChunkedMarkdownDocument is supported for ChromaDBStore"
             )
         if len(document.chunks) == 0:
@@ -709,7 +720,7 @@ class ChromaDBStore(BaseStore):
         top_k: int,
         *,
         deoverlap: bool = True,
-        attributes_filter: Optional[AttributeFilter] = None,
+        attributes_filter: AttributeFilter | None = None,
         **kwargs,
     ) -> Sequence[RetrievedChromaDBMarkdownChunk]:
         """Retrieve the most similar chunks to the given text.
@@ -886,7 +897,7 @@ class ChromaDBStore(BaseStore):
 
     def _snapshot_document_from_existing_if_available(
         self, existing: dict[str, Any], *, origin: str
-    ) -> Optional[ChunkedMarkdownDocument]:
+    ) -> ChunkedMarkdownDocument | None:
         try:
             return self._snapshot_document_from_existing(existing, origin=origin)
         except ValueError as exc:
