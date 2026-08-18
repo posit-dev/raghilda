@@ -1,11 +1,11 @@
 import os
 import socket
-from functools import lru_cache
+from functools import cache
 
 import pytest
 
 
-@lru_cache(maxsize=None)
+@cache
 def _can_reach_network(host: str, timeout: float) -> bool:
     try:
         with socket.create_connection((host, 443), timeout=timeout):

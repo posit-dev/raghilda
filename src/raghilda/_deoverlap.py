@@ -3,8 +3,11 @@ Deoverlap functionality for merging overlapping retrieved chunks.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+
 from .chunk import RetrievedChunk
 
 T = TypeVar("T", bound=RetrievedChunk)
@@ -141,7 +144,7 @@ def deoverlap_chunks(
 
     result: list[T] = []
 
-    for _, doc_chunks in by_doc.items():
+    for doc_chunks in by_doc.values():
         # Sort by start_index for interval merging
         doc_chunks.sort(key=lambda c: c.start_index)
 

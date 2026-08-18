@@ -1,4 +1,5 @@
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from ._embedding import (
     EmbeddingProvider,
@@ -74,9 +75,9 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
     def __init__(
         self,
         model: str = "all-MiniLM-L6-v2",
-        device: Optional[str] = None,
+        device: str | None = None,
         batch_size: int = 64,
-        prompts: Optional[dict[EmbedInputType, str]] = None,
+        prompts: dict[EmbedInputType, str] | None = None,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 

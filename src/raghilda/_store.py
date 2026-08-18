@@ -1,23 +1,24 @@
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import FIRST_COMPLETED, CancelledError, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-import threading
-from typing import Any, Callable, Generic, Iterable, Literal, Sequence, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from .chunk import RetrievedChunk
 from .document import Document
 
-TDocument = TypeVar("TDocument", bound=Document, covariant=True)
+TDocument_co = TypeVar("TDocument_co", bound=Document, covariant=True)
 _RECENT_INGEST_ORIGIN_WINDOW = 10_000
 
 
 @dataclass(frozen=True)
-class WriteResult(Generic[TDocument]):
+class WriteResult(Generic[TDocument_co]):
     action: Literal["inserted", "replaced", "skipped"]
-    document: TDocument
-    replaced_document: TDocument | None = None
+    document: TDocument_co
+    replaced_document: TDocument_co | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class BaseStore(ABC):
 
     @staticmethod
     @abstractmethod
-    def connect(*args, **kwargs) -> "BaseStore":
+    def connect(*args, **kwargs) -> BaseStore:
         """Connect to an existing store.
 
         Returns
@@ -51,11 +52,10 @@ class BaseStore(ABC):
         BaseStore
             A connected store instance.
         """
-        pass
 
     @staticmethod
     @abstractmethod
-    def create(*args, **kwargs) -> "BaseStore":
+    def create(*args, **kwargs) -> BaseStore:
         """Create a new store.
 
         Returns
@@ -63,7 +63,6 @@ class BaseStore(ABC):
         BaseStore
             A newly created store instance.
         """
-        pass
 
     @abstractmethod
     def upsert(
@@ -85,7 +84,6 @@ class BaseStore(ABC):
             for the same identity key already has identical content and
             chunk metadata. This helps avoid unnecessary embedding work.
         """
-        pass
 
     def _ingest_upsert(self, document: Document) -> WriteResult[Document]:
         return self.upsert(document)
@@ -165,7 +163,7 @@ class BaseStore(ABC):
                         results.append(future.result())
                     except CancelledError as exc:
                         cancelled_errors.append(exc)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         errors.append(exc)
                 if errors:
                     raise errors[0]
@@ -220,7 +218,6 @@ class BaseStore(ABC):
         Sequence[RetrievedChunk]
             The most similar chunks, ordered by relevance.
         """
-        pass
 
     @abstractmethod
     def size(self) -> int:
@@ -231,4 +228,3 @@ class BaseStore(ABC):
         int
             The number of documents (not chunks) in the store.
         """
-        pass

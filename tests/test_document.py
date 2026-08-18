@@ -1,7 +1,7 @@
-from raghilda.chunk import Chunk, MarkdownChunk, RetrievedChunk, Metric
 from raghilda._duckdb_store import (
     RetrievedDuckDBMarkdownChunk,
 )  # internal implementation
+from raghilda.chunk import Chunk, MarkdownChunk, Metric, RetrievedChunk
 from raghilda.document import (
     ChunkedDocument,
     ChunkedMarkdownDocument,

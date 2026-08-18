@@ -1,7 +1,10 @@
+from typing import ClassVar
+
 import pytest
+
 from raghilda.chunk import Chunk
 from raghilda.document import ChunkedDocument, Document
-from raghilda.types import ChunkLike, ChunkedDocumentLike, DocumentLike, IntoChunk
+from raghilda.types import ChunkedDocumentLike, ChunkLike, DocumentLike, IntoChunk
 
 
 class TestChunkLikeProtocol:
@@ -227,7 +230,7 @@ class TestDocumentProtocols:
 
         class MyDoc:
             content = "chunk1 chunk2"
-            chunks = [MyChunk()]
+            chunks: ClassVar[list[MyChunk]] = [MyChunk()]
 
         assert isinstance(MyDoc(), ChunkedDocumentLike)
 
@@ -240,7 +243,7 @@ class TestDocumentProtocols:
 
         class MyDoc:
             content = "chunk1 chunk2"
-            chunks = [MyChunk()]
+            chunks: ClassVar[list[MyChunk]] = [MyChunk()]
 
         result = ChunkedDocument.from_any(MyDoc())  # type: ignore[arg-type]
         assert len(result.chunks) == 1
@@ -282,7 +285,7 @@ class TestErrorCases:
 
         class ChunkedDoc:
             content = "hello world"
-            chunks = [MyChunk()]
+            chunks: ClassVar[list[MyChunk]] = [MyChunk()]
 
         with pytest.raises(TypeError, match="use ChunkedDocument.from_any"):
             Document.from_any(ChunkedDoc())  # type: ignore[arg-type]

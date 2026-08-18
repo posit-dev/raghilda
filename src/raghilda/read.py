@@ -1,7 +1,6 @@
 import re
 import threading
 import warnings
-from typing import Optional
 
 import requests as _requests
 
@@ -18,8 +17,8 @@ from markitdown.converters._markdownify import _CustomMarkdownify
 
 def read_as_markdown(
     uri: str,
-    html_extract_selectors: Optional[list[str]] = None,
-    html_zap_selectors: Optional[list[str]] = None,
+    html_extract_selectors: list[str] | None = None,
+    html_zap_selectors: list[str] | None = None,
     *args,
     **kwargs,
 ) -> MarkdownDocument:
@@ -83,9 +82,9 @@ def read_as_markdown(
 
     md = _convert_to_markdown(
         uri,
+        *args,
         html_extract_selectors=html_extract_selectors,
         html_zap_selectors=html_zap_selectors,
-        *args,
         **kwargs,
     )
 
@@ -108,7 +107,7 @@ def _maybe_insert_info_string(text, class_):
     if isinstance(class_, list):
         try:
             class_ = class_[class_.index("sourceCode") + 1]
-        except Exception:
+        except ValueError:
             class_ = " ".join(class_)
 
     class_ = str(class_).strip()

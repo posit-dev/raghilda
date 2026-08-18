@@ -1,6 +1,7 @@
 import pytest
-from tests import helpers as test_helpers
+
 from raghilda.embedding import EmbeddingNVIDIA, EmbedInputType, embedding_from_config
+from tests import helpers as test_helpers
 
 
 class TestEmbeddingNVIDIA:

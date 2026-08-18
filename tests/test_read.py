@@ -77,7 +77,7 @@ def test_read_as_markdown_extract_selectors_scope_content(tmp_path):
 
 def test_patched_markitdown_serializes_global_converter_patches():
     original_convert_soup = _CustomMarkdownify.convert_soup
-    original_convert_pre = getattr(_CustomMarkdownify, "convert_pre")
+    original_convert_pre = getattr(_CustomMarkdownify, "convert_pre")  # noqa: B009
     first_entered = threading.Event()
     second_entered = threading.Event()
     release_first = threading.Event()
@@ -115,14 +115,16 @@ def test_patched_markitdown_serializes_global_converter_patches():
         assert not second_thread.is_alive()
 
         assert _CustomMarkdownify.convert_soup is original_convert_soup
-        assert getattr(_CustomMarkdownify, "convert_pre") is original_convert_pre
+        assert (
+            getattr(_CustomMarkdownify, "convert_pre") is original_convert_pre  # noqa: B009
+        )
     finally:
         release_first.set()
         release_second.set()
         first_thread.join(timeout=1.0)
         second_thread.join(timeout=1.0)
         _CustomMarkdownify.convert_soup = original_convert_soup
-        setattr(_CustomMarkdownify, "convert_pre", original_convert_pre)
+        setattr(_CustomMarkdownify, "convert_pre", original_convert_pre)  # noqa: B010
 
 
 def test_read_as_markdown_expands_nested_fences(tmp_path):

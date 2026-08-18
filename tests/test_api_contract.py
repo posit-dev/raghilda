@@ -4,17 +4,17 @@ from types import SimpleNamespace
 import pytest
 
 import raghilda.crawl as crawl_module
+import raghilda.store as store_module
 from raghilda.chunk import MarkdownChunk
 from raghilda.crawl import (
     BaseCrawler,
-    CrawlScope,
     CloudflareCrawler,
+    CrawlScope,
     DirectoryCrawler,
     FetchedSource,
     WebCrawler,
 )
 from raghilda.document import Document, MarkdownDocument
-import raghilda.store as store_module
 from raghilda.store import (
     ChromaDBStore,
     DuckDBStore,
@@ -142,5 +142,5 @@ def test_openai_upsert_rejects_chunked_document():
         ]
     )
 
-    with pytest.raises(ValueError, match="does not support chunked documents"):
+    with pytest.raises(TypeError, match="does not support chunked documents"):
         store.upsert(doc)
