@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
 
-import httpx
+import httpx2
 import openai
 import pytest
 
@@ -2011,7 +2011,7 @@ def test_openai_store_insert_skipped_fallback_preserves_existing_file_id():
 
     class FakeFiles:
         def content(self, file_id):
-            request = httpx.Request(
+            request = httpx2.Request(
                 "GET", f"https://api.openai.com/v1/files/{file_id}/content"
             )
             raise openai.APIConnectionError(request=request)
@@ -2575,7 +2575,7 @@ def test_openai_store_insert_raises_when_old_file_delete_fails():
 
         def delete(self, file_id, **kwargs):
             self.deleted_ids.append(file_id)
-            request = httpx.Request(
+            request = httpx2.Request(
                 "DELETE",
                 f"https://api.openai.com/v1/vector_stores/{kwargs.get('vector_store_id')}/files/{file_id}",
             )
@@ -2653,7 +2653,7 @@ def test_openai_store_insert_rolls_back_uploaded_file_when_old_file_delete_fails
             self.deleted_ids.append(file_id)
             if file_id == "file_old" and not self._old_delete_failed_once:
                 self._old_delete_failed_once = True
-                request = httpx.Request(
+                request = httpx2.Request(
                     "DELETE",
                     f"https://api.openai.com/v1/vector_stores/{kwargs.get('vector_store_id')}/files/{file_id}",
                 )
@@ -2848,10 +2848,10 @@ def test_openai_store_insert_updates_when_snapshot_download_forbidden():
 
     class FakeFiles:
         def content(self, file_id):
-            request = httpx.Request(
+            request = httpx2.Request(
                 "GET", f"https://api.openai.com/v1/files/{file_id}/content"
             )
-            response = httpx.Response(400, request=request)
+            response = httpx2.Response(400, request=request)
             raise openai.BadRequestError(
                 "Not allowed to download files of purpose: assistants",
                 response=response,
@@ -2919,7 +2919,7 @@ def test_openai_store_insert_updates_when_snapshot_download_connection_error():
 
     class FakeFiles:
         def content(self, file_id):
-            request = httpx.Request(
+            request = httpx2.Request(
                 "GET", f"https://api.openai.com/v1/files/{file_id}/content"
             )
             raise openai.APIConnectionError(request=request)
