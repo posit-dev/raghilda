@@ -198,3 +198,37 @@ def test_chunk_returns_chunked_markdown_document_without_mutating_input() -> Non
     assert len(chunked.chunks) == 1
     assert chunked.chunks[0].origin == doc.origin
     assert not hasattr(doc, "chunks")
+
+
+def test_chunker_handles_bare_carriage_return_before_paragraph() -> None:
+    text = "# Heading\r\n\rParagraph extracted from PDF."
+    chunks = MarkdownChunker(chunk_size=12, target_overlap=0).chunk_text(text)
+
+    paragraph_start = text.index("Paragraph")
+    paragraph_chunk = next(
+        chunk for chunk in chunks if chunk.start_index == paragraph_start
+    )
+    assert paragraph_chunk.context == "# Heading"
+    assert paragraph_chunk.text == text[paragraph_start:]
+
+
+def test_chunker_handles_bare_carriage_return_inside_paragraph() -> None:
+    text = "# heading\n\nparagraph\rmore"
+    chunks = MarkdownChunker(chunk_size=len(text), target_overlap=0).chunk_text(text)
+
+    assert len(chunks) == 1
+    assert chunks[0].start_index == 0
+    assert chunks[0].end_index == len(text)
+    assert chunks[0].text == text
+
+
+def test_chunker_snaps_to_bare_carriage_return_line_start() -> None:
+    text = "aaaa\r    bbbb"
+    chunks = MarkdownChunker(
+        chunk_size=6,
+        target_overlap=0,
+        max_snap_distance=1,
+    ).chunk_text(text)
+
+    assert chunks[0].end_index == text.index("    bbbb")
+    assert chunks[0].text == "aaaa\r"
