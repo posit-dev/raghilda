@@ -216,7 +216,7 @@ class MarkdownChunker(BaseChunker):
             return []
         parser = commonmark.Parser(options={"sourcepos": True})
         ast = parser.parse(md)
-        line_starts = [0] + [m.end() for m in re.finditer("\n", md)]
+        line_starts = MarkdownChunker._line_starts(md)
 
         def walk(node: Any, out: list[dict[str, Any]]) -> None:
             while node:
@@ -263,7 +263,7 @@ class MarkdownChunker(BaseChunker):
 
     @staticmethod
     def _line_starts(text: str) -> list[int]:
-        return [0] + [m.end() for m in re.finditer("\n", text)]
+        return [0] + [m.end() for m in re.finditer(r"\r\n|\n|\r", text)]
 
     @staticmethod
     def _word_starts(text: str) -> list[int]:
