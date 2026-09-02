@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.2.1
+
+raghilda 0.2.1 adds Python 3.14 support and fixes Markdown chunking for
+documents that use bare carriage-return line endings.
+
+### Added
+
+- Added Python 3.14 support by selecting compatible Magika and ONNX Runtime
+  versions.
+
+### Changed
+
+- Affected store and attribute APIs now raise `TypeError` instead of
+  `ValueError` when callers pass values of unsupported types.
+
+### Fixed
+
+- Fixed `MarkdownChunker` failures and source offsets for Markdown containing
+  bare carriage-return line endings.
+
 ## 0.2.0
 
 raghilda 0.2.0 expands the package from the core RAG workflow into a more
