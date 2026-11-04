@@ -93,6 +93,10 @@ store = DuckDBStore.connect("my_store.db")
 
 You don't need any API keys in your environment for this to work. Ollama does need to be running (at the same `base_url`) whenever you add documents or call `retrieve()`, though, and the model has to still be pulled.
 
+::: {.callout-tip}
+Since Ollama's API is OpenAI-compatible, you might wonder why not use `EmbeddingOpenAI` with `base_url` pointing at Ollama. That does work for creating a store, but the store would remember it as an OpenAI provider, and reconnecting would then fail unless `OPENAI_API_KEY` happened to be set. `EmbeddingOllama` is saved under its own name, so reconnecting just works.
+:::
+
 ## Troubleshooting
 
 There are two errors you're likely to run into when getting started.
