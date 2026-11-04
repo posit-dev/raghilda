@@ -116,3 +116,49 @@ Both errors appear as soon as raghilda first contacts Ollama, which is usually a
 
 In practice, the parameters you're most likely to change are `model` and, if Ollama runs somewhere other than your own machine, `base_url`. All of them except `api_key` are saved with the store, so a reconnected store uses the same model and server. For the full API details, see the [`EmbeddingOllama` reference page](/reference/embedding.EmbeddingOllama.qmd).
 
+## Complete example
+
+This example builds a store from two web pages and searches it. Apart from fetching the pages, everything runs on your own machine:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingOllama
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingOllama(model="nomic-embed-text"),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How do I configure authentication?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+If you'd also like the chat side of your RAG application to run locally, [chatlas](chatlas-integration.qmd) can talk to Ollama through `ChatOllama`, so the whole pipeline (from embedding to answer generation) stays on your machine.
+
+## Using Ollama with ChromaDB
+
+When you pass `EmbeddingOllama` to `ChromaDBStore`, raghilda wraps it in an adapter so that ChromaDB can call it. The provider is restored automatically when you reconnect from Python, but ChromaDB clients in other languages won't be able to use the collection's embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.
+
+## When to use Ollama
+
+`EmbeddingOllama` is a good fit when:
+
+- your content shouldn't be sent to a third-party API
+- you're already using Ollama for local chat models
+- you want local embeddings without installing PyTorch into your Python environment
+- you'd like one embedding server shared by several projects or machines
+
+Ollama and [SentenceTransformers](embedding-sentence-transformers.qmd) both keep embeddings local, and they differ mainly in where the model runs. SentenceTransformers loads the model inside your Python process and gives you access to anything on Hugging Face. Ollama runs models in a separate server, which keeps your Python environment light and lets other tools share the same models.
