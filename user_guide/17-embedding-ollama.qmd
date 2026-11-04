@@ -116,7 +116,7 @@ Both errors appear as soon as raghilda first contacts Ollama, which is usually a
 
 | Parameter | Default | Description |
 |---|---|---|
-| `model` | `"nomic-embed-text"` | Ollama embedding model name, as shown by `ollama list` |
+| `model` | `"embeddinggemma-2:latest"` | Ollama embedding model name, as shown by `ollama list` |
 | `base_url` | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API |
 | `api_key` | `None` | Only needed behind an authenticating proxy. A placeholder is used if `None` |
 | `batch_size` | `20` | Texts per API call |
@@ -136,7 +136,7 @@ from raghilda.chunker import MarkdownChunker
 
 store = DuckDBStore.create(
     location="docs.db",
-    embed=EmbeddingOllama(model="nomic-embed-text"),
+    embed=EmbeddingOllama(model="embeddinggemma-2:latest"),
     name="docs",
     title="My Documentation",
     overwrite=True,
