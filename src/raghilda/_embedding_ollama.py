@@ -15,14 +15,14 @@ class EmbeddingOllama(EmbeddingOpenAI):
     custom `base_url` means stores can be reconnected without an `OPENAI_API_KEY`
     in the environment.
 
-    Pull an embedding model before using it (e.g., `ollama pull nomic-embed-text`).
+    Pull an embedding model before using it (e.g., `ollama pull embeddinggemma-2`).
     Browse available embedding models at
     [ollama.com/search](https://ollama.com/search?c=embedding).
 
     Parameters
     ----------
     model
-        The Ollama embedding model to use. Default is "nomic-embed-text".
+        The Ollama embedding model to use. Default is "embeddinggemma-2:latest".
     base_url
         The base URL for the Ollama server's OpenAI-compatible API. Default is
         "http://localhost:11434/v1". Change this when Ollama runs on another
@@ -40,7 +40,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
     #| eval: false
     from raghilda.embedding import EmbeddingOllama
 
-    provider = EmbeddingOllama(model="nomic-embed-text")
+    provider = EmbeddingOllama(model="embeddinggemma-2:latest")
     embeddings = provider.embed(["hello world", "testing embeddings"])
     print(len(embeddings))
     print(len(embeddings[0]))  # Dimension of the embedding
