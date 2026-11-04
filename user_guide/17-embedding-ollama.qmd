@@ -21,7 +21,7 @@ You don't need any additional Python packages. `EmbeddingOllama` uses the `opena
 
 ## Basic usage
 
-With Ollama running and a model pulled, creating a provider requires no configuration at all. The defaults point to Ollama's standard local address and the `nomic-embed-text` model:
+With Ollama running and a model pulled, creating a provider requires no configuration at all. The defaults point to Ollama's standard local address and the `embeddinggemma-2:latest` model:
 
 ```{python}
 #| eval: false
@@ -58,12 +58,13 @@ Ollama's library includes several embedding models. These are some popular ones:
 
 | Model | Dimensions | Notes |
 |---|---|---|
-| `nomic-embed-text` | 768 | The default. Good quality, fast, and the most widely used |
+| `embeddinggemma-2` | 768 | The default. A recent multilingual model from Google that also handles code. The `:270m` tag is a much smaller text-only build |
+| `nomic-embed-text` | 768 | Smaller and fast, and very widely used |
 | `mxbai-embed-large` | 1024 | Higher quality, at the cost of speed and memory |
 | `all-minilm` | 384 | The smallest and fastest option |
 | `bge-m3` | 1024 | Multilingual, with strong cross-lingual retrieval |
 
-You can browse the full set on [Ollama's model search page](https://ollama.com/search?c=embedding). To see which models you've already pulled, run `ollama list`. To see a model's details, including its embedding length, run `ollama show <model>`.
+You can browse the full set on [Ollama's model search page](https://ollama.com/search?c=embedding). To see which models you've already pulled, run `ollama list`.
 
 ::: {.callout-note}
 A store is tied to the model it was created with, because vectors from different models can't be compared. If you switch models, create a new store and re-ingest your documents.
@@ -105,7 +106,7 @@ There are two errors you're likely to run into when getting started.
 
 **Connection errors.** If you see an `APIConnectionError` (or a "connection refused" message), raghilda couldn't reach Ollama at the configured `base_url`. Check that the Ollama app is running, or start the server yourself with `ollama serve`. If Ollama is on another machine, double-check the address and port.
 
-**Model not found.** An error like `model 'nomic-embed-text' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull nomic-embed-text` (or whichever model you've configured) and try again.
+**Model not found.** An error like `model 'embeddinggemma-2:latest' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull embeddinggemma-2` (or whichever model you've configured) and try again.
 
 Both errors appear as soon as raghilda first contacts Ollama, which is usually at `DuckDBStore.create()`, so a quick test store is an easy way to confirm your setup before starting a large ingest. If you run into something else, Ollama's [troubleshooting guide](https://docs.ollama.com/troubleshooting) explains where to find the server logs, which usually say what went wrong.
 
