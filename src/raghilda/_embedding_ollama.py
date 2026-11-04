@@ -49,7 +49,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
 
     def __init__(
         self,
-        model: str = "nomic-embed-text",
+        model: str = "embeddinggemma-2:latest",
         base_url: str = "http://localhost:11434/v1",
         api_key: str | None = None,
         batch_size: int = 20,
@@ -74,7 +74,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "EmbeddingOllama":
         return cls(
-            model=config.get("model", "nomic-embed-text"),
+            model=config.get("model", "embeddinggemma-2:latest"),
             base_url=config.get("base_url", "http://localhost:11434/v1"),
             batch_size=config.get("batch_size", 20),
         )
