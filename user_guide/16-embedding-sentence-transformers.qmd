@@ -91,3 +91,29 @@ Once prompts are configured, the provider adds the matching prefix to each text 
 
 The correct prefixes differ from model to model, so check the model card on Hugging Face before setting them. Models that don't mention prefixes (like the default `all-MiniLM-L6-v2`) don't need them.
 
+## Reconnecting to a store
+
+The store saves the model name, batch size, and any `device` or `prompts` settings, so reconnecting restores an identically configured provider:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("docs.db")
+```
+
+Keep in mind that restoring the provider means loading the model, so `connect()` takes about as long as creating the provider did. If the model isn't in the local cache (for example, on a fresh machine), it'll be downloaded at this point.
+
+## Parameters
+
+`EmbeddingSentenceTransformers` takes four parameters. All of them are optional, and with no arguments the provider runs `all-MiniLM-L6-v2` on whatever device sentence-transformers detects:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `model` | `"all-MiniLM-L6-v2"` | Model name or Hugging Face repo ID |
+| `device` | `None` | Device to run on, such as `"cpu"`, `"cuda"`, or `"mps"`. Auto-detected if `None` |
+| `batch_size` | `64` | Texts encoded per batch |
+| `prompts` | `None` | Optional prefix strings keyed by `EmbedInputType` |
+
+You'll most often set `model`, plus `prompts` when the model's card asks for task prefixes. Since there's no API key involved, every parameter is saved with the store. That's convenient for `prompts`, but it's also why leaving `device` unset is the safer choice for stores that move between machines. For the full API details, see the [`EmbeddingSentenceTransformers` reference page](/reference/embedding.EmbeddingSentenceTransformers.qmd).
+
