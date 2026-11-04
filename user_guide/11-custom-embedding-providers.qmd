@@ -3,7 +3,7 @@ title: "Custom Embedding Providers"
 guide-section: "Building a Store"
 ---
 
-raghilda includes built-in support for OpenAI and Cohere embeddings, but you can create custom providers for other embedding services or local models.
+raghilda includes built-in support for [OpenAI](getting-started.qmd), [Cohere](embedding-cohere.qmd), [NVIDIA NIM](embedding-nvidia.qmd), [SentenceTransformers](embedding-sentence-transformers.qmd), and [Ollama](embedding-ollama.qmd) embeddings. This page covers how to create custom providers for services or local models that aren't already supported.
 
 ## The EmbeddingProvider Interface
 
