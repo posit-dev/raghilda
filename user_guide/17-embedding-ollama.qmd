@@ -80,3 +80,16 @@ Make sure the URL ends in `/v1`, since that's the path for Ollama's OpenAI-compa
 
 Ollama itself doesn't check API keys, so `EmbeddingOllama` sends a placeholder key unless you provide one. The `api_key=` parameter is only needed if you've put Ollama behind a proxy that requires authentication.
 
+## Reconnecting to a store
+
+When you reconnect to a store, raghilda rebuilds the provider from the configuration it saved at creation time. That configuration includes the model name and the `base_url`:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("my_store.db")
+```
+
+You don't need any API keys in your environment for this to work. Ollama does need to be running (at the same `base_url`) whenever you add documents or call `retrieve()`, though, and the model has to still be pulled.
+
