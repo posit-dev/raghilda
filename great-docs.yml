@@ -1,12 +1,6 @@
 # Great Docs Configuration
 # See https://rich-iannone.github.io/great-docs/user-guide/03-configuration.html
 
-# Module Name (optional)
-# ----------------------
-# Set this if your importable module name differs from the project name.
-# Example: project 'py-yaml12' with module name 'yaml12'
-# module: yaml12
-
 # Docstring Parser
 # ----------------
 # The docstring format used in your package (numpy, google, or sphinx)
@@ -17,13 +11,6 @@ parser: numpy
 # Use runtime introspection for more accurate documentation (default: true)
 # Set to false if your package has cyclic alias issues (e.g., PyO3/Rust bindings)
 dynamic: true
-
-# API Discovery Settings
-# ----------------------
-# Exclude items from auto-documentation
-# exclude:
-#   - InternalClass
-#   - helper_function
 
 # Author Information
 # ------------------
@@ -138,24 +125,9 @@ reference:
       - types.IntoChunk
       - types.IntoDocument
 
-# Site Settings
-# -------------
-# site:
-#   theme: flatly              # Quarto theme (default: flatly)
-#   toc: true                  # Show table of contents (default: true)
-#   toc-depth: 2               # TOC heading depth (default: 2)
-#   toc-title: On this page    # TOC title
-
 navbar_color: "#333333"
 
 # Jupyter Kernel
 # --------------
 # Jupyter kernel to use for executing code cells in .qmd files.
 jupyter: python3
-
-# CLI Documentation
-# -----------------
-# cli:
-#   enabled: true              # Enable CLI documentation
-#   module: my_package.cli     # Module containing Click commands
-#   name: cli                  # Name of the Click command object
