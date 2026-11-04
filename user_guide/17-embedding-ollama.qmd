@@ -48,3 +48,20 @@ store = DuckDBStore.create(
 )
 ```
 
+## Choosing a model
+
+Ollama's library includes several embedding models. These are some popular ones:
+
+| Model | Dimensions | Notes |
+|---|---|---|
+| `nomic-embed-text` | 768 | The default. Good quality, fast, and the most widely used |
+| `mxbai-embed-large` | 1024 | Higher quality, at the cost of speed and memory |
+| `all-minilm` | 384 | The smallest and fastest option |
+| `bge-m3` | 1024 | Multilingual, with strong cross-lingual retrieval |
+
+You can browse the full set on [Ollama's model search page](https://ollama.com/search?c=embedding). To see which models you've already pulled, run `ollama list`. To see a model's details, including its embedding length, run `ollama show <model>`.
+
+::: {.callout-note}
+A store is tied to the model it was created with, because vectors from different models can't be compared. If you switch models, create a new store and re-ingest your documents.
+:::
+
