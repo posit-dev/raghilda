@@ -1,0 +1,9 @@
+---
+title: "Ollama Embeddings"
+guide-section: "Building a Store"
+---
+
+[Ollama](https://ollama.com) is an easy way to run open-source models on your own computer. You install a single app, pull the models you want with one command, and Ollama serves them from a local background process. Many people know it for chat models, but Ollama also hosts a good selection of embedding models. Using one of those gives you fully local embeddings: no API key, no per-token costs, and nothing leaving your machine.
+
+raghilda connects to Ollama through `EmbeddingOllama`. Ollama provides an OpenAI-compatible API, so `EmbeddingOllama` is a small variant of `EmbeddingOpenAI` with defaults that match a standard Ollama install. This guide covers setting up Ollama, choosing a model, connecting to Ollama on another machine, and fixing the most common errors.
+
