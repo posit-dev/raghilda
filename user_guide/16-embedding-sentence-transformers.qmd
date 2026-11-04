@@ -67,6 +67,43 @@ for chunk in chunks:
 
 Every step there ran locally: the documents were embedded on your machine when they were upserted, and the query was embedded the same way when `retrieve()` was called.
 
+## Choosing a model
+
+The right model depends on your trade-off between quality, speed, and memory use. Here are a few well-known options:
+
+| Model | Dimensions | Notes |
+|---|---|---|
+| `all-MiniLM-L6-v2` | 384 | The default. Small, fast, and good enough for many tasks |
+| `all-mpnet-base-v2` | 768 | Noticeably better quality, but slower |
+| `intfloat/e5-base-v2` | 768 | Strong retrieval model. Expects query and passage prefixes |
+| `BAAI/bge-large-en-v1.5` | 1024 | A high-quality English model |
+| `intfloat/multilingual-e5-large` | 1024 | Multilingual. Expects query and passage prefixes |
+
+`all-MiniLM-L6-v2` is a sensible default while you're getting a pipeline working, since it's small enough to run quickly on a laptop CPU. Once things are working, it's worth trying a larger model on your own data to see whether the improvement in results is worth the extra time. The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) compares models on retrieval benchmarks and is a good way to find candidates.
+
+::: {.callout-note}
+Some models on the Hub, such as `nomic-ai/nomic-embed-text-v1.5`, require `trust_remote_code=True` to load. `EmbeddingSentenceTransformers` doesn't pass that option through, so stick to models that load without it. If you'd like to use one of those models, [Ollama](embedding-ollama.qmd) packages several of them in a form that works out of the box.
+:::
+
+## Choosing a device
+
+By default, sentence-transformers picks the fastest device it can find: a CUDA GPU if one is available, then Apple Silicon's GPU, and otherwise the CPU. You can override this with `device=`:
+
+```{python}
+#| eval: false
+# Force CPU
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cpu")
+
+# Use Apple Silicon GPU
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="mps")
+
+# Use CUDA
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cuda")
+```
+
+Leaving `device` unset is usually the best choice. One reason to set it is portability: if you set `device=` explicitly, that setting is saved with the store. A store created with `device="cuda"` will then try to use CUDA when reconnected, which fails on a machine without an NVIDIA GPU. When in doubt, leave it as `None` so each machine can pick its own device.
+
+The `batch_size=` parameter (64 by default) controls how many texts are encoded together. On a GPU with plenty of memory, a larger batch can speed up ingestion. If you run out of memory, lower it.
 
 ## Task-specific prompts
 
