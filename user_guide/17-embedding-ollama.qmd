@@ -67,3 +67,16 @@ You can browse the full set on [Ollama's model search page](https://ollama.com/s
 A store is tied to the model it was created with, because vectors from different models can't be compared. If you switch models, create a new store and re-ingest your documents.
 :::
 
+## Connecting to Ollama on another machine
+
+By default, `EmbeddingOllama` connects to `http://localhost:11434/v1`, which is where Ollama listens on the machine it's installed on. If Ollama runs on a different machine (say, a desktop with a good GPU) or on a different port, set `base_url=` to match:
+
+```{python}
+#| eval: false
+provider = EmbeddingOllama(base_url="http://192.168.1.10:11434/v1")
+```
+
+Make sure the URL ends in `/v1`, since that's the path for Ollama's OpenAI-compatible API. Also note that, by default, Ollama only accepts connections from the machine it's running on. To reach it from another machine, start Ollama with the `OLLAMA_HOST` environment variable set to `0.0.0.0` on the server side (see [Ollama's FAQ](https://docs.ollama.com/faq) for details).
+
+Ollama itself doesn't check API keys, so `EmbeddingOllama` sends a placeholder key unless you provide one. The `api_key=` parameter is only needed if you've put Ollama behind a proxy that requires authentication.
+
