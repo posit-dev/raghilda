@@ -103,3 +103,16 @@ There are two errors you're likely to run into when getting started.
 
 Both errors appear as soon as raghilda first contacts Ollama, which is usually at `DuckDBStore.create()`, so a quick test store is an easy way to confirm your setup before starting a large ingest. If you run into something else, Ollama's [troubleshooting guide](https://docs.ollama.com/troubleshooting) explains where to find the server logs, which usually say what went wrong.
 
+## Parameters
+
+`EmbeddingOllama` takes four parameters. All of them are optional, so a standard local install of Ollama needs no arguments at all:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `model` | `"nomic-embed-text"` | Ollama embedding model name, as shown by `ollama list` |
+| `base_url` | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API |
+| `api_key` | `None` | Only needed behind an authenticating proxy. A placeholder is used if `None` |
+| `batch_size` | `20` | Texts per API call |
+
+In practice, the parameters you're most likely to change are `model` and, if Ollama runs somewhere other than your own machine, `base_url`. All of them except `api_key` are saved with the store, so a reconnected store uses the same model and server. For the full API details, see the [`EmbeddingOllama` reference page](/reference/embedding.EmbeddingOllama.qmd).
+
