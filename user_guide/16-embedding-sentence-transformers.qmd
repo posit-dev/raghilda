@@ -67,3 +67,27 @@ for chunk in chunks:
 
 Every step there ran locally: the documents were embedded on your machine when they were upserted, and the query was embedded the same way when `retrieve()` was called.
 
+
+## Task-specific prompts
+
+Some models were trained to expect a short prefix on each input that tells them whether the text is a search query or a document to be searched. The E5 family is a common example: queries should start with `"query: "` and documents with `"passage: "`. Without these prefixes the models still work, but their retrieval quality drops.
+
+The `prompts=` parameter lets you set a prefix for each `EmbedInputType`:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
+
+provider = EmbeddingSentenceTransformers(
+    model="intfloat/e5-base-v2",
+    prompts={
+        EmbedInputType.QUERY: "query: ",
+        EmbedInputType.DOCUMENT: "passage: ",
+    },
+)
+```
+
+Once prompts are configured, the provider adds the matching prefix to each text before encoding it. The store chooses the input type for you: chunks written with `upsert()` or `ingest()` use the `DOCUMENT` prefix, and the text you pass to `retrieve()` uses the `QUERY` prefix. You can also set just one of the two. For example, some BGE models only want an instruction prefix on queries.
+
+The correct prefixes differ from model to model, so check the model card on Hugging Face before setting them. Models that don't mention prefixes (like the default `all-MiniLM-L6-v2`) don't need them.
+
