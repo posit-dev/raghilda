@@ -23,13 +23,13 @@ You can also pass the key directly with `api_key=`. raghilda doesn't save API ke
 
 ## Basic usage
 
-`EmbeddingCohere` uses `embed-english-v3.0` by default. Use `model=` to choose a model:
+Use `model=` to choose a model. These examples use `embed-v5.0-fast`, from Cohere's [Embed 5 release](https://docs.cohere.com/changelog/embed-v5) in September 2026. Calling `EmbeddingCohere()` without a model still selects `embed-english-v3.0`.
 
 ```{python}
 #| eval: false
 from raghilda.embedding import EmbeddingCohere
 
-provider = EmbeddingCohere(model="embed-english-v3.0")
+provider = EmbeddingCohere(model="embed-v5.0-fast")
 ```
 
 Pass the provider to a store through the `embed=` argument:
@@ -41,7 +41,7 @@ from raghilda.embedding import EmbeddingCohere
 
 store = DuckDBStore.create(
     location="my_store.db",
-    embed=EmbeddingCohere(),
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
 )
 ```
 
@@ -49,18 +49,20 @@ store = DuckDBStore.create(
 
 ## Choosing a model
 
-Cohere's v3 models include English and multilingual options with two embedding sizes:
+These models support the text embedding API used by `EmbeddingCohere`. The list was reviewed in November 2026:
 
-| Model                           | Dimensions | Notes                       |
-| ------------------------------- | ---------- | --------------------------- |
-| `embed-english-v3.0`            | 1024       | English; raghilda's default |
-| `embed-multilingual-v3.0`       | 1024       | Supports 100+ languages     |
-| `embed-english-light-v3.0`      | 384        | English                     |
-| `embed-multilingual-light-v3.0` | 384        | Supports 100+ languages     |
+| Model                | Dimensions | Notes                                                         |
+| -------------------- | ---------- | ------------------------------------------------------------- |
+| `embed-v5.0-fast`    | 2048       | Multilingual; the model used in this guide                    |
+| `embed-v5.0-pro`     | 2048       | Multilingual; another v5 model to compare on your searches    |
+| `embed-v4.0`         | 1536       | Previous generation; may already be used in an existing store |
+| `embed-english-v3.0` | 1024       | English; raghilda's default                                   |
 
-Dimensions are the number of values in each embedding. The light models produce shorter embeddings, which require less storage. To compare models, try searches that reflect your documents and the questions you expect users to ask.
+Dimensions are the number of values in each embedding. They affect storage size, but do not tell you which model will retrieve the most useful passages. The table shows the dimensions returned by raghilda; the provider does not expose Cohere's `output_dimension` option.
 
-Cohere's [model documentation](https://docs.cohere.com/docs/cohere-embed) has the full list of models along with their context lengths.
+To compare models, choose a few questions for which you know the relevant passages. Build a separate store with each model, using the same documents and chunks, and check whether those passages appear in the results. Response time and API cost may also affect your choice.
+
+Cohere's [model documentation](https://docs.cohere.com/docs/cohere-embed) lists supported languages and input limits. The v3 English model accepts up to 512 tokens per input, while v4 and v5 accept longer inputs. Check the limit when choosing a [chunk size](chunking.qmd), since text beyond it may be truncated by the API.
 
 ::: {.callout-note}
 A store saves the model it was created with. To use a different model, create a new store and embed your documents again.
@@ -68,7 +70,7 @@ A store saves the model it was created with. To use a different model, create a 
 
 ## Query and document embeddings
 
-Cohere's embedding API uses an input type to distinguish search queries from documents. raghilda maps `EmbedInputType.QUERY` to `"search_query"` and `EmbedInputType.DOCUMENT` to `"search_document"`. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use the document type, and text passed to `retrieve()` uses the query type.
+Cohere's embedding API uses an input type to distinguish search queries from documents. raghilda maps `EmbedInputType.QUERY` to `"search_query"` and `EmbedInputType.DOCUMENT` to `"search_document"`. `DuckDBStore` sets the input type automatically: chunks added with `upsert()` or `ingest()` use the document type, and text passed to `retrieve()` uses the query type.
 
 When calling the provider directly, set `input_type` to match the text you're embedding:
 
@@ -76,7 +78,7 @@ When calling the provider directly, set `input_type` to match the text you're em
 #| eval: false
 from raghilda.embedding import EmbeddingCohere, EmbedInputType
 
-provider = EmbeddingCohere()
+provider = EmbeddingCohere(model="embed-v5.0-fast")
 
 # Embed documents for storage
 doc_embeddings = provider.embed(
@@ -92,6 +94,14 @@ query_embedding = provider.embed(
 ```
 
 If you leave out `input_type`, the provider assumes `EmbedInputType.DOCUMENT`.
+
+::: {.callout-note}
+### Set the input type for search queries
+
+Embedding a search query with the default `DOCUMENT` type can give less relevant results without raising an error. When calling `embed()` directly, pass `input_type=EmbedInputType.QUERY` for queries and `EmbedInputType.DOCUMENT` for stored documents. `DuckDBStore` sets these values for you.
+
+Choose the type by the text's role in the search. A query such as "password reset" uses `QUERY`, even though it isn't a question. A stored help article headed "How do I reset my password?" uses `DOCUMENT`.
+:::
 
 ## Batching and rate limits
 
@@ -138,7 +148,7 @@ from raghilda.chunker import MarkdownChunker
 
 store = DuckDBStore.create(
     location="docs.db",
-    embed=EmbeddingCohere(model="embed-english-v3.0"),
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
     name="docs",
     title="My Documentation",
     overwrite=True,
@@ -159,6 +169,8 @@ Each page is converted to Markdown, split into chunks, and embedded as documents
 
 ## Using Cohere with ChromaDB
 
+ChromaDB 1.5.9's [Cohere embedding function](https://github.com/chroma-core/chroma/blob/11f3c7435e71024aa0a2b53710a28d3289d922d1/chromadb/utils/embedding_functions/cohere_embedding_function.py#L73-L80) uses `search_document` for queries as well as stored text. Use `DuckDBStore` for the query/document behavior described above.
+
 When you pass `EmbeddingCohere` to `ChromaDBStore`, raghilda converts it to ChromaDB's `CohereEmbeddingFunction`. ChromaDB saves the configuration and restores it when you reconnect:
 
 ```{python}
@@ -168,7 +180,7 @@ from raghilda.embedding import EmbeddingCohere
 
 store = ChromaDBStore.create(
     location="chroma_store",
-    embed=EmbeddingCohere(model="embed-english-v3.0"),
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
     name="documents",
 )
 

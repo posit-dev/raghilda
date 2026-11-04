@@ -77,17 +77,24 @@ The store embeds the documents locally during `upsert()` and embeds the query lo
 
 ## Choosing a model
 
-Models differ in embedding dimensions, language support, memory requirements, and input format. Examples include:
+MiniLM, used in the examples above, is small enough to learn the workflow without a large download. For document search, consider Google's EmbeddingGemma 2. It supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
 
-| Model                            | Dimensions | Notes                                            |
-| -------------------------------- | ---------- | ------------------------------------------------ |
-| `all-MiniLM-L6-v2`               | 384        | The default model                                |
-| `all-mpnet-base-v2`              | 768        | English model                                    |
-| `intfloat/e5-base-v2`            | 768        | Expects query and passage prefixes               |
-| `BAAI/bge-large-en-v1.5`         | 1024       | English model                                    |
-| `intfloat/multilingual-e5-large` | 1024       | Multilingual. Expects query and passage prefixes |
+These models were reviewed in November 2026; the links go to the publishers' model cards:
 
-The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) reports embedding benchmark results. You can compare models using your own documents and queries to see how they differ in retrieval results and runtime on your hardware.
+| Model                                                                                     | Dimensions | Notes                                                               |
+| ----------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------- |
+| [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)       | 384        | raghilda's default; a small English baseline with no input prefixes |
+| [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2)               | 768        | Multilingual; uses query and document prefixes                      |
+| [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)           | 1024       | Multilingual, 600M parameters; uses a query instruction             |
+| [`intfloat/multilingual-e5-large`](https://huggingface.co/intfloat/multilingual-e5-large) | 1024       | Multilingual; uses query and passage prefixes                       |
+
+The [prompt examples below](#task-specific-prompts) show how to configure the other models in the table.
+
+Loading [EmbeddingGemma 2](https://developers.googleblog.com/en/embeddinggemma-2-the-developer-guide/) requires sentence-transformers 6.1.0 or later and a compatible version of transformers. raghilda does not expose the `config_kwargs` setting needed to load only its 270M text component, so this provider loads the full 740M model.
+
+Dimensions describe the output vector, not the size of the model running in memory. For a local model, check its parameter count, input length limit, and hardware requirements too. Before embedding a large collection, try a few questions with known answers and check whether the retrieved passages contain those answers. Compare memory use and response time on the machine where you plan to run it.
+
+The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) can help you find other candidates. Its scores cover several tasks and languages, so look at results relevant to your documents. Consider the publisher, how widely the model is used, and its hardware requirements alongside those scores.
 
 ::: {.callout-note}
 Some models require `trust_remote_code=True` to load. `EmbeddingSentenceTransformers` does not expose this option, so choose a model that loads without it.
@@ -115,7 +122,7 @@ An explicit `device=` setting is saved with the store. For example, a store crea
 
 ## Task-specific prompts
 
-Some models use a short prefix to distinguish search queries from documents. For example, `intfloat/e5-base-v2` expects `"query: "` before queries and `"passage: "` before documents.
+Some models use a short prefix to distinguish search queries from documents. For example, `intfloat/multilingual-e5-large` expects `"query: "` before queries and `"passage: "` before documents. Leaving these out may still produce embeddings, but the input no longer matches the format used to train the model.
 
 The `prompts=` parameter lets you set a prefix for each `EmbedInputType`:
 
@@ -124,7 +131,7 @@ The `prompts=` parameter lets you set a prefix for each `EmbedInputType`:
 from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
 
 provider = EmbeddingSentenceTransformers(
-    model="intfloat/e5-base-v2",
+    model="intfloat/multilingual-e5-large",
     prompts={
         EmbedInputType.QUERY: "query: ",
         EmbedInputType.DOCUMENT: "passage: ",
@@ -133,6 +140,34 @@ provider = EmbeddingSentenceTransformers(
 ```
 
 The provider adds the matching prefix to each text before embedding it. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can set a prefix for either or both input types.
+
+Qwen3 uses an instruction describing what the query should retrieve. Its documents do not need a prefix:
+
+```{python}
+#| eval: false
+provider = EmbeddingSentenceTransformers(
+    model="Qwen/Qwen3-Embedding-0.6B",
+    prompts={
+        EmbedInputType.QUERY: (
+            "Instruct: Given a web search query, retrieve relevant passages "
+            "that answer the query\nQuery:"
+        ),
+    },
+)
+```
+
+EmbeddingGemma 2 uses different prefixes for queries and documents. Its document prefix includes a title; use `none` when there is no separate title:
+
+```{python}
+#| eval: false
+provider = EmbeddingSentenceTransformers(
+    model="google/embeddinggemma-2",
+    prompts={
+        EmbedInputType.QUERY: "task: search result | query: ",
+        EmbedInputType.DOCUMENT: "title: none | text: ",
+    },
+)
+```
 
 Check the model's page on Hugging Face for its required input format. The default `all-MiniLM-L6-v2` model does not require prefixes.
 
