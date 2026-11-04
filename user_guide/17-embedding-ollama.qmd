@@ -17,3 +17,34 @@ ollama pull nomic-embed-text
 
 You don't need any additional Python packages. `EmbeddingOllama` uses the `openai` client library, which already comes with raghilda.
 
+## Basic usage
+
+With Ollama running and a model pulled, creating a provider requires no configuration at all. The defaults point to Ollama's standard local address and the `nomic-embed-text` model:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingOllama
+
+provider = EmbeddingOllama()
+```
+
+To use a different model, pass its name exactly as it appears in `ollama list`:
+
+```{python}
+#| eval: false
+provider = EmbeddingOllama(model="mxbai-embed-large")
+```
+
+Then give the provider to a store with the `embed=` argument:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingOllama
+
+store = DuckDBStore.create(
+    location="my_store.db",
+    embed=EmbeddingOllama(),
+)
+```
+
