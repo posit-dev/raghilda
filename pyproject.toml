@@ -40,6 +40,7 @@ postgres = ["psycopg2-binary"]
 dev = [
     "dotenv>=0.9.9",
     "great-docs",
+    "sentence-transformers>=3.0.0",
     "taskipy>=1.14.1",
 ]
 
