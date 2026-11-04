@@ -1,0 +1,4 @@
+python:
+  first_available:
+    - existing: .venv
+    - managed: {}
