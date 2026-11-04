@@ -48,6 +48,8 @@ store = DuckDBStore.create(
 )
 ```
 
+When the store is created, raghilda embeds a short probe string to find the model's vector size. This means that if Ollama isn't running or the model hasn't been pulled, you'll find out right away (see [Troubleshooting](#troubleshooting) below).
+
 ## Choosing a model
 
 Ollama's library includes several embedding models. These are some popular ones:
