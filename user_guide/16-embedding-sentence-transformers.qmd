@@ -1,0 +1,69 @@
+---
+title: "SentenceTransformers Embeddings"
+guide-section: "Building a Store"
+---
+
+[sentence-transformers](https://www.sbert.net) is a popular Python library for computing text embeddings on your own machine. Instead of sending text to a web API, it downloads a model once and then runs it locally on your CPU or GPU. There's no API key to manage, no per-token cost, and your documents and queries never leave your environment. That makes it a natural choice for sensitive or proprietary content, for working offline, or simply for experimenting without worrying about a bill.
+
+raghilda's `EmbeddingSentenceTransformers` provider can use any model on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers) that's compatible with sentence-transformers, and there are thousands of them. This guide covers installation, choosing a model, running on a GPU, and configuring the task prefixes that some models expect.
+
+## Installation
+
+sentence-transformers is an optional dependency, since it pulls in PyTorch and can be a fairly large install. Use the `sentence-transformers` extra to get it:
+
+```bash
+pip install "raghilda[sentence-transformers]"
+```
+
+## Basic usage
+
+```{python}
+#| echo: false
+from huggingface_hub.utils import logging as hf_logging
+hf_logging.set_verbosity_error()
+```
+
+Creating a provider loads the model, and then you can embed text right away:
+
+```{python}
+from raghilda.embedding import EmbeddingSentenceTransformers
+
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2")
+embeddings = provider.embed(["hello world", "testing embeddings"])
+print(f"Number of embeddings: {len(embeddings)}")
+print(f"Embedding dimensions: {len(embeddings[0])}")
+```
+
+The first time you use a model, sentence-transformers downloads it from Hugging Face and saves it in the local Hugging Face cache (usually `~/.cache/huggingface`). Later runs load it from the cache, so only that first run needs a network connection. The default `all-MiniLM-L6-v2` model is under 100 MB, so the download is quick, but larger models can take a while.
+
+Using the provider with a store works the same way as with any other provider. The example below builds a small in-memory store from three short documents and searches it:
+
+```{python}
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingSentenceTransformers
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location=":memory:",
+    embed=EmbeddingSentenceTransformers(),
+)
+
+chunker = MarkdownChunker()
+docs = [
+    MarkdownDocument(content="DuckDB is an in-process analytical database.", origin="doc1"),
+    MarkdownDocument(content="Embeddings are dense vector representations of text.", origin="doc2"),
+    MarkdownDocument(content="Retrieval-Augmented Generation grounds LLMs in source material.", origin="doc3"),
+]
+for doc in docs:
+    store.upsert(chunker.chunk(doc))
+
+store.build_index()
+
+chunks = store.retrieve("How do vector databases work?", top_k=2)
+for chunk in chunks:
+    print(chunk.text)
+```
+
+Every step there ran locally: the documents were embedded on your machine when they were upserted, and the query was embedded the same way when `retrieve()` was called.
+
