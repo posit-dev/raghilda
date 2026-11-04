@@ -7,12 +7,14 @@ from ._embedding import (
     register_embedding_provider,
 )
 from ._embedding_nvidia import EmbeddingNVIDIA
+from ._embedding_ollama import EmbeddingOllama
 from ._embedding_sentence_transformers import EmbeddingSentenceTransformers
 
 __all__ = [
     "EmbedInputType",
     "EmbeddingCohere",
     "EmbeddingNVIDIA",
+    "EmbeddingOllama",
     "EmbeddingOpenAI",
     "EmbeddingProvider",
     "EmbeddingSentenceTransformers",
