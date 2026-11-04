@@ -1,6 +1,7 @@
+from collections.abc import Sequence
 from typing import Any
 
-from ._embedding import EmbeddingOpenAI, register_embedding_provider
+from ._embedding import EmbeddingOpenAI, EmbedInputType, register_embedding_provider
 
 
 @register_embedding_provider("EmbeddingOllama")
@@ -31,14 +32,25 @@ class EmbeddingOllama(EmbeddingOpenAI):
         a placeholder value is used.
     batch_size
         The number of texts to process in each batch when calling the API.
+    prompts
+        Optional prefix strings keyed by [EmbedInputType](`raghilda.EmbedInputType`).
+        The matching prefix is added to each text before embedding. Use the query
+        and document prefixes recommended by your model. No prefixes are added
+        by default. These settings are saved with the store.
 
     Examples
     --------
     ```{python}
     #| eval: false
-    from raghilda.embedding import EmbeddingOllama
+    from raghilda.embedding import EmbeddingOllama, EmbedInputType
 
-    provider = EmbeddingOllama(model="embeddinggemma-2:latest")
+    provider = EmbeddingOllama(
+        model="embeddinggemma-2:latest",
+        prompts={
+            EmbedInputType.QUERY: "task: search result | query: ",
+            EmbedInputType.DOCUMENT: "title: none | text: ",
+        },
+    )
     embeddings = provider.embed(["hello world", "testing embeddings"])
     print(len(embeddings))
     print(len(embeddings[0]))  # Dimension of the embedding
@@ -51,6 +63,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
         base_url: str = "http://localhost:11434/v1",
         api_key: str | None = None,
         batch_size: int = 20,
+        prompts: dict[EmbedInputType, str] | None = None,
     ) -> None:
         # The OpenAI client requires a non-empty key, but Ollama ignores it
         super().__init__(
@@ -59,20 +72,36 @@ class EmbeddingOllama(EmbeddingOpenAI):
             api_key=api_key or "ollama",
             batch_size=batch_size,
         )
+        self.prompts = prompts
 
     def get_config(self) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "type": "EmbeddingOllama",
             "model": self.model,
             "base_url": self.base_url,
             "batch_size": self.batch_size,
             # api_key intentionally omitted for security
         }
+        if self.prompts is not None:
+            config["prompts"] = {k.value: v for k, v in self.prompts.items()}
+        return config
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "EmbeddingOllama":
+        prompts = None
+        if "prompts" in config:
+            prompts = {EmbedInputType(k): v for k, v in config["prompts"].items()}
         return cls(
             model=config.get("model", "embeddinggemma-2:latest"),
             base_url=config.get("base_url", "http://localhost:11434/v1"),
             batch_size=config.get("batch_size", 20),
+            prompts=prompts,
         )
+
+    def _prepare_inputs(
+        self, x: Sequence[str], input_type: EmbedInputType
+    ) -> Sequence[str]:
+        if self.prompts and input_type in self.prompts:
+            prefix = self.prompts[input_type]
+            return [prefix + text for text in x]
+        return x

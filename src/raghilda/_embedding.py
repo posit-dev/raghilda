@@ -271,8 +271,6 @@ class EmbeddingOpenAI(EmbeddingProvider):
         x: Sequence[str],
         input_type: EmbedInputType = EmbedInputType.DOCUMENT,
     ) -> Sequence[Sequence[float]]:
-        # Note: OpenAI doesn't differentiate between query and document embeddings,
-        # so input_type is accepted but ignored for API compatibility.
         if isinstance(x, str):
             raise TypeError("Input must be a sequence of strings, not a single string.")
 
@@ -287,6 +285,7 @@ class EmbeddingOpenAI(EmbeddingProvider):
                 "Empty strings cannot be embedded."
             )
 
+        x = self._prepare_inputs(x, input_type)
         result: list[Sequence[float]] = []
         for i in range(0, len(x), self.batch_size):
             data = x[i : i + self.batch_size]
@@ -294,6 +293,12 @@ class EmbeddingOpenAI(EmbeddingProvider):
             result.extend([res.embedding for res in embedding.data])
 
         return result
+
+    def _prepare_inputs(
+        self, x: Sequence[str], input_type: EmbedInputType
+    ) -> Sequence[str]:
+        """Apply provider-specific formatting after input validation."""
+        return x
 
     def _embed_with_retry(
         self, data: Sequence[str], max_retries: int = 20, max_seconds: float = 180

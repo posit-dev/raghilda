@@ -1,8 +1,19 @@
+import json
 import socket
+from functools import partial
 
+import httpx2
 import pytest
+from openai import OpenAI
 
-from raghilda.embedding import EmbeddingOllama, EmbeddingOpenAI, embedding_from_config
+from raghilda.chunker import MarkdownChunker
+from raghilda.document import MarkdownDocument
+from raghilda.embedding import (
+    EmbeddingOllama,
+    EmbeddingOpenAI,
+    EmbedInputType,
+    embedding_from_config,
+)
 from raghilda.store import DuckDBStore
 
 
@@ -12,6 +23,33 @@ def _ollama_is_running() -> bool:
             return True
     except OSError:
         return False
+
+
+@pytest.fixture
+def embedding_requests(monkeypatch):
+    requests = []
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        return httpx2.Response(
+            200,
+            json={
+                "object": "list",
+                "model": payload["model"],
+                "data": [
+                    {"object": "embedding", "index": i, "embedding": [0.1] * 8}
+                    for i in range(len(payload["input"]))
+                ],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    with httpx2.Client(transport=httpx2.MockTransport(handle)) as client:
+        monkeypatch.setattr(
+            "raghilda._embedding.OpenAI", partial(OpenAI, http_client=client)
+        )
+        yield requests
 
 
 class TestEmbeddingOllama:
@@ -62,6 +100,133 @@ class TestEmbeddingOllama:
         assert restored.model == original.model
         assert restored.base_url == original.base_url
         assert restored.batch_size == original.batch_size
+
+    def test_prompts_apply_to_each_batch(self, embedding_requests):
+        provider = EmbeddingOllama(
+            batch_size=2,
+            prompts={
+                EmbedInputType.DOCUMENT: "title: none | text: ",
+                EmbedInputType.QUERY: "task: search result | query: ",
+            },
+        )
+        texts = ["first", "second", "third"]
+
+        documents = provider.embed(texts)
+        queries = provider.embed(texts, EmbedInputType.QUERY)
+
+        assert [request["input"] for request in embedding_requests] == [
+            ["title: none | text: first", "title: none | text: second"],
+            ["title: none | text: third"],
+            [
+                "task: search result | query: first",
+                "task: search result | query: second",
+            ],
+            ["task: search result | query: third"],
+        ]
+        assert documents == queries == [[0.1] * 8] * 3
+        assert texts == ["first", "second", "third"]
+
+    @pytest.mark.parametrize("prompts", [None, {}, {EmbedInputType.QUERY: "query: "}])
+    def test_documents_without_prompt_are_unchanged(self, prompts, embedding_requests):
+        provider = EmbeddingOllama(prompts=prompts)
+
+        provider.embed(["first", "second"])
+
+        assert embedding_requests[0]["input"] == ["first", "second"]
+
+    @pytest.mark.parametrize(
+        ("texts", "error"),
+        [("single text", TypeError), (["valid", ""], ValueError), (["  "], ValueError)],
+    )
+    def test_prompts_preserve_input_validation(self, texts, error, embedding_requests):
+        provider = EmbeddingOllama(prompts={EmbedInputType.DOCUMENT: "document: "})
+
+        with pytest.raises(error):
+            provider.embed(texts)
+
+        assert embedding_requests == []
+
+    def test_empty_input_with_prompts(self, embedding_requests):
+        provider = EmbeddingOllama(prompts={EmbedInputType.DOCUMENT: "document: "})
+
+        assert provider.embed([]) == []
+        assert embedding_requests == []
+
+    def test_prompts_json_config_roundtrip(self, embedding_requests):
+        prompts = {
+            EmbedInputType.QUERY: "query: ",
+            EmbedInputType.DOCUMENT: "document: ",
+        }
+        original = EmbeddingOllama(prompts=prompts)
+        config = json.loads(json.dumps(original.get_config()))
+
+        assert config["prompts"] == {"query": "query: ", "document": "document: "}
+        restored = embedding_from_config(config)
+        restored.embed(["stored text"])
+        restored.embed(["search text"], EmbedInputType.QUERY)
+
+        assert [request["input"] for request in embedding_requests] == [
+            ["document: stored text"],
+            ["query: search text"],
+        ]
+
+    def test_store_reconnect_preserves_prompts(
+        self, embedding_requests, monkeypatch, tmp_path
+    ):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        location = tmp_path / "ollama-prompts.db"
+        store = DuckDBStore.create(
+            location=location,
+            embed=EmbeddingOllama(
+                prompts={
+                    EmbedInputType.DOCUMENT: "document: ",
+                    EmbedInputType.QUERY: "query: ",
+                }
+            ),
+        )
+        store.con.close()
+        restored = DuckDBStore.connect(location)
+        embedding_requests.clear()
+
+        document = MarkdownDocument(content="Text to search.", origin="test")
+        restored.upsert(MarkdownChunker().chunk(document))
+        results = restored.retrieve_vss("search text", top_k=1)
+
+        assert len(results) == 1
+        assert results[0].text == document.content
+        assert embedding_requests[0]["input"][0].startswith("document: ")
+        assert embedding_requests[1]["input"] == ["query: search text"]
+        restored.con.close()
+
+    def test_chroma_reconnect_preserves_prompts(
+        self, embedding_requests, monkeypatch, tmp_path
+    ):
+        pytest.importorskip("chromadb")
+        from raghilda.store import ChromaDBStore
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        location = tmp_path / "ollama-prompts-chroma"
+        ChromaDBStore.create(
+            location=location,
+            name="ollama_prompts",
+            embed=EmbeddingOllama(
+                prompts={
+                    EmbedInputType.DOCUMENT: "document: ",
+                    EmbedInputType.QUERY: "query: ",
+                }
+            ),
+        )
+        restored = ChromaDBStore.connect(location=location, name="ollama_prompts")
+        embedding_requests.clear()
+
+        document = MarkdownDocument(content="Text to search.", origin="test")
+        restored.upsert(MarkdownChunker().chunk(document))
+        results = restored.retrieve("search text", top_k=1)
+
+        assert len(results) == 1
+        assert results[0].text == document.content
+        assert embedding_requests[0]["input"][0].startswith("document: ")
+        assert embedding_requests[1]["input"] == ["query: search text"]
 
     def test_embedding_ollama_store_reconnect_without_openai_key(
         self, monkeypatch, tmp_path
