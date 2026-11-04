@@ -154,3 +154,47 @@ Keep in mind that restoring the provider means loading the model, so `connect()`
 
 You'll most often set `model`, plus `prompts` when the model's card asks for task prefixes. Since there's no API key involved, every parameter is saved with the store. That's convenient for `prompts`, but it's also why leaving `device` unset is the safer choice for stores that move between machines. For the full API details, see the [`EmbeddingSentenceTransformers` reference page](/reference/embedding.EmbeddingSentenceTransformers.qmd).
 
+## Complete example
+
+Here's a full pipeline that reads two web pages into a store on disk and then searches it. Everything other than fetching the pages happens locally:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingSentenceTransformers
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2"),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How do I configure authentication?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+## Using SentenceTransformers with ChromaDB
+
+When you pass `EmbeddingSentenceTransformers` to `ChromaDBStore`, raghilda wraps it in an adapter so that ChromaDB can call it. Prompts are still applied correctly to queries and documents, and the provider is restored when you reconnect from Python. ChromaDB clients in other languages, however, won't be able to use the collection's embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.
+
+## When to use SentenceTransformers
+
+`EmbeddingSentenceTransformers` is a good fit when:
+
+- your content shouldn't be sent to a third-party API
+- you want to avoid per-token costs, especially when re-ingesting a large corpus often
+- you need to work offline once the model has been downloaded
+- you'd like to choose from the very wide range of open models on Hugging Face
+
+The trade-offs are the large PyTorch install, and that embedding speed depends on your hardware. A big ingest on a laptop CPU will be slower than a hosted API. If you want local embeddings without adding PyTorch to your Python environment, [Ollama](embedding-ollama.qmd) runs models in a separate server process instead.
