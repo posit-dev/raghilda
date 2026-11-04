@@ -20,7 +20,7 @@ class TestEmbeddingOllama:
         provider = EmbeddingOllama()
 
         assert isinstance(provider, EmbeddingOpenAI)
-        assert provider.model == "nomic-embed-text"
+        assert provider.model == "embeddinggemma-2:latest"
         assert provider.base_url == "http://localhost:11434/v1"
         assert provider.api_key == "ollama"
         assert provider.batch_size == 20
@@ -77,7 +77,7 @@ class TestEmbeddingOllama:
         store = DuckDBStore.connect(location)
 
         assert isinstance(store.metadata.embed, EmbeddingOllama)
-        assert store.metadata.embed.model == "nomic-embed-text"
+        assert store.metadata.embed.model == "embeddinggemma-2:latest"
 
     def test_embedding_ollama_embed_integration(self):
         if not _ollama_is_running():
@@ -88,7 +88,7 @@ class TestEmbeddingOllama:
             embeddings = provider.embed(["hello world", "testing embeddings"])
         except Exception as e:
             if getattr(e, "status_code", None) == 404:
-                pytest.skip("nomic-embed-text has not been pulled")
+                pytest.skip("embeddinggemma-2:latest has not been pulled")
             raise
 
         assert len(embeddings) == 2
