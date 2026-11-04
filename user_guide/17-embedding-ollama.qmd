@@ -12,8 +12,10 @@ raghilda connects to Ollama through `EmbeddingOllama`. Ollama provides an OpenAI
 First, download and install Ollama from [ollama.com](https://ollama.com/download). Once it's running, pull an embedding model from the command line:
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull embeddinggemma-2
 ```
+
+This downloads [EmbeddingGemma 2](https://ollama.com/library/embeddinggemma-2), the model `EmbeddingOllama` uses by default. It's about 1.3 GB, so the first pull can take a few minutes.
 
 You don't need any additional Python packages. `EmbeddingOllama` uses the `openai` client library, which already comes with raghilda.
 
