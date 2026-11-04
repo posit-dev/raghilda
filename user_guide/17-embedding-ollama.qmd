@@ -93,3 +93,13 @@ store = DuckDBStore.connect("my_store.db")
 
 You don't need any API keys in your environment for this to work. Ollama does need to be running (at the same `base_url`) whenever you add documents or call `retrieve()`, though, and the model has to still be pulled.
 
+## Troubleshooting
+
+There are two errors you're likely to run into when getting started.
+
+**Connection errors.** If you see an `APIConnectionError` (or a "connection refused" message), raghilda couldn't reach Ollama at the configured `base_url`. Check that the Ollama app is running, or start the server yourself with `ollama serve`. If Ollama is on another machine, double-check the address and port.
+
+**Model not found.** An error like `model 'nomic-embed-text' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull nomic-embed-text` (or whichever model you've configured) and try again.
+
+Both errors appear as soon as raghilda first contacts Ollama, which is usually at `DuckDBStore.create()`, so a quick test store is an easy way to confirm your setup before starting a large ingest. If you run into something else, Ollama's [troubleshooting guide](https://docs.ollama.com/troubleshooting) explains where to find the server logs, which usually say what went wrong.
+
