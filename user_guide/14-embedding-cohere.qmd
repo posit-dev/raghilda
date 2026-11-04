@@ -1,31 +1,29 @@
 ---
-title: "Cohere Embeddings"
-guide-section: "Building a Store"
+title: Cohere Embeddings
+guide-section: Building a Store
 ---
 
-[Cohere](https://cohere.com) offers a family of embedding models built specifically for search and retrieval. Like most embedding providers, Cohere asks you to say whether each piece of text is a search query or a document, and it embeds the two kinds of text differently. A question like "how do I reset my password?" and the help article that answers it are quite different pieces of text, and Cohere's models are trained to place them close together anyway. (OpenAI is the main exception to this pattern, since its embedding models treat all text the same way.)
-
-raghilda wraps these models in `EmbeddingCohere`. This guide covers installing and configuring it, choosing a model, how raghilda handles the query/document distinction for you, and what to expect when you reconnect to a store later.
+`EmbeddingCohere` creates embeddings using [Cohere](https://cohere.com) models. You can pass it to a raghilda store or call it directly to embed text.
 
 ## Installation
 
-`EmbeddingCohere` relies on Cohere's official Python SDK, which isn't installed with raghilda by default. Install it alongside raghilda:
+Install Cohere's Python package in the same environment as raghilda:
 
 ```bash
 pip install cohere
 ```
 
-You'll also need an API key from the [Cohere dashboard](https://dashboard.cohere.com/api-keys). The provider looks for it in the `CO_API_KEY` environment variable, so set that before creating a provider:
+Get an API key from the [Cohere dashboard](https://dashboard.cohere.com/api-keys) and set the `CO_API_KEY` environment variable before creating a provider:
 
 ```bash
 export CO_API_KEY="..."
 ```
 
-You can pass `api_key=` directly instead, but keeping the key in the environment is the better habit. It keeps secrets out of your scripts, and (as described below) raghilda never writes the key into the store, so the environment variable is what lets a reconnected store keep working.
+You can also pass the key directly with `api_key=`. raghilda doesn't save API keys with the store, so set `CO_API_KEY` when [reconnecting](#reconnecting-to-a-store).
 
 ## Basic usage
 
-Creating a provider takes a single line. With no arguments, `EmbeddingCohere` uses the `embed-english-v3.0` model:
+`EmbeddingCohere` uses `embed-english-v3.0` by default. Use `model=` to choose a model:
 
 ```{python}
 #| eval: false
@@ -34,7 +32,7 @@ from raghilda.embedding import EmbeddingCohere
 provider = EmbeddingCohere(model="embed-english-v3.0")
 ```
 
-The provider then gets passed to a store through the `embed=` argument, just like any other embedding provider:
+Pass the provider to a store through the `embed=` argument:
 
 ```{python}
 #| eval: false
@@ -47,32 +45,32 @@ store = DuckDBStore.create(
 )
 ```
 
-When the store is created, raghilda embeds a short probe string to learn the model's vector size and sizes the embedding column to match. That means a missing or invalid API key shows up right away at `create()` time rather than partway through an ingest.
+`DuckDBStore.create()` calls the embedding API to determine the size of the embeddings, so it needs a working API key.
 
 ## Choosing a model
 
-Cohere provides English and multilingual models, each in a full-size and a "light" variant:
+Cohere's v3 models include English and multilingual options with two embedding sizes:
 
-| Model | Dimensions | Notes |
-|---|---|---|
-| `embed-english-v3.0` | 1024 | The default. A strong general-purpose English model |
-| `embed-multilingual-v3.0` | 1024 | Supports 100+ languages |
-| `embed-english-light-v3.0` | 384 | Faster and smaller, at some cost in quality |
-| `embed-multilingual-light-v3.0` | 384 | Light multilingual variant |
+| Model                           | Dimensions | Notes                       |
+| ------------------------------- | ---------- | --------------------------- |
+| `embed-english-v3.0`            | 1024       | English; raghilda's default |
+| `embed-multilingual-v3.0`       | 1024       | Supports 100+ languages     |
+| `embed-english-light-v3.0`      | 384        | English                     |
+| `embed-multilingual-light-v3.0` | 384        | Supports 100+ languages     |
 
-If your content is all in English, `embed-english-v3.0` is a good place to start. Reach for a multilingual model when your documents (or your users' questions) span several languages, since these models can match a query in one language to a document in another. The light models produce vectors that are less than half the size, which makes for a smaller store and faster searches. They're worth trying when you have a large corpus and can tolerate a small drop in quality.
+Dimensions are the number of values in each embedding. The light models produce shorter embeddings, which require less storage. To compare models, try searches that reflect your documents and the questions you expect users to ask.
 
 Cohere's [model documentation](https://docs.cohere.com/docs/cohere-embed) has the full list of models along with their context lengths.
 
 ::: {.callout-note}
-A store is tied to the model it was created with. Vectors from different models (even two Cohere models) aren't comparable, so switching models means creating a new store and re-ingesting your documents.
+A store saves the model it was created with. To use a different model, create a new store and embed your documents again.
 :::
 
-## How query and document embeddings work
+## Query and document embeddings
 
-Because Cohere uses separate representations for queries and documents, every call to the API has to say which kind of text it's sending. raghilda takes care of this through `EmbedInputType`. When you write to a store with `upsert()` or `ingest()`, chunks are embedded as `EmbedInputType.DOCUMENT`. When you call `retrieve()`, your query is embedded as `EmbedInputType.QUERY`. Under the hood, these map to Cohere's `search_document` and `search_query` input types.
+Cohere's embedding API uses an input type to distinguish search queries from documents. raghilda maps `EmbedInputType.QUERY` to `"search_query"` and `EmbedInputType.DOCUMENT` to `"search_document"`. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use the document type, and text passed to `retrieve()` uses the query type.
 
-For typical use you never need to think about this. It only comes up if you call the provider directly, for example to inspect vectors or compare similarity scores yourself:
+When calling the provider directly, set `input_type` to match the text you're embedding:
 
 ```{python}
 #| eval: false
@@ -95,19 +93,15 @@ query_embedding = provider.embed(
 
 If you leave out `input_type`, the provider assumes `EmbedInputType.DOCUMENT`.
 
-::: {.callout-warning}
-Query and document embeddings are not interchangeable. If you embed documents with `EmbedInputType.QUERY` (or the other way around), nothing will raise an error, but retrieval quality will quietly get worse. Let the store handle input types whenever you can.
-:::
-
 ## Batching and rate limits
 
-Cohere accepts up to 96 texts per request, and `EmbeddingCohere` uses that as its default `batch_size`. During a large ingest, chunks are sent in batches of that size. There's rarely a reason to raise it (Cohere will reject larger batches), but you can lower it if you're hitting request size limits with very long chunks.
+Cohere accepts up to 96 texts per request. `EmbeddingCohere` uses a default `batch_size` of 96 and splits larger inputs into batches.
 
-If Cohere responds with a rate-limit error (HTTP 429), the provider waits and retries automatically. The wait starts at one second and doubles after each attempt (up to 60 seconds between tries), and the provider gives up after about three minutes in total. Any other kind of error is raised immediately so that problems like a bad API key aren't hidden behind retries.
+If Cohere responds with a rate-limit error (HTTP 429), the provider waits and retries. If the retries fail, it raises the error.
 
 ## Reconnecting to a store
 
-The store saves the provider's configuration (the model name and batch size) so that `DuckDBStore.connect()` can rebuild the provider for you:
+The store saves the model name and batch size. `DuckDBStore.connect()` uses these settings to restore the provider:
 
 ```{python}
 #| eval: false
@@ -117,23 +111,23 @@ store = DuckDBStore.connect("my_store.db")
 chunks = store.retrieve("What is RAG?", top_k=5)
 ```
 
-The API key is deliberately left out of the saved configuration. That keeps credentials out of database files that might get shared or committed, but it also means that `CO_API_KEY` needs to be set in whatever session reconnects to the store.
+Set `CO_API_KEY` in the session that reconnects to the store, since the saved configuration doesn't include the API key.
 
 ## Parameters
 
-`EmbeddingCohere` takes three parameters. All of them are optional, so with `CO_API_KEY` set in the environment you can create a provider with no arguments:
+All parameters are optional when `CO_API_KEY` is set:
 
-| Parameter | Default | Description |
-|---|---|---|
-| `model` | `"embed-english-v3.0"` | Cohere embedding model name |
-| `api_key` | `None` | API key. Falls back to the `CO_API_KEY` environment variable |
-| `batch_size` | `96` | Texts per API call. Cohere allows at most 96 |
+| Parameter    | Default                | Description                                                  |
+| ------------ | ---------------------- | ------------------------------------------------------------ |
+| `model`      | `"embed-english-v3.0"` | Cohere embedding model name                                  |
+| `api_key`    | `None`                 | API key. Falls back to the `CO_API_KEY` environment variable |
+| `batch_size` | `96`                   | Texts per API call. Cohere allows at most 96                 |
 
-Most of the time, `model` is the only one you'll need to set. The model and batch size are saved with the store, while the API key never is, which is why the environment variable is the recommended way to supply it. For the full API details, see the [`EmbeddingCohere` reference page](/reference/embedding.EmbeddingCohere.qmd).
+See the [`EmbeddingCohere` reference page](/reference/embedding.EmbeddingCohere.qmd) for API details.
 
 ## Complete example
 
-Here's everything put together: creating a store backed by Cohere, ingesting a couple of web pages, building indexes, and running a query.
+This example creates a store, adds web pages, builds search indexes, and runs a query. Replace the example URLs with pages you want to search.
 
 ```{python}
 #| eval: false
@@ -161,11 +155,11 @@ for chunk in chunks:
     print(chunk.text[:200])
 ```
 
-Each page is read and converted to Markdown, split into chunks, and embedded as documents on the way into the store. The `build_index()` call then builds the vector and keyword indexes, and `retrieve()` embeds the question as a query before searching.
+Each page is converted to Markdown, split into chunks, and embedded as documents. `build_index()` builds the vector and keyword indexes, and `retrieve()` embeds the question as a query before searching.
 
 ## Using Cohere with ChromaDB
 
-`EmbeddingCohere` has a direct counterpart among ChromaDB's built-in embedding functions. When you pass it to `ChromaDBStore`, raghilda swaps in ChromaDB's native `CohereEmbeddingFunction`, which ChromaDB knows how to save and restore on its own:
+When you pass `EmbeddingCohere` to `ChromaDBStore`, raghilda converts it to ChromaDB's `CohereEmbeddingFunction`. ChromaDB saves the configuration and restores it when you reconnect:
 
 ```{python}
 #| eval: false
@@ -182,14 +176,4 @@ store = ChromaDBStore.create(
 store = ChromaDBStore.connect(name="documents", location="chroma_store")
 ```
 
-Since this uses ChromaDB's own embedding function, the collection can also be opened from ChromaDB clients in other languages. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for more on how this works and how API keys are handled.
-
-## When to use Cohere
-
-Cohere is a good fit when:
-
-- retrieval quality matters most and you'd like a model trained specifically for search
-- your content or your users span multiple languages
-- you're already using Cohere elsewhere in your stack
-
-You might look elsewhere when you need embeddings to stay on your own hardware (see [SentenceTransformers](embedding-sentence-transformers.qmd) or [Ollama](embedding-ollama.qmd)), or when you'd rather avoid adding another dependency and API key to a project that already uses OpenAI.
+See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details on reconnecting and supplying API keys.

@@ -1,15 +1,15 @@
 ---
-title: "SentenceTransformers Embeddings"
-guide-section: "Building a Store"
+title: SentenceTransformers Embeddings
+guide-section: Building a Store
 ---
 
-[sentence-transformers](https://www.sbert.net) is a popular Python library for computing text embeddings on your own machine. Instead of sending text to a web API, it downloads a model once and then runs it locally on your CPU or GPU. There's no API key to manage, no per-token cost, and your documents and queries never leave your environment. That makes it a natural choice for sensitive or proprietary content, for working offline, or simply for experimenting without worrying about a bill.
+`EmbeddingSentenceTransformers` runs text embedding models locally using the [sentence-transformers](https://www.sbert.net) Python library. Models run on your CPU or GPU, without sending documents or queries to an embedding API.
 
-raghilda's `EmbeddingSentenceTransformers` provider can use any model on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers) that's compatible with sentence-transformers, and there are thousands of them. This guide covers installation, choosing a model, running on a GPU, and configuring the task prefixes that some models expect.
+The provider supports models on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers) that are compatible with sentence-transformers.
 
 ## Installation
 
-sentence-transformers is an optional dependency, since it pulls in PyTorch and can be a fairly large install. Use the `sentence-transformers` extra to get it:
+Install the `sentence-transformers` extra, which includes sentence-transformers and PyTorch:
 
 ```bash
 pip install "raghilda[sentence-transformers]"
@@ -20,10 +20,11 @@ pip install "raghilda[sentence-transformers]"
 ```{python}
 #| echo: false
 from huggingface_hub.utils import logging as hf_logging
+
 hf_logging.set_verbosity_error()
 ```
 
-Creating a provider loads the model, and then you can embed text right away:
+Create a provider to load the model, then call `embed()` with a list of texts:
 
 ```{python}
 from raghilda.embedding import EmbeddingSentenceTransformers
@@ -34,9 +35,9 @@ print(f"Number of embeddings: {len(embeddings)}")
 print(f"Embedding dimensions: {len(embeddings[0])}")
 ```
 
-The first time you use a model, sentence-transformers downloads it from Hugging Face and saves it in the local Hugging Face cache (usually `~/.cache/huggingface`). Later runs load it from the cache, so only that first run needs a network connection. The default `all-MiniLM-L6-v2` model is under 100 MB, so the download is quick, but larger models can take a while.
+The first time you use a model, sentence-transformers downloads it from Hugging Face and saves it in the local Hugging Face cache. Later runs reuse the cached files.
 
-Using the provider with a store works the same way as with any other provider. The example below builds a small in-memory store from three short documents and searches it:
+Pass the provider to a store with `embed=`. This example builds an in-memory store from three short documents and searches it:
 
 ```{python}
 from raghilda.store import DuckDBStore
@@ -51,9 +52,16 @@ store = DuckDBStore.create(
 
 chunker = MarkdownChunker()
 docs = [
-    MarkdownDocument(content="DuckDB is an in-process analytical database.", origin="doc1"),
-    MarkdownDocument(content="Embeddings are dense vector representations of text.", origin="doc2"),
-    MarkdownDocument(content="Retrieval-Augmented Generation grounds LLMs in source material.", origin="doc3"),
+    MarkdownDocument(
+        content="DuckDB is an in-process analytical database.", origin="doc1"
+    ),
+    MarkdownDocument(
+        content="Embeddings are dense vector representations of text.", origin="doc2"
+    ),
+    MarkdownDocument(
+        content="Retrieval-Augmented Generation grounds LLMs in source material.",
+        origin="doc3",
+    ),
 ]
 for doc in docs:
     store.upsert(chunker.chunk(doc))
@@ -65,33 +73,33 @@ for chunk in chunks:
     print(chunk.text)
 ```
 
-Every step there ran locally: the documents were embedded on your machine when they were upserted, and the query was embedded the same way when `retrieve()` was called.
+The store embeds the documents locally during `upsert()` and embeds the query locally during `retrieve()`.
 
 ## Choosing a model
 
-The right model depends on your trade-off between quality, speed, and memory use. Here are a few well-known options:
+Models differ in embedding dimensions, language support, memory requirements, and input format. Examples include:
 
-| Model | Dimensions | Notes |
-|---|---|---|
-| `all-MiniLM-L6-v2` | 384 | The default. Small, fast, and good enough for many tasks |
-| `all-mpnet-base-v2` | 768 | Noticeably better quality, but slower |
-| `intfloat/e5-base-v2` | 768 | Strong retrieval model. Expects query and passage prefixes |
-| `BAAI/bge-large-en-v1.5` | 1024 | A high-quality English model |
-| `intfloat/multilingual-e5-large` | 1024 | Multilingual. Expects query and passage prefixes |
+| Model                            | Dimensions | Notes                                            |
+| -------------------------------- | ---------- | ------------------------------------------------ |
+| `all-MiniLM-L6-v2`               | 384        | The default model                                |
+| `all-mpnet-base-v2`              | 768        | English model                                    |
+| `intfloat/e5-base-v2`            | 768        | Expects query and passage prefixes               |
+| `BAAI/bge-large-en-v1.5`         | 1024       | English model                                    |
+| `intfloat/multilingual-e5-large` | 1024       | Multilingual. Expects query and passage prefixes |
 
-`all-MiniLM-L6-v2` is a sensible default while you're getting a pipeline working, since it's small enough to run quickly on a laptop CPU. Once things are working, it's worth trying a larger model on your own data to see whether the improvement in results is worth the extra time. The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) compares models on retrieval benchmarks and is a good way to find candidates.
+The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) reports embedding benchmark results. You can compare models using your own documents and queries to see how they differ in retrieval results and runtime on your hardware.
 
 ::: {.callout-note}
-Some models on the Hub, such as `nomic-ai/nomic-embed-text-v1.5`, require `trust_remote_code=True` to load. `EmbeddingSentenceTransformers` doesn't pass that option through, so stick to models that load without it. If you'd like to use one of those models, [Ollama](embedding-ollama.qmd) packages several of them in a form that works out of the box.
+Some models require `trust_remote_code=True` to load. `EmbeddingSentenceTransformers` does not expose this option, so choose a model that loads without it.
 :::
 
 ## Choosing a device
 
-By default, sentence-transformers picks the fastest device it can find: a CUDA GPU if one is available, then Apple Silicon's GPU, and otherwise the CPU. You can override this with `device=`:
+By default, sentence-transformers selects an available device. You can choose a CPU or GPU explicitly with `device=`:
 
 ```{python}
 #| eval: false
-# Force CPU
+# Use the CPU
 provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cpu")
 
 # Use Apple Silicon GPU
@@ -101,13 +109,13 @@ provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="mps")
 provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cuda")
 ```
 
-Leaving `device` unset is usually the best choice. One reason to set it is portability: if you set `device=` explicitly, that setting is saved with the store. A store created with `device="cuda"` will then try to use CUDA when reconnected, which fails on a machine without an NVIDIA GPU. When in doubt, leave it as `None` so each machine can pick its own device.
+An explicit `device=` setting is saved with the store. For example, a store created with `device="cuda"` requires CUDA when reconnected. Leave `device=None` to let sentence-transformers select a device on each machine.
 
-The `batch_size=` parameter (64 by default) controls how many texts are encoded together. On a GPU with plenty of memory, a larger batch can speed up ingestion. If you run out of memory, lower it.
+`batch_size=` controls how many texts are encoded together and defaults to 64. Larger batches use more memory; lower the batch size if you run out of memory.
 
 ## Task-specific prompts
 
-Some models were trained to expect a short prefix on each input that tells them whether the text is a search query or a document to be searched. The E5 family is a common example: queries should start with `"query: "` and documents with `"passage: "`. Without these prefixes the models still work, but their retrieval quality drops.
+Some models use a short prefix to distinguish search queries from documents. For example, `intfloat/e5-base-v2` expects `"query: "` before queries and `"passage: "` before documents.
 
 The `prompts=` parameter lets you set a prefix for each `EmbedInputType`:
 
@@ -124,13 +132,13 @@ provider = EmbeddingSentenceTransformers(
 )
 ```
 
-Once prompts are configured, the provider adds the matching prefix to each text before encoding it. The store chooses the input type for you: chunks written with `upsert()` or `ingest()` use the `DOCUMENT` prefix, and the text you pass to `retrieve()` uses the `QUERY` prefix. You can also set just one of the two. For example, some BGE models only want an instruction prefix on queries.
+The provider adds the matching prefix to each text before embedding it. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can set a prefix for either or both input types.
 
-The correct prefixes differ from model to model, so check the model card on Hugging Face before setting them. Models that don't mention prefixes (like the default `all-MiniLM-L6-v2`) don't need them.
+Check the model's page on Hugging Face for its required input format. The default `all-MiniLM-L6-v2` model does not require prefixes.
 
 ## Reconnecting to a store
 
-The store saves the model name, batch size, and any `device` or `prompts` settings, so reconnecting restores an identically configured provider:
+When you connect to an existing store, raghilda restores the model name, batch size, and any `device` or `prompts` settings:
 
 ```{python}
 #| eval: false
@@ -139,24 +147,24 @@ from raghilda.store import DuckDBStore
 store = DuckDBStore.connect("docs.db")
 ```
 
-Keep in mind that restoring the provider means loading the model, so `connect()` takes about as long as creating the provider did. If the model isn't in the local cache (for example, on a fresh machine), it'll be downloaded at this point.
+Reconnecting loads the model and downloads it if it is not already cached.
 
 ## Parameters
 
-`EmbeddingSentenceTransformers` takes four parameters. All of them are optional, and with no arguments the provider runs `all-MiniLM-L6-v2` on whatever device sentence-transformers detects:
+All parameters are optional. `EmbeddingSentenceTransformers()` uses the defaults below:
 
-| Parameter | Default | Description |
-|---|---|---|
-| `model` | `"all-MiniLM-L6-v2"` | Model name or Hugging Face repo ID |
-| `device` | `None` | Device to run on, such as `"cpu"`, `"cuda"`, or `"mps"`. Auto-detected if `None` |
-| `batch_size` | `64` | Texts encoded per batch |
-| `prompts` | `None` | Optional prefix strings keyed by `EmbedInputType` |
+| Parameter    | Default              | Description                                                                      |
+| ------------ | -------------------- | -------------------------------------------------------------------------------- |
+| `model`      | `"all-MiniLM-L6-v2"` | Model name or Hugging Face repo ID                                               |
+| `device`     | `None`               | Device to run on, such as `"cpu"`, `"cuda"`, or `"mps"`. Auto-detected if `None` |
+| `batch_size` | `64`                 | Texts encoded per batch                                                          |
+| `prompts`    | `None`               | Optional prefix strings keyed by `EmbedInputType`                                |
 
-You'll most often set `model`, plus `prompts` when the model's card asks for task prefixes. Since there's no API key involved, every parameter is saved with the store. That's convenient for `prompts`, but it's also why leaving `device` unset is the safer choice for stores that move between machines. For the full API details, see the [`EmbeddingSentenceTransformers` reference page](/reference/embedding.EmbeddingSentenceTransformers.qmd).
+For API details, see the [`EmbeddingSentenceTransformers` reference page](/reference/embedding.EmbeddingSentenceTransformers.qmd).
 
 ## Complete example
 
-Here's a full pipeline that reads two web pages into a store on disk and then searches it. Everything other than fetching the pages happens locally:
+This example reads two web pages into a store on disk and searches it. Embedding and search run locally. Replace the example URLs with pages you want to search:
 
 ```{python}
 #| eval: false
@@ -186,15 +194,4 @@ for chunk in chunks:
 
 ## Using SentenceTransformers with ChromaDB
 
-When you pass `EmbeddingSentenceTransformers` to `ChromaDBStore`, raghilda wraps it in an adapter so that ChromaDB can call it. Prompts are still applied correctly to queries and documents, and the provider is restored when you reconnect from Python. ChromaDB clients in other languages, however, won't be able to use the collection's embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.
-
-## When to use SentenceTransformers
-
-`EmbeddingSentenceTransformers` is a good fit when:
-
-- your content shouldn't be sent to a third-party API
-- you want to avoid per-token costs, especially when re-ingesting a large corpus often
-- you need to work offline once the model has been downloaded
-- you'd like to choose from the very wide range of open models on Hugging Face
-
-The trade-offs are the large PyTorch install, and that embedding speed depends on your hardware. A big ingest on a laptop CPU will be slower than a hosted API. If you want local embeddings without adding PyTorch to your Python environment, [Ollama](embedding-ollama.qmd) runs models in a separate server process instead.
+When you pass `EmbeddingSentenceTransformers` to `ChromaDBStore`, raghilda adapts it to ChromaDB's embedding interface. The provider applies any configured query and document prefixes and is restored when you reconnect from Python. ChromaDB clients in other languages cannot use this Python embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.

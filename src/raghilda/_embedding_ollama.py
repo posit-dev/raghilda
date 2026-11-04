@@ -9,11 +9,9 @@ class EmbeddingOllama(EmbeddingOpenAI):
     Creates an embedding function provider backed by a local Ollama server.
     Implements the [EmbeddingProvider](`raghilda.EmbeddingProvider`) interface.
 
-    Ollama exposes an OpenAI-compatible API, so this provider is a thin wrapper
-    around [EmbeddingOpenAI](`raghilda.embedding.EmbeddingOpenAI`) with defaults
-    suited to a local Ollama install. Using it instead of `EmbeddingOpenAI` with a
-    custom `base_url` means stores can be reconnected without an `OPENAI_API_KEY`
-    in the environment.
+    This provider uses Ollama's OpenAI-compatible API with defaults for a local
+    server. Stores created with it can be reconnected without setting
+    `OPENAI_API_KEY`.
 
     Pull an embedding model before using it (e.g., `ollama pull embeddinggemma-2`).
     Browse available embedding models at
