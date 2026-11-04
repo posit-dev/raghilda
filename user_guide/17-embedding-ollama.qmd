@@ -7,3 +7,13 @@ guide-section: "Building a Store"
 
 raghilda connects to Ollama through `EmbeddingOllama`. Ollama provides an OpenAI-compatible API, so `EmbeddingOllama` is a small variant of `EmbeddingOpenAI` with defaults that match a standard Ollama install. This guide covers setting up Ollama, choosing a model, connecting to Ollama on another machine, and fixing the most common errors.
 
+## Installation
+
+First, download and install Ollama from [ollama.com](https://ollama.com/download). Once it's running, pull an embedding model from the command line:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+You don't need any additional Python packages. `EmbeddingOllama` uses the `openai` client library, which already comes with raghilda.
+
