@@ -85,6 +85,8 @@ reference:
       - embedding.EmbedInputType
       - embedding.EmbeddingOpenAI
       - embedding.EmbeddingCohere
+      - embedding.EmbeddingNVIDIA
+      - embedding.EmbeddingOllama
       - embedding.EmbeddingSentenceTransformers
 
   - title: Chunker
