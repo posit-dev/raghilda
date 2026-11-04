@@ -3,7 +3,7 @@ title: "Cohere Embeddings"
 guide-section: "Building a Store"
 ---
 
-[Cohere](https://cohere.com) offers a family of embedding models built specifically for search and retrieval. What sets them apart from many other hosted models is that they produce *different* vectors for queries and for documents. A question like "how do I reset my password?" and the help article that answers it are quite different pieces of text, and Cohere's models are trained to place them close together anyway. In practice this often gives better retrieval results than models that embed everything the same way.
+[Cohere](https://cohere.com) offers a family of embedding models built specifically for search and retrieval. Like most embedding providers, Cohere asks you to say whether each piece of text is a search query or a document, and it embeds the two kinds of text differently. A question like "how do I reset my password?" and the help article that answers it are quite different pieces of text, and Cohere's models are trained to place them close together anyway. (OpenAI is the main exception to this pattern, since its embedding models treat all text the same way.)
 
 raghilda wraps these models in `EmbeddingCohere`. This guide covers installing and configuring it, choosing a model, how raghilda handles the query/document distinction for you, and what to expect when you reconnect to a store later.
 

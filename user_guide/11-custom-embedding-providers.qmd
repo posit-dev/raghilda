@@ -137,7 +137,7 @@ doc_embeddings = provider.embed(documents, input_type=EmbedInputType.DOCUMENT)
 query_embedding = provider.embed([query], input_type=EmbedInputType.QUERY)
 ```
 
-Some models (like Cohere and Voyage) produce different embeddings for queries vs documents to optimize retrieval. Others (like OpenAI) ignore this parameter. Your provider should handle both cases appropriately.
+Most embedding services (like Cohere and Voyage) produce different embeddings for queries vs documents to optimize retrieval. A few (like OpenAI) ignore this parameter. Your provider should handle both cases appropriately.
 
 ## Local Models Example
 
