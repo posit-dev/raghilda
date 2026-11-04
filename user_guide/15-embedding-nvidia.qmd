@@ -47,7 +47,7 @@ store = DuckDBStore.create(
 
 See [build.nvidia.com](https://build.nvidia.com/search?q=embed) for available models. raghilda currently defaults to `nvidia/llama-nemotron-embed-1b-v2`, whose [hosted endpoint has been deprecated](https://build.nvidia.com/nvidia/llama-nemotron-embed-1b-v2). Set `model=` explicitly when using NVIDIA's hosted API, as in the examples above.
 
-The examples use [Nemotron 3 Embed 1B](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-embed-1b), released in July 2026. NVIDIA's [October 2026 Nemotron 3.5 release](https://huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval) adds image retrieval. The 3.5 1B model shares its text embedding space with the 3 1B model. Since `EmbeddingNVIDIA` accepts text, the earlier model remains a suitable example here; the image features are not used by this provider.
+The examples use [Nemotron 3 Embed 1B](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-embed-1b), released in July 2026. NVIDIA's [October 2026 Nemotron 3.5 release](https://huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval) adds image retrieval. The 3.5 1B model shares its text embedding space with the 3 1B model. `EmbeddingNVIDIA` accepts text only.
 
 Check the model's page for its embedding dimensions and input length limit. You can also check the number of dimensions by embedding a short string:
 

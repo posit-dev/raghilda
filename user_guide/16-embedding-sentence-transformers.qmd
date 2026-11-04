@@ -77,7 +77,7 @@ The store embeds the documents locally during `upsert()` and embeds the query lo
 
 ## Choosing a model
 
-MiniLM, used in the examples above, is small enough to learn the workflow without a large download. For document search, consider Google's EmbeddingGemma 2. It supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
+For document search, consider Google's EmbeddingGemma 2. It supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
 
 These models were reviewed in November 2026; the links go to the publishers' model cards:
 

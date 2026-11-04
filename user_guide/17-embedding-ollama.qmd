@@ -53,7 +53,7 @@ Creating a store makes a request to Ollama to determine the embedding size. Olla
 
 ## Choosing a model
 
-EmbeddingGemma 2 is the suggested starting point for this guide. It is available from Google's release through Ollama's official model library. Its download size and context window make it a practical option for local document search. If you only need text embeddings, the 270M version leaves out the image and audio encoders for a smaller download.
+EmbeddingGemma 2 is the suggested starting point for this guide. It is available from Google's release through Ollama's official model library. If you only need text embeddings, the 270M version leaves out the image and audio encoders for a smaller download.
 
 These examples were reviewed in November 2026:
 
