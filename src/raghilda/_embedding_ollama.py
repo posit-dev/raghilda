@@ -1,7 +1,12 @@
 from collections.abc import Sequence
 from typing import Any
 
-from ._embedding import EmbeddingOpenAI, EmbedInputType, register_embedding_provider
+from ._embedding import (
+    EmbeddingOpenAI,
+    EmbedInputType,
+    _apply_prompts,
+    register_embedding_provider,
+)
 
 
 @register_embedding_provider("EmbeddingOllama")
@@ -112,7 +117,4 @@ class EmbeddingOllama(EmbeddingOpenAI):
     def _prepare_inputs(
         self, x: Sequence[str], input_type: EmbedInputType
     ) -> Sequence[str]:
-        if self.prompts and input_type in self.prompts:
-            prefix = self.prompts[input_type]
-            return [prefix + text for text in x]
-        return x
+        return _apply_prompts(x, input_type, self.prompts)

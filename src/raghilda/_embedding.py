@@ -104,6 +104,16 @@ class EmbedInputType(StrEnum):
     """Input is a document to be indexed."""
 
 
+def _apply_prompts(
+    texts: Sequence[str],
+    input_type: EmbedInputType,
+    prompts: dict[EmbedInputType, str] | None,
+) -> list[str]:
+    """Add the selected prefix to already-validated texts."""
+    prefix = prompts.get(input_type, "") if prompts else ""
+    return [prefix + text for text in texts]
+
+
 class EmbeddingProvider(ABC):
     """
     Interface for embedding function providers.
