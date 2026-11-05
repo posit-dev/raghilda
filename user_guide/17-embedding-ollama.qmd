@@ -74,8 +74,6 @@ These examples were reviewed in November 2026:
 | [`embeddinggemma-2:270m`](https://ollama.com/library/embeddinggemma-2:270m) | 768        | Text-only version; omits the image and audio encoders    |
 | [`qwen3-embedding:0.6b`](https://ollama.com/library/qwen3-embedding:0.6b)   | 1024       | Alternative for text retrieval; uses a query instruction |
 
-To use Microsoft's Harrier 0.6B weights directly, see the [SentenceTransformers guide](embedding-sentence-transformers.qmd#harrier).
-
 To use a different model, download it first, then pass its name exactly as it appears in `ollama list` to `model=`. For example, run `ollama pull embeddinggemma-2:270m`, then add `model="embeddinggemma-2:270m"` to the provider above. Both EmbeddingGemma 2 variants use the same prompts. Other models may need different prompts; check the publisher's model card before switching.
 
 When comparing models, consider the publisher, how widely the model is used, download size, and context length alongside retrieval benchmarks. Try questions with known answers and check whether the retrieved passages contain those answers. Record response time and memory use on the machine where you plan to run it.
