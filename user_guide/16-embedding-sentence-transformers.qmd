@@ -77,13 +77,16 @@ The store embeds the documents locally during `upsert()` and embeds the query lo
 
 ## Choosing a model
 
-For document search, consider Google's EmbeddingGemma 2. It supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
+For document search, [Microsoft's Harrier 0.6B](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) supports multilingual text and a 32,768-token context window. `EmbeddingSentenceTransformers` loads the weights directly from Microsoft's Hugging Face repository. The [Harrier example below](#harrier) configures its query prompt.
+
+Google's EmbeddingGemma 2 supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
 
 These models were reviewed in November 2026; the links go to the publishers' model cards:
 
 | Model                                                                                     | Dimensions | Notes                                                               |
 | ----------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------- |
 | [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)       | 384        | raghilda's default; a small English baseline with no input prefixes |
+| [`microsoft/harrier-oss-v1-0.6b`](https://huggingface.co/microsoft/harrier-oss-v1-0.6b)   | 1024       | Multilingual, 600M parameters; uses a query instruction             |
 | [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2)               | 768        | Multilingual; uses query and document prefixes                      |
 | [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)           | 1024       | Multilingual, 600M parameters; uses a query instruction             |
 | [`intfloat/multilingual-e5-large`](https://huggingface.co/intfloat/multilingual-e5-large) | 1024       | Multilingual; uses query and passage prefixes                       |
@@ -141,6 +144,40 @@ provider = EmbeddingSentenceTransformers(
 
 For example, `provider.embed(["password reset"], input_type=EmbedInputType.QUERY)` adds `"query: "` before embedding the text. If you omit `input_type`, `embed()` uses `DOCUMENT` and adds `"passage: "` with this configuration. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can configure a prefix for either or both input types.
 
+Check the model's page on Hugging Face for its required input format. The default `all-MiniLM-L6-v2` model does not require prefixes.
+
+### Harrier
+
+Microsoft's Harrier 0.6B uses an instruction on queries and no prefix on documents. This example uses the web-search instruction from Microsoft's [prompt configuration](https://huggingface.co/microsoft/harrier-oss-v1-0.6b/blob/main/config_sentence_transformers.json):
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
+
+provider = EmbeddingSentenceTransformers(
+    model="microsoft/harrier-oss-v1-0.6b",
+    prompts={
+        EmbedInputType.QUERY: (
+            "Instruct: Given a web search query, retrieve relevant passages "
+            "that answer the query\nQuery: "
+        ),
+    },
+)
+
+document_embeddings = provider.embed(
+    ["To reset your password, select Forgot password on the sign-in page."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+query_embeddings = provider.embed(
+    ["How do I reset my password?"],
+    input_type=EmbedInputType.QUERY,
+)
+```
+
+The weights are published by Microsoft under the MIT license and are about 1.2 GB to download. SentenceTransformers handles the model's pooling and normalization. You can pass this provider to a store through `embed=provider`, and the store selects the input type for each call.
+
+### Qwen3
+
 Qwen3 uses an instruction describing what the query should retrieve. Its documents do not need a prefix:
 
 ```{python}
@@ -156,6 +193,8 @@ provider = EmbeddingSentenceTransformers(
 )
 ```
 
+### EmbeddingGemma 2
+
 EmbeddingGemma 2 uses different prefixes for queries and documents. Its document prefix includes a title; use `none` when there is no separate title:
 
 ```{python}
@@ -168,8 +207,6 @@ provider = EmbeddingSentenceTransformers(
     },
 )
 ```
-
-Check the model's page on Hugging Face for its required input format. The default `all-MiniLM-L6-v2` model does not require prefixes.
 
 ## Reconnecting to a store
 
