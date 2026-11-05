@@ -124,7 +124,7 @@ An explicit `device=` setting is saved with the store. For example, a store crea
 
 Some models use a short prefix to distinguish search queries from documents. For example, `intfloat/multilingual-e5-large` expects `"query: "` before queries and `"passage: "` before documents. Leaving these out may still produce embeddings, but the input no longer matches the format used to train the model.
 
-The `prompts=` parameter lets you set a prefix for each `EmbedInputType`:
+Set `prompts=` when creating the provider to configure a prefix for each `EmbedInputType`. Then use `input_type=` on each `embed()` call to select the prefix for those texts:
 
 ```{python}
 #| eval: false
@@ -139,7 +139,7 @@ provider = EmbeddingSentenceTransformers(
 )
 ```
 
-The provider adds the matching prefix to each text before embedding it. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can set a prefix for either or both input types.
+For example, `provider.embed(["password reset"], input_type=EmbedInputType.QUERY)` adds `"query: "` before embedding the text. If you omit `input_type`, `embed()` uses `DOCUMENT` and adds `"passage: "` with this configuration. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can configure a prefix for either or both input types.
 
 Qwen3 uses an instruction describing what the query should retrieve. Its documents do not need a prefix:
 

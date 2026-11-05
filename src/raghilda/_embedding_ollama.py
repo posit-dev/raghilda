@@ -18,6 +18,11 @@ class EmbeddingOllama(EmbeddingOpenAI):
     Browse available embedding models at
     [ollama.com/search](https://ollama.com/search?c=embedding).
 
+    Set `prompts=` when creating the provider to configure the model's query and
+    document prefixes. On each `embed()` call, `input_type=` selects which prefix
+    to use for the supplied texts. It defaults to `EmbedInputType.DOCUMENT`.
+    Stores select the input type automatically during ingestion and retrieval.
+
     Parameters
     ----------
     model
@@ -34,9 +39,10 @@ class EmbeddingOllama(EmbeddingOpenAI):
         The number of texts to process in each batch when calling the API.
     prompts
         Optional prefix strings keyed by [EmbedInputType](`raghilda.EmbedInputType`).
-        The matching prefix is added to each text before embedding. Use the query
-        and document prefixes recommended by your model. No prefixes are added
-        by default. These settings are saved with the store.
+        The `input_type` argument to `embed()` selects the prefix to add to each
+        text in that call. Use the query and document prefixes recommended by your
+        model. If no prefix is configured for the selected type, text is sent
+        unchanged. These settings are saved with the store.
 
     Examples
     --------
@@ -51,9 +57,14 @@ class EmbeddingOllama(EmbeddingOpenAI):
             EmbedInputType.DOCUMENT: "title: none | text: ",
         },
     )
-    embeddings = provider.embed(["hello world", "testing embeddings"])
-    print(len(embeddings))
-    print(len(embeddings[0]))  # Dimension of the embedding
+    document_embeddings = provider.embed(
+        ["Authentication requires an API key."],
+        input_type=EmbedInputType.DOCUMENT,
+    )
+    query_embeddings = provider.embed(
+        ["How do I configure authentication?"],
+        input_type=EmbedInputType.QUERY,
+    )
     ```
     """
 

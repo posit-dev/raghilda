@@ -21,7 +21,7 @@ You don't need any additional Python packages. `EmbeddingOllama` uses the `opena
 
 ## Basic usage
 
-Once Ollama is running and you've downloaded the model, create a provider with EmbeddingGemma's query and document prompts. By default, it connects to `http://localhost:11434/v1` and uses `embeddinggemma-2:latest`:
+Once Ollama is running and you've downloaded the model, configure its prefixes with `prompts=` when creating the provider. Then pass `input_type=` to each `embed()` call to select the prefix for those texts. Here, the same provider embeds a document and a search query:
 
 ```{python}
 #| eval: false
@@ -33,11 +33,22 @@ provider = EmbeddingOllama(
         EmbedInputType.DOCUMENT: "title: none | text: ",
     },
 )
+
+document_embeddings = provider.embed(
+    ["Authentication requires an API key."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+query_embeddings = provider.embed(
+    ["How do I configure authentication?"],
+    input_type=EmbedInputType.QUERY,
+)
 ```
 
-These prefixes tell the model whether it is embedding a search query or a document. The provider adds them to the text sent to Ollama; your stored text stays unchanged. See [task-specific prompts](#task-specific-prompts) for details.
+The first call adds the configured document prefix to each text; the second adds the query prefix. If you omit `input_type`, `embed()` uses `DOCUMENT`. The prefixes are added to the text sent to Ollama; your stored text stays unchanged.
 
-Pass the provider to a store through the `embed=` argument:
+By default, the provider connects to `http://localhost:11434/v1` and uses `embeddinggemma-2:latest`.
+
+Pass the provider to a store through the `embed=` argument. The store selects `input_type` for you: `upsert()` and `ingest()` use `DOCUMENT`, while `retrieve()` uses `QUERY`:
 
 ```{python}
 #| eval: false
@@ -75,19 +86,11 @@ Use the same model and prompt configuration throughout a store. To switch models
 
 ## Task-specific prompts
 
-Omitting a model's recommended prefixes can reduce retrieval quality without raising an error. Set `prompts=` when creating the provider, as in the example above. The keys are `EmbedInputType.QUERY` and `EmbedInputType.DOCUMENT`; each value is the prefix to add for that kind of text. With no prompts configured, the provider sends text unchanged.
+Embedding a query with the default `DOCUMENT` type uses the document prefix and can reduce retrieval quality without raising an error. When calling `embed()` directly, pass `input_type=EmbedInputType.QUERY` for search queries, as in the example above.
 
-The store selects the input type for you: `upsert()` and `ingest()` use `DOCUMENT`, while `retrieve()` uses `QUERY`. When calling `embed()` directly, pass the query type explicitly:
+`prompts=` configures which prefix belongs to each input type. It does not select the type for an `embed()` call. For each call, `input_type=` selects the configured prefix for every text in that call. If no prefix is configured for that type, the provider sends the text unchanged.
 
-```{python}
-#| eval: false
-query_embeddings = provider.embed(
-    ["How do I configure authentication?"],
-    input_type=EmbedInputType.QUERY,
-)
-```
-
-The default input type is `DOCUMENT`. EmbeddingGemma's [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes) lists its prompts for search, code retrieval, and other tasks. The document prefix in this guide uses `title: none` because the provider receives text without a separate title field.
+Use the prefixes recommended by your model. EmbeddingGemma's [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes) lists its prompts for search, code retrieval, and other tasks. The document prefix in this guide uses `title: none` because the provider receives text without a separate title field.
 
 ## Connecting to Ollama on another machine
 
@@ -135,7 +138,7 @@ For other errors, Ollama's [troubleshooting guide](https://docs.ollama.com/troub
 
 ## Parameters
 
-`EmbeddingOllama` accepts these optional parameters:
+These optional parameters configure the provider when you create it with `EmbeddingOllama(...)`:
 
 | Parameter    | Default                       | Description                                                                 |
 | ------------ | ----------------------------- | --------------------------------------------------------------------------- |
@@ -143,7 +146,7 @@ For other errors, Ollama's [troubleshooting guide](https://docs.ollama.com/troub
 | `base_url`   | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API                                   |
 | `api_key`    | `None`                        | Only needed behind an authenticating proxy. A placeholder is used if `None` |
 | `batch_size` | `20`                          | Texts per API call                                                          |
-| `prompts`    | `None`                        | Optional prefix strings keyed by `EmbedInputType`                           |
+| `prompts`    | `None`                        | Prefixes keyed by `EmbedInputType`; selected by `embed(input_type=...)`     |
 
 The store saves `model`, `base_url`, `batch_size`, and any `prompts`. It doesn't save `api_key`. See the [`EmbeddingOllama` reference page](/reference/embedding.EmbeddingOllama.qmd) for API details.
 
