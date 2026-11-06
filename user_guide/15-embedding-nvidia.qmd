@@ -1,0 +1,193 @@
+---
+title: NVIDIA NIM Embeddings
+guide-section: Building a Store
+---
+
+`EmbeddingNVIDIA` uses [NVIDIA NIM](https://build.nvidia.com/nvidia) embedding models. You can use NVIDIA's hosted API or run a NIM container on your own GPUs. With a self-hosted container, documents and queries are sent to your own server for embedding.
+
+## Installation
+
+`EmbeddingNVIDIA` uses the `openai` client library included with raghilda, so no additional packages are needed.
+
+To use NVIDIA's hosted API, create an account at [build.nvidia.com](https://build.nvidia.com/nvidia), generate an API key, and set it in the environment:
+
+```bash
+export NVIDIA_API_KEY="nvapi-..."
+```
+
+The provider reads `NVIDIA_API_KEY` automatically. You can also pass `api_key=` directly. The key is not saved with the store, so set the environment variable when reconnecting.
+
+## Basic usage
+
+Create a provider with the model you want to use. These examples use [`nvidia/nemotron-3-embed-1b`](https://build.nvidia.com/nvidia/nemotron-3-embed-1b):
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingNVIDIA
+
+provider = EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b")
+```
+
+Pass it to a store with the `embed=` argument:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingNVIDIA
+
+store = DuckDBStore.create(
+    location="my_store.db",
+    embed=EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b"),
+)
+```
+
+`DuckDBStore.create()` sends a short string to the embedding API to determine the number of values in each embedding.
+
+## Choosing a model
+
+See [build.nvidia.com](https://build.nvidia.com/search?q=embed) for available models. raghilda currently defaults to `nvidia/llama-nemotron-embed-1b-v2`, whose [hosted endpoint has been deprecated](https://build.nvidia.com/nvidia/llama-nemotron-embed-1b-v2). Set `model=` explicitly when using NVIDIA's hosted API, as in the examples above.
+
+The examples use [Nemotron 3 Embed 1B](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-embed-1b), released in July 2026. NVIDIA's [October 2026 Nemotron 3.5 release](https://huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval) adds image retrieval. The 3.5 1B model shares its text embedding space with the 3 1B model. `EmbeddingNVIDIA` accepts text only.
+
+Check the model's page for its embedding dimensions and input length limit. You can also check the number of dimensions by embedding a short string:
+
+```{python}
+#| eval: false
+provider = EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b")
+print(len(provider.embed(["test"])[0]))
+```
+
+::: {.callout-note}
+Use the same model for documents and queries so their embeddings can be compared. To change models, create a new store and ingest the documents again.
+:::
+
+## Query and document embeddings
+
+NVIDIA's embedding API uses an input type to distinguish search queries from documents. raghilda maps `EmbedInputType.QUERY` to `"query"` and `EmbedInputType.DOCUMENT` to `"passage"`. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use the document type, and text passed to `retrieve()` uses the query type.
+
+When calling the provider directly, use `input_type=` to specify the type of text:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingNVIDIA, EmbedInputType
+
+provider = EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b")
+
+doc_embeddings = provider.embed(
+    ["HNSW is a graph-based approximate nearest-neighbor index."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+
+query_embedding = provider.embed(
+    ["How do vector indexes work?"],
+    input_type=EmbedInputType.QUERY,
+)
+```
+
+When `input_type` is left out, the provider assumes `EmbedInputType.DOCUMENT`.
+
+When embedding a search query directly, remember to pass `EmbedInputType.QUERY`. The default document type can return a valid vector without representing the text as a query. A store sets the input type for you, so you only need to choose it when calling `embed()` yourself.
+
+## Self-hosted NIM containers
+
+NVIDIA publishes Docker images that serve NIM models on your own hardware. Once a container is running, point the provider at it with `base_url=`:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingNVIDIA
+
+provider = EmbeddingNVIDIA(
+    model="nvidia/llama-nemotron-embed-1b-v2",
+    base_url="http://localhost:8000/v1",
+)
+```
+
+Set `model` to the model served by the container. The client library requires an API key value even if your server does not require authentication. In that case, set `NVIDIA_API_KEY` to a placeholder:
+
+```bash
+export NVIDIA_API_KEY="not-used"
+```
+
+Set this environment variable when reconnecting as well. The store saves `base_url`, so it will keep sending requests to your container.
+
+See [NVIDIA's NIM documentation](https://docs.nvidia.com/nim/) for instructions on pulling and running the containers.
+
+## Handling long inputs
+
+NVIDIA's API rejects inputs that exceed the model's length limit by default (`truncate="NONE"`). To remove tokens from the end of an input until it fits, set `truncate="END"`:
+
+```{python}
+#| eval: false
+provider = EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b", truncate="END")
+```
+
+Text removed by truncation is not included in the embedding. You can also use smaller chunks to keep inputs within the model's limit; see [Chunking](chunking.qmd).
+
+## Batching and rate limits
+
+`EmbeddingNVIDIA` sends texts in batches of 20 by default. Use `batch_size=` to change how many texts are sent in each request.
+
+If the API returns a rate-limit error (HTTP 429), the provider retries with increasing delays. If the retries fail, it raises the error.
+
+## Reconnecting to a store
+
+When you connect to an existing store, raghilda restores the provider's model, `base_url`, batch size, and truncation setting:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("my_store.db")
+```
+
+Set `NVIDIA_API_KEY` before reconnecting; the API key is not saved.
+
+## Parameters
+
+The constructor defaults are listed below. For NVIDIA's hosted API, set `NVIDIA_API_KEY` and choose an available model with `model=`.
+
+| Parameter    | Default                                 | Description                                                                                     |
+| ------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `model`      | `"nvidia/llama-nemotron-embed-1b-v2"`   | NVIDIA embedding model name                                                                     |
+| `base_url`   | `"https://integrate.api.nvidia.com/v1"` | API endpoint. Change this for a self-hosted NIM container                                       |
+| `api_key`    | `None`                                  | API key. Falls back to the `NVIDIA_API_KEY` environment variable                                |
+| `batch_size` | `20`                                    | Texts per API call                                                                              |
+| `truncate`   | `"NONE"`                                | How to handle inputs that exceed the model's limit: `"NONE"` raises an error, `"END"` truncates |
+
+For API details, see the [`EmbeddingNVIDIA` reference page](/reference/embedding.EmbeddingNVIDIA.qmd).
+
+## Complete example
+
+This example builds a store from two web pages, then searches it. Replace the example URLs with pages you want to search:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingNVIDIA
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingNVIDIA(model="nvidia/nemotron-3-embed-1b", truncate="END"),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How do I configure authentication?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+To use a self-hosted container, set the provider's `base_url=` and `model=` to match the server, as shown [above](#self-hosted-nim-containers).
+
+## Using NVIDIA with ChromaDB
+
+When you pass `EmbeddingNVIDIA` to `ChromaDBStore`, raghilda adapts it to ChromaDB's embedding interface. Queries and documents use their respective input types, and the provider is restored when you reconnect from Python. ChromaDB clients in other languages cannot use this Python embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.

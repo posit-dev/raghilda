@@ -4,6 +4,7 @@ from typing import Any
 from ._embedding import (
     EmbeddingProvider,
     EmbedInputType,
+    _apply_prompts,
     register_embedding_provider,
 )
 
@@ -131,11 +132,7 @@ class EmbeddingSentenceTransformers(EmbeddingProvider):
                 "Empty strings cannot be embedded."
             )
 
-        texts = list(x)
-        if self.prompts and input_type in self.prompts:
-            prefix = self.prompts[input_type]
-            texts = [prefix + t for t in texts]
-
+        texts = _apply_prompts(x, input_type, self.prompts)
         embeddings = self.model_instance.encode(
             texts, batch_size=self.batch_size, show_progress_bar=False
         )

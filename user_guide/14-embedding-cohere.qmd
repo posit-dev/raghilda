@@ -1,0 +1,191 @@
+---
+title: Cohere Embeddings
+guide-section: Building a Store
+---
+
+`EmbeddingCohere` creates embeddings using [Cohere](https://cohere.com) models. You can pass it to a raghilda store or call it directly to embed text.
+
+## Installation
+
+Install Cohere's Python package in the same environment as raghilda:
+
+```bash
+pip install cohere
+```
+
+Get an API key from the [Cohere dashboard](https://dashboard.cohere.com/api-keys) and set the `CO_API_KEY` environment variable before creating a provider:
+
+```bash
+export CO_API_KEY="..."
+```
+
+You can also pass the key directly with `api_key=`. raghilda doesn't save API keys with the store, so set `CO_API_KEY` when [reconnecting](#reconnecting-to-a-store).
+
+## Basic usage
+
+Use `model=` to choose a model. These examples use `embed-v5.0-fast`, from Cohere's [Embed 5 release](https://docs.cohere.com/changelog/embed-v5) in September 2026. Calling `EmbeddingCohere()` without a model still selects `embed-english-v3.0`.
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingCohere
+
+provider = EmbeddingCohere(model="embed-v5.0-fast")
+```
+
+Pass the provider to a store through the `embed=` argument:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingCohere
+
+store = DuckDBStore.create(
+    location="my_store.db",
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
+)
+```
+
+`DuckDBStore.create()` calls the embedding API to determine the size of the embeddings, so it needs a working API key.
+
+## Choosing a model
+
+These models support the text embedding API used by `EmbeddingCohere`. The list was reviewed in November 2026:
+
+| Model                | Dimensions | Notes                                                         |
+| -------------------- | ---------- | ------------------------------------------------------------- |
+| `embed-v5.0-fast`    | 2048       | Multilingual; the model used in this guide                    |
+| `embed-v5.0-pro`     | 2048       | Multilingual; another v5 model to compare on your searches    |
+| `embed-v4.0`         | 1536       | Previous generation; may already be used in an existing store |
+| `embed-english-v3.0` | 1024       | English; raghilda's default                                   |
+
+Dimensions are the number of values in each embedding. They affect storage size, but do not tell you which model will retrieve the most useful passages. The table shows the dimensions returned by raghilda; the provider does not expose Cohere's `output_dimension` option.
+
+To compare models, choose a few questions for which you know the relevant passages. Build a separate store with each model, using the same documents and chunks, and check whether those passages appear in the results. Response time and API cost may also affect your choice.
+
+Cohere's [model documentation](https://docs.cohere.com/docs/cohere-embed) lists supported languages and input limits. The v3 English model accepts up to 512 tokens per input, while v4 and v5 accept longer inputs. Check the limit when choosing a [chunk size](chunking.qmd), since text beyond it may be truncated by the API.
+
+::: {.callout-note}
+A store saves the model it was created with. To use a different model, create a new store and embed your documents again.
+:::
+
+## Query and document embeddings
+
+Cohere's embedding API uses an input type to distinguish search queries from documents. raghilda maps `EmbedInputType.QUERY` to `"search_query"` and `EmbedInputType.DOCUMENT` to `"search_document"`. `DuckDBStore` sets the input type automatically: chunks added with `upsert()` or `ingest()` use the document type, and text passed to `retrieve()` uses the query type.
+
+When calling the provider directly, set `input_type` to match the text you're embedding:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingCohere, EmbedInputType
+
+provider = EmbeddingCohere(model="embed-v5.0-fast")
+
+# Embed documents for storage
+doc_embeddings = provider.embed(
+    ["Retrieval-Augmented Generation grounds LLM responses in source material."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+
+# Embed a query for search
+query_embedding = provider.embed(
+    ["What is RAG?"],
+    input_type=EmbedInputType.QUERY,
+)
+```
+
+If you leave out `input_type`, the provider assumes `EmbedInputType.DOCUMENT`.
+
+::: {.callout-note}
+### Set the input type for search queries
+
+Embedding a search query with the default `DOCUMENT` type can give less relevant results without raising an error. When calling `embed()` directly, pass `input_type=EmbedInputType.QUERY` for queries and `EmbedInputType.DOCUMENT` for stored documents. `DuckDBStore` sets these values for you.
+
+Choose the type by the text's role in the search. A query such as "password reset" uses `QUERY`, even though it isn't a question. A stored help article headed "How do I reset my password?" uses `DOCUMENT`.
+:::
+
+## Batching and rate limits
+
+Cohere accepts up to 96 texts per request. `EmbeddingCohere` uses a default `batch_size` of 96 and splits larger inputs into batches.
+
+If Cohere responds with a rate-limit error (HTTP 429), the provider waits and retries. If the retries fail, it raises the error.
+
+## Reconnecting to a store
+
+The store saves the model name and batch size. `DuckDBStore.connect()` uses these settings to restore the provider:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("my_store.db")
+chunks = store.retrieve("What is RAG?", top_k=5)
+```
+
+Set `CO_API_KEY` in the session that reconnects to the store, since the saved configuration doesn't include the API key.
+
+## Parameters
+
+All parameters are optional when `CO_API_KEY` is set:
+
+| Parameter    | Default                | Description                                                  |
+| ------------ | ---------------------- | ------------------------------------------------------------ |
+| `model`      | `"embed-english-v3.0"` | Cohere embedding model name                                  |
+| `api_key`    | `None`                 | API key. Falls back to the `CO_API_KEY` environment variable |
+| `batch_size` | `96`                   | Texts per API call. Cohere allows at most 96                 |
+
+See the [`EmbeddingCohere` reference page](/reference/embedding.EmbeddingCohere.qmd) for API details.
+
+## Complete example
+
+This example creates a store, adds web pages, builds search indexes, and runs a query. Replace the example URLs with pages you want to search.
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingCohere
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How does authentication work?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+Each page is converted to Markdown, split into chunks, and embedded as documents. `build_index()` builds the vector and keyword indexes, and `retrieve()` embeds the question as a query before searching.
+
+## Using Cohere with ChromaDB
+
+ChromaDB 1.5.9's [Cohere embedding function](https://github.com/chroma-core/chroma/blob/11f3c7435e71024aa0a2b53710a28d3289d922d1/chromadb/utils/embedding_functions/cohere_embedding_function.py#L73-L80) uses `search_document` for queries as well as stored text. Use `DuckDBStore` for the query/document behavior described above.
+
+When you pass `EmbeddingCohere` to `ChromaDBStore`, raghilda converts it to ChromaDB's `CohereEmbeddingFunction`. ChromaDB saves the configuration and restores it when you reconnect:
+
+```{python}
+#| eval: false
+from raghilda.store import ChromaDBStore
+from raghilda.embedding import EmbeddingCohere
+
+store = ChromaDBStore.create(
+    location="chroma_store",
+    embed=EmbeddingCohere(model="embed-v5.0-fast"),
+    name="documents",
+)
+
+# Later, reconnect without specifying `embed=`
+store = ChromaDBStore.connect(name="documents", location="chroma_store")
+```
+
+See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details on reconnecting and supplying API keys.

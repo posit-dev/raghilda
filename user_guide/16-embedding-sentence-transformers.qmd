@@ -1,0 +1,269 @@
+---
+title: SentenceTransformers Embeddings
+guide-section: Building a Store
+---
+
+`EmbeddingSentenceTransformers` runs text embedding models locally using the [sentence-transformers](https://www.sbert.net) Python library. Models run on your CPU or GPU, without sending documents or queries to an embedding API.
+
+The provider supports models on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers) that are compatible with sentence-transformers.
+
+## Installation
+
+Install the `sentence-transformers` extra, which includes sentence-transformers and PyTorch:
+
+```bash
+pip install "raghilda[sentence-transformers]"
+```
+
+## Basic usage
+
+```{python}
+#| echo: false
+from huggingface_hub.utils import logging as hf_logging
+
+hf_logging.set_verbosity_error()
+```
+
+Create a provider to load the model, then call `embed()` with a list of texts:
+
+```{python}
+from raghilda.embedding import EmbeddingSentenceTransformers
+
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2")
+embeddings = provider.embed(["hello world", "testing embeddings"])
+print(f"Number of embeddings: {len(embeddings)}")
+print(f"Embedding dimensions: {len(embeddings[0])}")
+```
+
+The first time you use a model, sentence-transformers downloads it from Hugging Face and saves it in the local Hugging Face cache. Later runs reuse the cached files.
+
+Pass the provider to a store with `embed=`. This example builds an in-memory store from three short documents and searches it:
+
+```{python}
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingSentenceTransformers
+from raghilda.document import MarkdownDocument
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location=":memory:",
+    embed=EmbeddingSentenceTransformers(),
+)
+
+chunker = MarkdownChunker()
+docs = [
+    MarkdownDocument(
+        content="DuckDB is an in-process analytical database.", origin="doc1"
+    ),
+    MarkdownDocument(
+        content="Embeddings are dense vector representations of text.", origin="doc2"
+    ),
+    MarkdownDocument(
+        content="Retrieval-Augmented Generation grounds LLMs in source material.",
+        origin="doc3",
+    ),
+]
+for doc in docs:
+    store.upsert(chunker.chunk(doc))
+
+store.build_index()
+
+chunks = store.retrieve("How do vector databases work?", top_k=2)
+for chunk in chunks:
+    print(chunk.text)
+```
+
+The store embeds the documents locally during `upsert()` and embeds the query locally during `retrieve()`.
+
+## Choosing a model
+
+For document search, [Microsoft's Harrier 0.6B](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) supports multilingual text and a 32,768-token context window. `EmbeddingSentenceTransformers` loads the weights directly from Microsoft's Hugging Face repository. The [Harrier example below](#harrier) configures its query prompt.
+
+Google's EmbeddingGemma 2 supports multilingual text and an 8,192-token context window. You can also run it through [Ollama](embedding-ollama.qmd), which manages the model separately from your Python environment.
+
+These models were reviewed in November 2026; the links go to the publishers' model cards:
+
+| Model                                                                                     | Dimensions | Notes                                                               |
+| ----------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------- |
+| [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)       | 384        | raghilda's default; a small English baseline with no input prefixes |
+| [`microsoft/harrier-oss-v1-0.6b`](https://huggingface.co/microsoft/harrier-oss-v1-0.6b)   | 1024       | Multilingual, 600M parameters; uses a query instruction             |
+| [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2)               | 768        | Multilingual; uses query and document prefixes                      |
+| [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)           | 1024       | Multilingual, 600M parameters; uses a query instruction             |
+| [`intfloat/multilingual-e5-large`](https://huggingface.co/intfloat/multilingual-e5-large) | 1024       | Multilingual; uses query and passage prefixes                       |
+
+The [prompt examples below](#task-specific-prompts) show how to configure the other models in the table.
+
+Loading [EmbeddingGemma 2](https://developers.googleblog.com/en/embeddinggemma-2-the-developer-guide/) requires sentence-transformers 6.1.0 or later and a compatible version of transformers. raghilda does not expose the `config_kwargs` setting needed to load only its 270M text component, so this provider loads the full 740M model.
+
+Dimensions describe the output vector, not the size of the model running in memory. For a local model, check its parameter count, input length limit, and hardware requirements too. Before embedding a large collection, try a few questions with known answers and check whether the retrieved passages contain those answers. Compare memory use and response time on the machine where you plan to run it.
+
+The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) can help you find other candidates. Its scores cover several tasks and languages, so look at results relevant to your documents. Consider the publisher, how widely the model is used, and its hardware requirements alongside those scores.
+
+::: {.callout-note}
+Some models require `trust_remote_code=True` to load. `EmbeddingSentenceTransformers` does not expose this option, so choose a model that loads without it.
+:::
+
+## Choosing a device
+
+By default, sentence-transformers selects an available device. You can choose a CPU or GPU explicitly with `device=`:
+
+```{python}
+#| eval: false
+# Use the CPU
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cpu")
+
+# Use Apple Silicon GPU
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="mps")
+
+# Use CUDA
+provider = EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2", device="cuda")
+```
+
+An explicit `device=` setting is saved with the store. For example, a store created with `device="cuda"` requires CUDA when reconnected. Leave `device=None` to let sentence-transformers select a device on each machine.
+
+`batch_size=` controls how many texts are encoded together and defaults to 64. Larger batches use more memory; lower the batch size if you run out of memory.
+
+## Task-specific prompts
+
+Some models use a short prefix to distinguish search queries from documents. For example, `intfloat/multilingual-e5-large` expects `"query: "` before queries and `"passage: "` before documents. Leaving these out may still produce embeddings, but the input no longer matches the format used to train the model.
+
+Set `prompts=` when creating the provider to configure a prefix for each `EmbedInputType`. Then use `input_type=` on each `embed()` call to select the prefix for those texts:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
+
+provider = EmbeddingSentenceTransformers(
+    model="intfloat/multilingual-e5-large",
+    prompts={
+        EmbedInputType.QUERY: "query: ",
+        EmbedInputType.DOCUMENT: "passage: ",
+    },
+)
+```
+
+For example, `provider.embed(["password reset"], input_type=EmbedInputType.QUERY)` adds `"query: "` before embedding the text. If you omit `input_type`, `embed()` uses `DOCUMENT` and adds `"passage: "` with this configuration. The store sets the input type automatically: chunks added with `upsert()` or `ingest()` use `EmbedInputType.DOCUMENT`, and text passed to `retrieve()` uses `EmbedInputType.QUERY`. You can configure a prefix for either or both input types.
+
+Check the model's page on Hugging Face for its required input format. The default `all-MiniLM-L6-v2` model does not require prefixes.
+
+### Harrier
+
+Microsoft's Harrier 0.6B uses an instruction on queries and no prefix on documents. This example uses the web-search instruction from Microsoft's [prompt configuration](https://huggingface.co/microsoft/harrier-oss-v1-0.6b/blob/main/config_sentence_transformers.json):
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingSentenceTransformers, EmbedInputType
+
+provider = EmbeddingSentenceTransformers(
+    model="microsoft/harrier-oss-v1-0.6b",
+    prompts={
+        EmbedInputType.QUERY: (
+            "Instruct: Given a web search query, retrieve relevant passages "
+            "that answer the query\nQuery: "
+        ),
+    },
+)
+
+document_embeddings = provider.embed(
+    ["To reset your password, select Forgot password on the sign-in page."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+query_embeddings = provider.embed(
+    ["How do I reset my password?"],
+    input_type=EmbedInputType.QUERY,
+)
+```
+
+The weights are published by Microsoft under the MIT license and are about 1.2 GB to download. SentenceTransformers handles the model's pooling and normalization. You can pass this provider to a store through `embed=provider`, and the store selects the input type for each call.
+
+### Qwen3
+
+Qwen3 uses an instruction describing what the query should retrieve. Its documents do not need a prefix:
+
+```{python}
+#| eval: false
+provider = EmbeddingSentenceTransformers(
+    model="Qwen/Qwen3-Embedding-0.6B",
+    prompts={
+        EmbedInputType.QUERY: (
+            "Instruct: Given a web search query, retrieve relevant passages "
+            "that answer the query\nQuery:"
+        ),
+    },
+)
+```
+
+### EmbeddingGemma 2
+
+EmbeddingGemma 2 uses different prefixes for queries and documents. Its document prefix includes a title; use `none` when there is no separate title:
+
+```{python}
+#| eval: false
+provider = EmbeddingSentenceTransformers(
+    model="google/embeddinggemma-2",
+    prompts={
+        EmbedInputType.QUERY: "task: search result | query: ",
+        EmbedInputType.DOCUMENT: "title: none | text: ",
+    },
+)
+```
+
+## Reconnecting to a store
+
+When you connect to an existing store, raghilda restores the model name, batch size, and any `device` or `prompts` settings:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("docs.db")
+```
+
+Reconnecting loads the model and downloads it if it is not already cached.
+
+## Parameters
+
+All parameters are optional. `EmbeddingSentenceTransformers()` uses the defaults below:
+
+| Parameter    | Default              | Description                                                                      |
+| ------------ | -------------------- | -------------------------------------------------------------------------------- |
+| `model`      | `"all-MiniLM-L6-v2"` | Model name or Hugging Face repo ID                                               |
+| `device`     | `None`               | Device to run on, such as `"cpu"`, `"cuda"`, or `"mps"`. Auto-detected if `None` |
+| `batch_size` | `64`                 | Texts encoded per batch                                                          |
+| `prompts`    | `None`               | Optional prefix strings keyed by `EmbedInputType`                                |
+
+For API details, see the [`EmbeddingSentenceTransformers` reference page](/reference/embedding.EmbeddingSentenceTransformers.qmd).
+
+## Complete example
+
+This example reads two web pages into a store on disk and searches it. Embedding and search run locally. Replace the example URLs with pages you want to search:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingSentenceTransformers
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingSentenceTransformers(model="all-MiniLM-L6-v2"),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How do I configure authentication?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+## Using SentenceTransformers with ChromaDB
+
+When you pass `EmbeddingSentenceTransformers` to `ChromaDBStore`, raghilda adapts it to ChromaDB's embedding interface. The provider applies any configured query and document prefixes and is restored when you reconnect from Python. ChromaDB clients in other languages cannot use this Python embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.
