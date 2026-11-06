@@ -26,10 +26,16 @@ def _ollama_is_running() -> bool:
 
 
 @pytest.fixture
-def embedding_requests(monkeypatch):
+def embedding_requests(monkeypatch, request):
     requests = []
+    expected_api_key = getattr(request, "param", None)
 
     def handle(request):
+        if (
+            expected_api_key is not None
+            and request.headers.get("authorization") != f"Bearer {expected_api_key}"
+        ):
+            return httpx2.Response(401, json={"error": {"message": "Invalid API key"}})
         payload = json.loads(request.content)
         requests.append(payload)
         return httpx2.Response(
@@ -55,6 +61,7 @@ def embedding_requests(monkeypatch):
 class TestEmbeddingOllama:
     def test_embedding_ollama_init(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
         provider = EmbeddingOllama()
 
         assert isinstance(provider, EmbeddingOpenAI)
@@ -76,8 +83,24 @@ class TestEmbeddingOllama:
         assert provider.api_key == "proxy-key"
         assert provider.batch_size == 10
 
-    def test_embedding_ollama_get_config(self):
-        provider = EmbeddingOllama(model="mxbai-embed-large", api_key="proxy-key")
+    @pytest.mark.parametrize("embedding_requests", ["proxy-key"], indirect=True)
+    @pytest.mark.parametrize("api_key", [None, "proxy-key"])
+    def test_proxy_authentication(self, api_key, embedding_requests, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-key")
+        monkeypatch.setenv(
+            "OLLAMA_API_KEY", "proxy-key" if api_key is None else "unused"
+        )
+        provider = EmbeddingOllama(
+            base_url="https://ollama-proxy.example/v1", api_key=api_key
+        )
+
+        assert provider.embed(["Text to embed."]) == [[0.1] * 8]
+        assert len(embedding_requests) == 1
+
+    @pytest.mark.parametrize("api_key", [None, "proxy-key"])
+    def test_embedding_ollama_get_config(self, api_key, monkeypatch):
+        monkeypatch.setenv("OLLAMA_API_KEY", "env-proxy-key")
+        provider = EmbeddingOllama(model="mxbai-embed-large", api_key=api_key)
         config = provider.get_config()
 
         assert config == {
@@ -228,10 +251,64 @@ class TestEmbeddingOllama:
         assert embedding_requests[0]["input"][0].startswith("document: ")
         assert embedding_requests[1]["input"] == ["query: search text"]
 
+    @pytest.mark.parametrize("embedding_requests", ["proxy-key"], indirect=True)
+    def test_store_reconnect_authenticates_proxy(
+        self, embedding_requests, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("OLLAMA_API_KEY", "unused-at-creation")
+        location = tmp_path / "ollama-proxy.db"
+        store = DuckDBStore.create(
+            location=location,
+            embed=EmbeddingOllama(
+                base_url="https://ollama-proxy.example/v1", api_key="proxy-key"
+            ),
+        )
+        document = MarkdownDocument(content="Text to search.", origin="test")
+        store.upsert(MarkdownChunker().chunk(document))
+        store.con.close()
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "proxy-key")
+        restored = DuckDBStore.connect(location)
+        try:
+            results = restored.retrieve_vss("search text", top_k=1)
+            assert len(results) == 1
+            assert results[0].text == document.content
+            assert embedding_requests[-1]["input"] == ["search text"]
+        finally:
+            restored.con.close()
+
+    @pytest.mark.parametrize("embedding_requests", ["proxy-key"], indirect=True)
+    def test_chroma_reconnect_authenticates_proxy(
+        self, embedding_requests, monkeypatch, tmp_path
+    ):
+        pytest.importorskip("chromadb")
+        from raghilda.store import ChromaDBStore
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "unused-at-creation")
+        location = tmp_path / "ollama-proxy-chroma"
+        store = ChromaDBStore.create(
+            location=location,
+            name="ollama_proxy",
+            embed=EmbeddingOllama(
+                base_url="https://ollama-proxy.example/v1", api_key="proxy-key"
+            ),
+        )
+        document = MarkdownDocument(content="Text to search.", origin="test")
+        store.upsert(MarkdownChunker().chunk(document))
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "proxy-key")
+        restored = ChromaDBStore.connect(location=location, name="ollama_proxy")
+        results = restored.retrieve("search text", top_k=1)
+
+        assert len(results) == 1
+        assert results[0].text == document.content
+        assert embedding_requests[-1]["input"] == ["search text"]
+
     def test_embedding_ollama_store_reconnect_without_openai_key(
         self, monkeypatch, tmp_path
     ):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
         # `create()` embeds a probe string to size the vector column
         monkeypatch.setattr(
             EmbeddingOllama, "embed", lambda self, x, input_type=None: [[0.0] * 8]

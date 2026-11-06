@@ -1,3 +1,4 @@
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -39,7 +40,9 @@ class EmbeddingOllama(EmbeddingOpenAI):
     api_key
         The API key sent with each request. Ollama does not check it, so this is
         only needed when the server sits behind a proxy that requires one. If None,
-        a placeholder value is used.
+        uses `OLLAMA_API_KEY` from the environment, or a placeholder if unset.
+        Keys are not saved with the store. Set `OLLAMA_API_KEY` before reconnecting
+        to a store that uses an authenticated proxy.
     batch_size
         The number of texts to process in each batch when calling the API.
     prompts
@@ -81,11 +84,11 @@ class EmbeddingOllama(EmbeddingOpenAI):
         batch_size: int = 20,
         prompts: dict[EmbedInputType, str] | None = None,
     ) -> None:
-        # The OpenAI client requires a non-empty key, but Ollama ignores it
+        # The OpenAI client requires a non-empty key even for a local server.
         super().__init__(
             model=model,
             base_url=base_url,
-            api_key=api_key or "ollama",
+            api_key=api_key or os.environ.get("OLLAMA_API_KEY") or "ollama",
             batch_size=batch_size,
         )
         self.prompts = prompts

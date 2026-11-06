@@ -109,11 +109,13 @@ provider = EmbeddingOllama(
 
 Include `/v1` in the URL to use Ollama's OpenAI-compatible API. By default, Ollama only accepts connections from the machine it's running on. To accept connections from other machines, configure `OLLAMA_HOST` on the server as described in [Ollama's FAQ](https://docs.ollama.com/faq).
 
-The local Ollama server doesn't require an API key. If your server is behind a proxy that requires one, supply it with `api_key=`.
+If your server is behind a proxy that requires an API key, set `OLLAMA_API_KEY` in the environment where you run raghilda. You can also pass `api_key=` when creating the provider; this takes precedence over the environment variable. A local Ollama server doesn't require a key.
 
 ## Reconnecting to a store
 
-`DuckDBStore.connect()` restores the provider's saved model name, server address, batch size, and prompts:
+`DuckDBStore.connect()` restores the provider's saved model name, server address, batch size, and prompts.
+
+For an authenticated proxy, set `OLLAMA_API_KEY` before calling `connect()`, even if you passed `api_key=` when creating the store. API keys are not saved with the store:
 
 ```{python}
 #| eval: false
@@ -140,13 +142,13 @@ For other errors, Ollama's [troubleshooting guide](https://docs.ollama.com/troub
 
 These optional parameters configure the provider when you create it with `EmbeddingOllama(...)`:
 
-| Parameter    | Default                       | Description                                                                 |
-| ------------ | ----------------------------- | --------------------------------------------------------------------------- |
-| `model`      | `"embeddinggemma-2:latest"`   | Ollama embedding model name, as shown by `ollama list`                      |
-| `base_url`   | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API                                   |
-| `api_key`    | `None`                        | Only needed behind an authenticating proxy. A placeholder is used if `None` |
-| `batch_size` | `20`                          | Texts per API call                                                          |
-| `prompts`    | `None`                        | Prefixes keyed by `EmbedInputType`; selected by `embed(input_type=...)`     |
+| Parameter    | Default                       | Description                                                             |
+| ------------ | ----------------------------- | ----------------------------------------------------------------------- |
+| `model`      | `"embeddinggemma-2:latest"`   | Ollama embedding model name, as shown by `ollama list`                  |
+| `base_url`   | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API                               |
+| `api_key`    | `None`                        | Proxy API key. If omitted, uses `OLLAMA_API_KEY` or a placeholder       |
+| `batch_size` | `20`                          | Texts per API call                                                      |
+| `prompts`    | `None`                        | Prefixes keyed by `EmbedInputType`; selected by `embed(input_type=...)` |
 
 The store saves `model`, `base_url`, `batch_size`, and any `prompts`. It doesn't save `api_key`. See the [`EmbeddingOllama` reference page](/reference/embedding.EmbeddingOllama.qmd) for API details.
 
