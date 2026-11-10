@@ -1,8 +1,8 @@
+import http.server
 import json
 import socket
-from functools import partial
+import threading
 
-import httpx2
 import pytest
 from openai import OpenAI
 
@@ -30,32 +30,58 @@ def embedding_requests(monkeypatch, request):
     requests = []
     expected_api_key = getattr(request, "param", None)
 
-    def handle(request):
-        if (
-            expected_api_key is not None
-            and request.headers.get("authorization") != f"Bearer {expected_api_key}"
-        ):
-            return httpx2.Response(401, json={"error": {"message": "Invalid API key"}})
-        payload = json.loads(request.content)
-        requests.append(payload)
-        return httpx2.Response(
-            200,
-            json={
-                "object": "list",
-                "model": payload["model"],
-                "data": [
-                    {"object": "embedding", "index": i, "embedding": [0.1] * 8}
-                    for i in range(len(payload["input"]))
-                ],
-                "usage": {"prompt_tokens": 1, "total_tokens": 1},
-            },
-        )
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if (
+                expected_api_key is not None
+                and self.headers.get("Authorization") != f"Bearer {expected_api_key}"
+            ):
+                self.respond(401, {"error": {"message": "Invalid API key"}})
+                return
+            requests.append(payload)
+            self.respond(
+                200,
+                {
+                    "object": "list",
+                    "model": payload["model"],
+                    "data": [
+                        {"object": "embedding", "index": i, "embedding": [0.1] * 8}
+                        for i in range(len(payload["input"]))
+                    ],
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+            )
 
-    with httpx2.Client(transport=httpx2.MockTransport(handle)) as client:
-        monkeypatch.setattr(
-            "raghilda._embedding.OpenAI", partial(OpenAI, http_client=client)
-        )
+        def respond(self, status: int, body: dict) -> None:
+            content = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, format, *args) -> None:
+            pass
+
+    # A local server works with the HTTP library used by the installed
+    # OpenAI SDK. A mock transport passed as `http_client` may not.
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    # Use a short poll interval so shutdown does not delay each test.
+    thread = threading.Thread(target=server.serve_forever, args=(0.01,))
+    thread.start()
+
+    def local_openai(**kwargs):
+        kwargs["base_url"] = f"http://127.0.0.1:{server.server_port}/v1"
+        return OpenAI(**kwargs)
+
+    monkeypatch.setattr("raghilda._embedding.OpenAI", local_openai)
+    try:
         yield requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 class TestEmbeddingOllama:
