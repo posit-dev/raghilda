@@ -65,7 +65,7 @@ class TestEmbeddingOllama:
         provider = EmbeddingOllama()
 
         assert isinstance(provider, EmbeddingOpenAI)
-        assert provider.model == "embeddinggemma-2:latest"
+        assert provider.model == "embeddinggemma-2:270m-q8_0-text"
         assert provider.base_url == "http://localhost:11434/v1"
         assert provider.api_key == "ollama"
         assert provider.batch_size == 20
@@ -109,6 +109,22 @@ class TestEmbeddingOllama:
             "base_url": "http://localhost:11434/v1",
             "batch_size": 20,
         }
+
+    def test_embedding_ollama_default_model_config_roundtrip(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        config = EmbeddingOllama().get_config()
+
+        assert config["model"] == "embeddinggemma-2:270m-q8_0-text"
+        restored = embedding_from_config(config)
+        assert isinstance(restored, EmbeddingOllama)
+        assert restored.model == "embeddinggemma-2:270m-q8_0-text"
+
+    def test_embedding_ollama_from_config_without_model_uses_default(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        restored = embedding_from_config({"type": "EmbeddingOllama"})
+
+        assert isinstance(restored, EmbeddingOllama)
+        assert restored.model == "embeddinggemma-2:270m-q8_0-text"
 
     def test_embedding_ollama_registry_roundtrip(self, monkeypatch):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -319,7 +335,7 @@ class TestEmbeddingOllama:
         store = DuckDBStore.connect(location)
 
         assert isinstance(store.metadata.embed, EmbeddingOllama)
-        assert store.metadata.embed.model == "embeddinggemma-2:latest"
+        assert store.metadata.embed.model == "embeddinggemma-2:270m-q8_0-text"
 
     def test_embedding_ollama_embed_integration(self):
         if not _ollama_is_running():
@@ -330,7 +346,7 @@ class TestEmbeddingOllama:
             embeddings = provider.embed(["hello world", "testing embeddings"])
         except Exception as e:
             if getattr(e, "status_code", None) == 404:
-                pytest.skip("embeddinggemma-2:latest has not been pulled")
+                pytest.skip("embeddinggemma-2:270m-q8_0-text has not been pulled")
             raise
 
         assert len(embeddings) == 2

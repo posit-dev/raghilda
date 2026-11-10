@@ -12,10 +12,10 @@ raghilda connects to this API through `EmbeddingOllama`. This guide shows how to
 First, download and install Ollama from [ollama.com](https://ollama.com/download). Once it's running, pull an embedding model from the command line:
 
 ```bash
-ollama pull embeddinggemma-2
+ollama pull embeddinggemma-2:270m-q8_0-text
 ```
 
-This guide uses Google's [EmbeddingGemma 2](https://ollama.com/library/embeddinggemma-2), raghilda's default Ollama model. The download is about 1.3 GB, and the model supports an 8,192-token context window.
+This guide uses Google's [EmbeddingGemma 2](https://ollama.com/library/embeddinggemma-2), raghilda's default Ollama model. The download is about 300 MB, and the model supports an 8,192-token context window.
 
 You don't need any additional Python packages. `EmbeddingOllama` uses the `openai` client library, which already comes with raghilda.
 
@@ -46,7 +46,7 @@ query_embeddings = provider.embed(
 
 The first call adds the configured document prefix to each text; the second adds the query prefix. If you omit `input_type`, `embed()` uses `DOCUMENT`. The prefixes are added to the text sent to Ollama; your stored text stays unchanged.
 
-By default, the provider connects to `http://localhost:11434/v1` and uses `embeddinggemma-2:latest`.
+By default, the provider connects to `http://localhost:11434/v1` and uses `embeddinggemma-2:270m-q8_0-text`.
 
 Pass the provider to a store through the `embed=` argument. The store selects `input_type` for you: `upsert()` and `ingest()` use `DOCUMENT`, while `retrieve()` uses `QUERY`:
 
@@ -64,17 +64,19 @@ Creating a store makes a request to Ollama to determine the embedding size. Olla
 
 ## Choosing a model
 
-EmbeddingGemma 2 is the suggested starting point for this guide. It is available from Google's release through Ollama's official model library. If you only need text embeddings, the 270M version leaves out the image and audio encoders for a smaller download.
+EmbeddingGemma 2 is the suggested starting point for this guide. It is available from Google's release through Ollama's official model library. raghilda's default is the text-only 270M build, which leaves out the image and audio encoders for a smaller download.
 
 These examples were reviewed in November 2026:
 
-| Ollama model                                                                | Dimensions | Notes                                                    |
-| --------------------------------------------------------------------------- | ---------- | -------------------------------------------------------- |
-| [`embeddinggemma-2:latest`](https://ollama.com/library/embeddinggemma-2)    | 768        | raghilda's default; used in this guide                   |
-| [`embeddinggemma-2:270m`](https://ollama.com/library/embeddinggemma-2:270m) | 768        | Text-only version; omits the image and audio encoders    |
-| [`qwen3-embedding:0.6b`](https://ollama.com/library/qwen3-embedding:0.6b)   | 1024       | Alternative for text retrieval; uses a query instruction |
+| Ollama model                                                                                  | Dimensions | Notes                                                              |
+| --------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------ |
+| [`embeddinggemma-2:270m-q8_0-text`](https://ollama.com/library/embeddinggemma-2:270m-q8_0-text) | 768        | raghilda's default; text-only; used in this guide                  |
+| [`embeddinggemma-2:740m-q8_0`](https://ollama.com/library/embeddinggemma-2:740m-q8_0)         | 768        | Adds image and audio encoders; larger download, same text embeddings |
+| [`qwen3-embedding:0.6b`](https://ollama.com/library/qwen3-embedding:0.6b)                     | 1024       | Alternative for text retrieval; uses a query instruction           |
 
-To use a different model, download it first, then pass its name exactly as it appears in `ollama list` to `model=`. For example, run `ollama pull embeddinggemma-2:270m`, then add `model="embeddinggemma-2:270m"` to the provider above. Both EmbeddingGemma 2 variants use the same prompts. Other models may need different prompts; check the publisher's model card before switching.
+raghilda defaults to a specific tag rather than `embeddinggemma-2:latest`. A store saves only the model name, not the model weights. A `:latest` tag can resolve to a different build over time or on a different platform, and embeddings from different builds of the same model are similar but not identical. Queries embedded by a different build than the stored documents can lose retrieval quality without raising an error. Pin an explicit tag for any model you use.
+
+To use a different model, download it first, then pass its name exactly as it appears in `ollama list` to `model=`. For example, run `ollama pull embeddinggemma-2:740m-q8_0`, then add `model="embeddinggemma-2:740m-q8_0"` to the provider above. Both EmbeddingGemma 2 variants use the same prompts. Other models may need different prompts; check the publisher's model card before switching.
 
 When comparing models, consider the publisher, how widely the model is used, download size, and context length alongside retrieval benchmarks. Try questions with known answers and check whether the retrieved passages contain those answers. Record response time and memory use on the machine where you plan to run it.
 
@@ -134,7 +136,7 @@ Use `EmbeddingOllama` when creating a store with Ollama. A store created with `E
 
 **Connection errors.** If you see an `APIConnectionError` (or a "connection refused" message), raghilda couldn't reach Ollama at the configured `base_url`. Check that the Ollama app is running, or start the server yourself with `ollama serve`. If Ollama is on another machine, double-check the address and port.
 
-**Model not found.** An error like `model 'embeddinggemma-2:latest' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull embeddinggemma-2` (or whichever model you've configured) and try again.
+**Model not found.** An error like `model 'embeddinggemma-2:270m-q8_0-text' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull embeddinggemma-2:270m-q8_0-text` (or whichever model you've configured) and try again.
 
 For other errors, Ollama's [troubleshooting guide](https://docs.ollama.com/troubleshooting) explains where to find the server logs.
 
@@ -144,7 +146,7 @@ These optional parameters configure the provider when you create it with `Embedd
 
 | Parameter    | Default                       | Description                                                             |
 | ------------ | ----------------------------- | ----------------------------------------------------------------------- |
-| `model`      | `"embeddinggemma-2:latest"`   | Ollama embedding model name, as shown by `ollama list`                  |
+| `model`      | `"embeddinggemma-2:270m-q8_0-text"` | Ollama embedding model name, as shown by `ollama list`                  |
 | `base_url`   | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API                               |
 | `api_key`    | `None`                        | Proxy API key. If omitted, uses `OLLAMA_API_KEY` or a placeholder       |
 | `batch_size` | `20`                          | Texts per API call                                                      |

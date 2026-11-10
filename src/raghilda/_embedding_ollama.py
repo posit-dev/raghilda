@@ -20,7 +20,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
     server. Stores created with it can be reconnected without setting
     `OPENAI_API_KEY`.
 
-    Pull an embedding model before using it (e.g., `ollama pull embeddinggemma-2`).
+    Pull an embedding model before using it (e.g., `ollama pull embeddinggemma-2:270m-q8_0-text`).
     Browse available embedding models at
     [ollama.com/search](https://ollama.com/search?c=embedding).
 
@@ -32,7 +32,11 @@ class EmbeddingOllama(EmbeddingOpenAI):
     Parameters
     ----------
     model
-        The Ollama embedding model to use. Default is "embeddinggemma-2:latest".
+        The Ollama embedding model to use. Default is
+        "embeddinggemma-2:270m-q8_0-text", a text-only build. The default is a
+        pinned tag rather than `:latest` because the store saves only the model
+        name, and `:latest` can resolve to different builds over time or across
+        platforms, which would silently degrade retrieval.
     base_url
         The base URL for the Ollama server's OpenAI-compatible API. Default is
         "http://localhost:11434/v1". Change this when Ollama runs on another
@@ -59,7 +63,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
     from raghilda.embedding import EmbeddingOllama, EmbedInputType
 
     provider = EmbeddingOllama(
-        model="embeddinggemma-2:latest",
+        model="embeddinggemma-2:270m-q8_0-text",
         prompts={
             EmbedInputType.QUERY: "task: search result | query: ",
             EmbedInputType.DOCUMENT: "title: none | text: ",
@@ -78,7 +82,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
 
     def __init__(
         self,
-        model: str = "embeddinggemma-2:latest",
+        model: str = "embeddinggemma-2:270m-q8_0-text",
         base_url: str = "http://localhost:11434/v1",
         api_key: str | None = None,
         batch_size: int = 20,
@@ -111,7 +115,7 @@ class EmbeddingOllama(EmbeddingOpenAI):
         if "prompts" in config:
             prompts = {EmbedInputType(k): v for k, v in config["prompts"].items()}
         return cls(
-            model=config.get("model", "embeddinggemma-2:latest"),
+            model=config.get("model", "embeddinggemma-2:270m-q8_0-text"),
             base_url=config.get("base_url", "http://localhost:11434/v1"),
             batch_size=config.get("batch_size", 20),
             prompts=prompts,
