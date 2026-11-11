@@ -79,7 +79,7 @@ for chunk in chunks:
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING](CONTRIBUTING.md) for setup and development guidelines.
+Contributions are welcome! See [CONTRIBUTING](https://github.com/posit-dev/raghilda/blob/main/CONTRIBUTING.md) for setup and development guidelines.
 
 ## License
 

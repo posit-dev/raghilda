@@ -1,0 +1,200 @@
+---
+title: Ollama Embeddings
+guide-section: Building a Store
+---
+
+[Ollama](https://ollama.com) runs chat and embedding models on your computer. You download a model with `ollama pull`, then use Ollama's API to create embeddings. With a local model, the text you embed stays on your machine, and you don't need an API key.
+
+raghilda connects to this API through `EmbeddingOllama`. This guide shows how to set it up, choose a model, and connect to an Ollama server on your computer or another machine.
+
+## Installation
+
+First, download and install Ollama from [ollama.com](https://ollama.com/download). Once it's running, pull an embedding model from the command line:
+
+```bash
+ollama pull embeddinggemma-2:270m-q8_0-text
+```
+
+This guide uses Google's [EmbeddingGemma 2](https://ollama.com/library/embeddinggemma-2), raghilda's default Ollama model. The download is about 300 MB, and the model supports an 8,192-token context window.
+
+You don't need any additional Python packages. `EmbeddingOllama` uses the `openai` client library, which already comes with raghilda.
+
+## Basic usage
+
+Once Ollama is running and you've downloaded the model, configure its prefixes with `prompts=` when creating the provider. Then pass `input_type=` to each `embed()` call to select the prefix for those texts. Here, the same provider embeds a document and a search query:
+
+```{python}
+#| eval: false
+from raghilda.embedding import EmbeddingOllama, EmbedInputType
+
+provider = EmbeddingOllama(
+    prompts={
+        EmbedInputType.QUERY: "task: search result | query: ",
+        EmbedInputType.DOCUMENT: "title: none | text: ",
+    },
+)
+
+document_embeddings = provider.embed(
+    ["Authentication requires an API key."],
+    input_type=EmbedInputType.DOCUMENT,
+)
+query_embeddings = provider.embed(
+    ["How do I configure authentication?"],
+    input_type=EmbedInputType.QUERY,
+)
+```
+
+The first call adds the configured document prefix to each text; the second adds the query prefix. If you omit `input_type`, `embed()` uses `DOCUMENT`. The prefixes are added to the text sent to Ollama; your stored text stays unchanged.
+
+By default, the provider connects to `http://localhost:11434/v1` and uses `embeddinggemma-2:270m-q8_0-text`.
+
+Pass the provider to a store through the `embed=` argument. The store selects `input_type` for you: `upsert()` and `ingest()` use `DOCUMENT`, while `retrieve()` uses `QUERY`:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.create(
+    location="my_store.db",
+    embed=provider,
+)
+```
+
+Creating a store makes a request to Ollama to determine the embedding size. Ollama needs to be running and the model needs to be downloaded before you call `create()`.
+
+## Choosing a model
+
+EmbeddingGemma 2 is the suggested starting point for this guide. It is available from Google's release through Ollama's official model library. raghilda's default is the text-only 270M build, which leaves out the image and audio encoders for a smaller download.
+
+These examples were reviewed in November 2026:
+
+| Ollama model                                                                                  | Dimensions | Notes                                                              |
+| --------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------ |
+| [`embeddinggemma-2:270m-q8_0-text`](https://ollama.com/library/embeddinggemma-2:270m-q8_0-text) | 768        | raghilda's default; text-only; used in this guide                  |
+| [`embeddinggemma-2:740m-q8_0`](https://ollama.com/library/embeddinggemma-2:740m-q8_0)         | 768        | Adds image and audio encoders; larger download, same text embeddings |
+| [`qwen3-embedding:0.6b`](https://ollama.com/library/qwen3-embedding:0.6b)                     | 1024       | Alternative for text retrieval; uses a query instruction           |
+
+raghilda defaults to a specific tag rather than `embeddinggemma-2:latest`. A store saves only the model name, not the model weights. A `:latest` tag can resolve to a different build over time or on a different platform, and embeddings from different builds of the same model are similar but not identical. Queries embedded by a different build than the stored documents can lose retrieval quality without raising an error. Pin an explicit tag for any model you use.
+
+To use a different model, download it first, then pass its name exactly as it appears in `ollama list` to `model=`. For example, run `ollama pull embeddinggemma-2:740m-q8_0`, then add `model="embeddinggemma-2:740m-q8_0"` to the provider above. Both EmbeddingGemma 2 variants use the same prompts. Other models may need different prompts; check the publisher's model card before switching.
+
+When comparing models, consider the publisher, how widely the model is used, download size, and context length alongside retrieval benchmarks. Try questions with known answers and check whether the retrieved passages contain those answers. Record response time and memory use on the machine where you plan to run it.
+
+Browse [Ollama's model search page](https://ollama.com/search?c=embedding) for other options. To see which models you've already downloaded, run `ollama list`.
+
+::: {.callout-note}
+Use the same model and prompt configuration throughout a store. To switch models or change document prefixes, create a new store and embed your documents again.
+:::
+
+## Task-specific prompts
+
+Embedding a query with the default `DOCUMENT` type uses the document prefix and can reduce retrieval quality without raising an error. When calling `embed()` directly, pass `input_type=EmbedInputType.QUERY` for search queries, as in the example above.
+
+`prompts=` configures which prefix belongs to each input type. It does not select the type for an `embed()` call. For each call, `input_type=` selects the configured prefix for every text in that call. If no prefix is configured for that type, the provider sends the text unchanged.
+
+Use the prefixes recommended by your model. EmbeddingGemma's [model card](https://huggingface.co/google/embeddinggemma-2#1-task-instruction-prefixes) lists its prompts for search, code retrieval, and other tasks. The document prefix in this guide uses `title: none` because the provider receives text without a separate title field.
+
+## Connecting to Ollama on another machine
+
+If Ollama runs on a different machine or port, set `base_url=` to its address:
+
+```{python}
+#| eval: false
+provider = EmbeddingOllama(
+    base_url="http://192.168.1.10:11434/v1",
+    prompts={
+        EmbedInputType.QUERY: "task: search result | query: ",
+        EmbedInputType.DOCUMENT: "title: none | text: ",
+    },
+)
+```
+
+Include `/v1` in the URL to use Ollama's OpenAI-compatible API. By default, Ollama only accepts connections from the machine it's running on. To accept connections from other machines, configure `OLLAMA_HOST` on the server as described in [Ollama's FAQ](https://docs.ollama.com/faq).
+
+If your server is behind a proxy that requires an API key, set `OLLAMA_API_KEY` in the environment where you run raghilda. You can also pass `api_key=` when creating the provider; this takes precedence over the environment variable. A local Ollama server doesn't require a key.
+
+## Reconnecting to a store
+
+`DuckDBStore.connect()` restores the provider's saved model name, server address, batch size, and prompts.
+
+For an authenticated proxy, set `OLLAMA_API_KEY` before calling `connect()`, even if you passed `api_key=` when creating the store. API keys are not saved with the store:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+
+store = DuckDBStore.connect("my_store.db")
+```
+
+Ollama needs to be running at the saved address, with the model available, when you add documents or search the store. A local Ollama server doesn't require an API key when reconnecting either.
+
+::: {.callout-tip}
+Use `EmbeddingOllama` when creating a store with Ollama. A store created with `EmbeddingOpenAI(base_url=...)` restores an OpenAI provider when you reconnect, which requires `OPENAI_API_KEY` to be set.
+:::
+
+## Troubleshooting
+
+**Connection errors.** If you see an `APIConnectionError` (or a "connection refused" message), raghilda couldn't reach Ollama at the configured `base_url`. Check that the Ollama app is running, or start the server yourself with `ollama serve`. If Ollama is on another machine, double-check the address and port.
+
+**Model not found.** An error like `model 'embeddinggemma-2:270m-q8_0-text' not found` means Ollama is running but the model hasn't been pulled. Run `ollama pull embeddinggemma-2:270m-q8_0-text` (or whichever model you've configured) and try again.
+
+For other errors, Ollama's [troubleshooting guide](https://docs.ollama.com/troubleshooting) explains where to find the server logs.
+
+## Parameters
+
+These optional parameters configure the provider when you create it with `EmbeddingOllama(...)`:
+
+| Parameter    | Default                       | Description                                                             |
+| ------------ | ----------------------------- | ----------------------------------------------------------------------- |
+| `model`      | `"embeddinggemma-2:270m-q8_0-text"` | Ollama embedding model name, as shown by `ollama list`                  |
+| `base_url`   | `"http://localhost:11434/v1"` | Address of Ollama's OpenAI-compatible API                               |
+| `api_key`    | `None`                        | Proxy API key. If omitted, uses `OLLAMA_API_KEY` or a placeholder       |
+| `batch_size` | `20`                          | Texts per API call                                                      |
+| `prompts`    | `None`                        | Prefixes keyed by `EmbedInputType`; selected by `embed(input_type=...)` |
+
+The store saves `model`, `base_url`, `batch_size`, and any `prompts`. It doesn't save `api_key`. See the [`EmbeddingOllama` reference page](/reference/embedding.EmbeddingOllama.qmd) for API details.
+
+## Complete example
+
+This example builds a store from two web pages and searches it, using Ollama to embed the text locally. Replace the example URLs with pages you want to search:
+
+```{python}
+#| eval: false
+from raghilda.store import DuckDBStore
+from raghilda.embedding import EmbeddingOllama, EmbedInputType
+from raghilda.read import read_as_markdown
+from raghilda.chunker import MarkdownChunker
+
+store = DuckDBStore.create(
+    location="docs.db",
+    embed=EmbeddingOllama(
+        prompts={
+            EmbedInputType.QUERY: "task: search result | query: ",
+            EmbedInputType.DOCUMENT: "title: none | text: ",
+        },
+    ),
+    name="docs",
+    title="My Documentation",
+    overwrite=True,
+)
+
+chunker = MarkdownChunker()
+for url in ["https://example.com/doc1", "https://example.com/doc2"]:
+    store.upsert(chunker.chunk(read_as_markdown(url)))
+
+store.build_index()
+
+chunks = store.retrieve("How do I configure authentication?", top_k=5)
+for chunk in chunks:
+    print(chunk.text[:200])
+```
+
+You can also use `ChatOllama` in [chatlas](chatlas-integration.qmd) to run the chat model locally.
+
+## Using Ollama with ChromaDB
+
+When you pass `EmbeddingOllama` to `ChromaDBStore`, raghilda wraps it in an adapter so that ChromaDB can call it. The provider applies the configured query and document prefixes and is restored automatically when you reconnect from Python. ChromaDB clients in other languages won't be able to use the collection's embedding function. See [ChromaDB Embedding Functions](chromadb-embedding-functions.qmd) for details.
+
+## Other local embedding options
+
+[SentenceTransformers](embedding-sentence-transformers.qmd) also supports local embeddings. It loads the model inside your Python process. Ollama runs models in a separate server, which can accept requests from several applications.

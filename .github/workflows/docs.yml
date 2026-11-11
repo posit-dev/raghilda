@@ -19,10 +19,10 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install
+        run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-extras --refresh-package great-docs
+        run: uv sync --all-extras --python 3.14 --refresh-package great-docs
 
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2

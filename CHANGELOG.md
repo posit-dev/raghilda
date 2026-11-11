@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Added `EmbeddingOllama` for embeddings from a local Ollama server. Stores
+  created with it can be reconnected without an `OPENAI_API_KEY` in the
+  environment.
+- Added user guide pages for the Cohere, NVIDIA NIM, SentenceTransformers, and
+  Ollama embedding providers.
+
+### Fixed
+
+- `EmbeddingNVIDIA` now appears in the API reference.
+
 ## 0.2.1
 
 raghilda 0.2.1 adds Python 3.14 support and fixes Markdown chunking for
